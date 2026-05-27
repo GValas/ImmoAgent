@@ -1,0 +1,655 @@
+# ============================================================
+# SOURCES IMMOBILIÈRES
+# Géré dynamiquement par Agent Discovery — éditable manuellement
+# ============================================================
+
+sources:
+  # ── Sources bloquées (Cloudflare / anti-bot) ─────────────────────────────
+  - id: pap
+    nom: "PAP (De Particulier à Particulier)"
+    url_base: "https://www.pap.fr"
+    methode: "scrape_js"
+    actif: false             # bloqué Cloudflare — à débloquer via proxy ou cookie session
+    priorite: 1
+
+  - id: leboncoin
+    nom: "LeBonCoin Immobilier"
+    url_base: "https://www.leboncoin.fr"
+    methode: "api_inoff"
+    actif: false             # bloqué Cloudflare — scraper à réécrire ou proxy
+    priorite: 1
+    note: "Nécessite headers + user-agent rotation"
+
+  - id: logic_immo
+    nom: "Logic-Immo"
+    url_base: "https://www.logic-immo.com"
+    methode: "scrape_js"
+    actif: false             # bloqué Cloudflare — même Playwright retourne 403
+    priorite: 2
+
+  # ── Sources API REST directe (httpx, pas de Playwright) ──────────────────
+  - id: lesiteimmo
+    nom: "LeSiteImmo"
+    url_base: "https://www.lesiteimmo.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 2
+    note: "JSON-LD CollectionPage.mainEntity.itemListElement — 25 items/page, httpx pur, slugs sarthe-72"
+
+  - id: bienici
+    nom: "Bien'ici"
+    url_base: "https://www.bienici.com"
+    methode: "api_inoff"
+    actif: true
+    priorite: 1
+    note: "API REST avec zone IDs par département — jusqu'à 192 résultats/dept"
+
+  - id: immobilier_notaires
+    nom: "Immobilier.notaires.fr"
+    url_base: "https://www.immobilier.notaires.fr"
+    methode: "api_officielle"
+    actif: true
+    priorite: 1
+    note: "API officielle notaires — données très complètes, ~24 résultats/page"
+
+  - id: iad
+    nom: "IAD France"
+    url_base: "https://www.iadfrance.fr"
+    methode: "api_inoff"
+    actif: true
+    priorite: 2
+    note: "API REST avec slugs de département"
+
+  - id: dvf
+    nom: "DVF (Demandes de Valeurs Foncières)"
+    url_base: "https://api.gouv.fr/les-api/api_dvf"
+    methode: "api_officielle"
+    actif: true
+    priorite: 1
+    note: "Données publiques — transactions passées pour benchmarker le prix marché"
+
+  # ── Sources Playwright (HTML scraping) ───────────────────────────────────
+  - id: orpi
+    nom: "ORPI"
+    url_base: "https://www.orpi.com"
+    methode: "scrape_js"
+    actif: true
+    priorite: 2
+    note: "article.c-estate-thumb — filtre par dept via locationIds[]"
+
+  - id: nestenn
+    nom: "Nestenn Immobilier"
+    url_base: "https://www.nestenn.com"
+    methode: "scrape_js"
+    actif: true
+    priorite: 3
+    note: "div.bien_item — slugs de département dans l'URL"
+
+  - id: safti
+    nom: "SAFTI Immobilier"
+    url_base: "https://www.safti.fr"
+    methode: "scrape_js"
+    actif: true
+    priorite: 2
+    note: "article cards — déduplique mobile/desktop — bonne couverture"
+
+  - id: ladresse
+    nom: "L'Adresse Immobilier"
+    url_base: "https://www.ladresse.com"
+    methode: "scrape_js"
+    actif: true
+    priorite: 3
+    note: "a.bien avec data-id — filtre prix/surface dans l'URL"
+
+  - id: figaro_immo
+    nom: "Figaro Immobilier"
+    url_base: "https://immobilier.lefigaro.fr"
+    methode: "scrape_js"
+    actif: true
+    priorite: 2
+    note: "article.classified-card — 40 résultats/page, filtre Python post-fetch"
+
+  # ── Réseau mandataires / réseaux nationaux ────────────────────────────────
+  - id: proprietes_privees
+    nom: "Propriétés Privées"
+    url_base: "https://www.proprietes-privees.com"
+    methode: "scrape_js"
+    actif: true
+    priorite: 2
+    note: "article.pa-a-c — slugs de département dans l'URL — 5 pages max par dept"
+
+  - id: stephaneplaza
+    nom: "Stéphane Plaza Immobilier"
+    url_base: "https://www.stephaneplazaimmobilier.com"
+    methode: "scrape_js"
+    actif: false             # stephaneplaza.com inexistant ; stephaneplazaimmobilier.com = agences locales sans portail national
+    priorite: 2
+
+  - id: optimhome
+    nom: "Optimhome"
+    url_base: "https://www.optimhome.com"
+    methode: "scrape_js"
+    actif: true
+    priorite: 3
+    note: "/annonces/vente/maison/{slug-dept}/ — slugs de département dans l'URL"
+
+  - id: remax
+    nom: "RE/MAX France"
+    url_base: "https://www.remax.fr"
+    methode: "api_inoff"
+    actif: true
+    priorite: 2
+    note: "API POST /api/Listing/PaginatedMultiMatchSearch — filtres listingPrice+livingArea, post-filtre dept par zipCode"
+
+  - id: megagence
+    nom: "megAgence"
+    url_base: "https://www.megagence.com"
+    methode: "scrape_js"
+    actif: true
+    priorite: 3
+    note: "li[class*='list-prop-li'] — /acheter/maison/{slug-dept}/ — slugs sans numéro (ex: sarthe)"
+
+  - id: citya
+    nom: "Citya Immobilier"
+    url_base: "https://www.citya.com"
+    methode: "scrape_js"
+    actif: true
+    priorite: 3
+    note: "div.property-card[data-itemid, data-price] — /annonces/vente/maison/{slug}-{code}/ — 14 cards/page"
+
+  - id: annonces_notaires
+    nom: "Immonot (Notaires)"
+    url_base: "https://www.immonot.com"
+    methode: "scrape_simple"
+    actif: false             # URLs immonot.com retournent 404 — utiliser immobilier_notaires
+    priorite: 3
+
+  # ── Nouveaux scrapers 2026-05-26 ─────────────────────────────────────────
+  - id: foncia
+    nom: "Foncia Transaction"
+    url_base: "https://www.foncia.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 2
+    note: "httpx pur — Angular SSR — filtre dept fonctionnel — 90 annonces/dept — div.foncia-card"
+
+  - id: squarehabitat
+    nom: "Square Habitat (Crédit Agricole)"
+    url_base: "https://www.squarehabitat.fr"
+    methode: "scrape_js"
+    actif: true
+    priorite: 2
+    note: "Playwright — /annonces/achat/bien/maison/immobilier/{region}/{dept-slug} — slugs (region, dept) dans DEPT_SLUGS — 9-11 annonces/dept"
+
+  - id: seloger
+    nom: "SeLoger"
+    url_base: "https://www.seloger.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 1
+    note: "httpx pur — URL legacy list.htm?places=[{cp:XXXXX}]&qsVersion=1.0&m=search_refine — max 9 CP/req — ~10 annonces/dept — post-filtre Python"
+
+  - id: properstar
+    nom: "Properstar"
+    url_base: "https://www.properstar.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 2
+    note: "httpx pur — agrégateur international — /acheter/maison/{slug-dept} — 20 annonces/dept — article.item-adaptive — post-filtre Python"
+
+  - id: laforet
+    nom: "Laforêt Immobilier"
+    url_base: "https://www.laforet.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 2
+    note: "httpx pur — SSR Symfony — /departement/achat-maison-{slug}?page=N — GTM data-attributes sur button[data-gtm-item-id-param] — 9 depts (skip 72/36 sans page dédiée)"
+
+  - id: arthurimmo
+    nom: "Arthur Immo"
+    url_base: "https://www.arthurimmo.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "httpx pur — Laravel + Livewire SSR — /immobilier/achat/{slug}/bien-maison/?page=N — div[wire:id] property.card — media.studio-net.fr photos — 10 depts"
+
+  - id: era
+    nom: "ERA Immobilier"
+    url_base: "https://www.eraimmobilier.com"
+    methode: "api_inoff"
+    actif: true
+    priorite: 2
+    note: "API REST api.eraimmobilier.com/api/v2/annonces — filtre code_postal prefix (ex: '72' = tout dept 72) — type_bien=Maison&type_annonce=Vente — 10 items/page — v2.immo-facile.com photos"
+
+  - id: entreparticuliers
+    nom: "EntreparticulierS"
+    url_base: "https://www.entreparticuliers.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 2
+    note: "httpx pur — P2P portal — Hydra/JSON-LD embeds dans <script> — /annonces-immobilieres/vente/maison/{dept-slug}?page=N — 12 items/page, ~2 pages/dept — photos GCS storage"
+
+  - id: immonot
+    nom: "Immonot (Notaires)"
+    url_base: "https://www.immonot.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "httpx pur — SSR pages régionales — /immobilier-notaire-{region}.html?departement={code} — prix encodés dans filenames CDN — listings notariaux exclusifs ~8-15/dept"
+
+  - id: paruvendu
+    nom: "Paru Vendu Immobilier"
+    url_base: "https://www.paruvendu.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 2
+    note: "httpx pur — SSR HTML — class=blocAnnonce divs — /immobilier/vente/maison/{dept-slug}/?p=N — ville+dept extraits du texte 'Ville (72)' — prix en &euro;"
+
+  - id: greenacres
+    nom: "Green-Acres"
+    url_base: "https://www.green-acres.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 1
+    note: "httpx pur — SSR React — /immobilier/{dept-slug}?page=N — div.announce-card:not(.skeleton) — URL en base64 dans data-o — propriétés de prestige et caractère — 24 annonces/page — 11 depts couverts"
+
+  # ── Nouveaux scrapers 2026-05-27 ─────────────────────────────────────────
+  - id: kw_france
+    nom: "Keller Williams France"
+    url_base: "https://www.kwfrance.com"
+    methode: "scrape_js"
+    actif: false             # React CSR — Playwright détecte 0 card même en networkidle — données chargées via API privée
+    priorite: 2
+
+  - id: patrice_besse
+    nom: "Patrice Besse (demeures de caractère)"
+    url_base: "https://www.patrice-besse.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 1
+    note: "httpx pur — /recherche-bien-immobilier-france/ (page unique 4MB) → filtre par mots-clés régionaux → fetch fiches individuelles — spécialiste manoirs/châteaux/longères"
+
+  - id: belles_demeures
+    nom: "Belles Demeures (Le Figaro prestige)"
+    url_base: "https://www.belles-demeures.com"
+    methode: "scrape_simple"
+    actif: false             # mauvais domaine + CSR — bellesdemeures.com retourne 403 sur pages filtrées
+    priorite: 1
+
+  - id: mercure_immo
+    nom: "Mercure Immobilier (demeures rurales)"
+    url_base: "https://www.mercure.net"
+    methode: "scrape_simple"
+    actif: false             # site fermé — 410 GONE sur toutes les routes
+    priorite: 1
+
+  - id: leggett
+    nom: "Leggett Immobilier (propriétés françaises)"
+    url_base: "https://www.leggett.fr"
+    methode: "scrape_simple"
+    actif: false             # 403 anti-bot sur leggett.fr et leggett-immobilier.com
+    priorite: 2
+
+  - id: espaces_atypiques
+    nom: "Espaces Atypiques (propriétés de caractère)"
+    url_base: "https://espaces-atypiques.com"
+    methode: "scrape_simple"
+    actif: false             # CSR React — aucun filtre dept côté serveur, recherche par ville uniquement
+    priorite: 2
+
+  - id: proprietes_de_france
+    nom: "Propriétés de France (prestige rural)"
+    url_base: "https://www.proprietes-de-france.com"
+    methode: "scrape_simple"
+    actif: false             # DNS fail — domaine inexistant
+    priorite: 1
+
+  - id: nexity
+    nom: "Nexity (réseau national)"
+    url_base: "https://www.nexity.fr"
+    methode: "scrape_simple"
+    actif: false             # 403 anti-bot sur toutes les routes de recherche SSR
+    priorite: 2
+
+  - id: sothebys_realty
+    nom: "Sotheby's International Realty France"
+    url_base: "https://www.sothebysrealty.fr"
+    methode: "scrape_simple"
+    actif: false             # domaine .fr inexistant (DNS fail) — vrai site sothebysrealty.com anti-bot
+    priorite: 2
+
+  - id: barnes
+    nom: "Barnes Immobilier (prestige)"
+    url_base: "https://www.barnes-immobilier.com"
+    methode: "scrape_simple"
+    actif: false             # mauvais domaine (vrai: barnes-international.com) — CSR SPA, 0 résultats httpx
+    priorite: 2
+
+  - id: superimmo
+    nom: "Superimmo (agrégateur)"
+    url_base: "https://www.superimmo.com"
+    methode: "scrape_simple"
+    actif: false             # 503 Service Unavailable systématique
+    priorite: 3
+
+  - id: vitrineimmo
+    nom: "Vitrine Immobilière (réseau coopératif)"
+    url_base: "https://www.vitrineimmo.fr"
+    methode: "scrape_simple"
+    actif: false             # DNS fail — domaine vitrineimmo.fr inexistant
+    priorite: 3
+
+
+# ============================================================
+# LISTE NOIRE — Sites abandonnés définitivement
+# Ne pas retenter sans changement de stratégie (proxy rotatif,
+# cookie réel, API payante type Apify/ScraperAPI).
+# Chaque entrée documente la raison et la date de dernier test.
+# ============================================================
+
+blacklist:
+
+  # ── Cloudflare / DataDome (bot challenge infranchissable) ────────────────
+  - id: seloger
+    nom: "SeLoger"
+    url_base: "https://www.seloger.com"
+    raison: "Cloudflare — challenge JS non résolu même sous Playwright headful"
+    dernier_test: "2026-05-25"
+    alternative: "bienici (même fonds d'annonces en partie)"
+
+  - id: meilleursagents
+    nom: "MeilleursAgents"
+    url_base: "https://www.meilleursagents.com"
+    raison: "Cloudflare — 403 systématique sur toutes les routes de recherche"
+    dernier_test: "2026-05-25"
+    alternative: "dvf pour les données de prix de marché"
+
+  - id: pap_blacklist
+    nom: "PAP (De Particulier à Particulier)"
+    url_base: "https://www.pap.fr"
+    raison: "Cloudflare — /json/ac-geo et routes de recherche retournent 403 même avec cookies de session Playwright"
+    dernier_test: "2026-05-25"
+    alternative: "aucune (seul agrégateur de particuliers à particuliers)"
+
+  - id: leboncoin_blacklist
+    nom: "LeBonCoin Immobilier"
+    url_base: "https://www.leboncoin.fr"
+    raison: "Cloudflare + DataDome — fingerprinting navigateur avancé, TLS fingerprint vérifié"
+    dernier_test: "2026-05-25"
+    alternative: "scraper via Apify actor leboncoin ou cookie session manuel"
+
+  - id: logic_immo_blacklist
+    nom: "Logic-Immo (SeLoger Group)"
+    url_base: "https://www.logic-immo.com"
+    raison: "Cloudflare — 403 même sous Playwright avec user-agent Chrome réel"
+    dernier_test: "2026-05-25"
+    alternative: "bienici, orpi"
+
+  - id: capifrance
+    nom: "CapiFrance"
+    url_base: "https://www.capifrance.fr"
+    raison: "Anti-bot applicatif — retourne page vide ou redirect infini sur les routes de recherche filtrée"
+    dernier_test: "2026-05-25"
+    alternative: "iad (même modèle mandataires indépendants)"
+
+  # ── Filtre géographique cassé (retourne tout le territoire) ─────────────
+  - id: guyhoquet
+    nom: "Guy Hoquet Immobilier"
+    url_base: "https://www.guy-hoquet.com"
+    raison: "Filtre département non fonctionnel — departments[]=72 retourne 17 000 annonces France entière, premier résultat toujours hors-cible"
+    dernier_test: "2026-05-25"
+    alternative: "orpi, ladresse"
+
+  - id: era_immobilier
+    nom: "ERA Immobilier"
+    url_base: "https://www.era-immobilier.fr"
+    raison: "Filtre département ignoré — ?departements[]=72 et slug /maison/sarthe-72/ retournent tous deux des annonces d'Alsace (dept 67) en premier"
+    dernier_test: "2026-05-25"
+    alternative: "orpi, safti"
+
+  # ── Endpoints morts / structure HTML inutilisable ────────────────────────
+  - id: immonot
+    nom: "Immonot"
+    url_base: "https://www.immonot.com"
+    raison: "Toutes les URLs de recherche retournent 'La page n'existe plus' — site restructuré, ancien scraper annonces_notaires.py cassé"
+    dernier_test: "2026-05-25"
+    alternative: "immobilier_notaires (même réseau notarial, API officielle)"
+
+  - id: century21
+    nom: "Century 21"
+    url_base: "https://www.century21.fr"
+    raison: "Toutes les URL patterns testées (/recherche/achat, /annonces/...) retournent 'La page demandée n'existe plus'"
+    dernier_test: "2026-05-25"
+    alternative: "orpi, nestenn"
+
+  - id: laforet_old
+    nom: "Laforêt Immobilier (ancienne approche)"
+    url_base: "https://laforet.com"
+    raison: "Approche initiale échouée — les données GTM sur button[data-gtm-item-id-param] n'avaient pas été découvertes. Nouveau scraper laforet.py fonctionnel via /departement/achat-maison-{slug}"
+    dernier_test: "2026-05-27"
+    alternative: "laforet (actif)"
+
+  - id: paruvendu
+    nom: "ParuVendu Immobilier"
+    url_base: "https://www.paruvendu.fr"
+    raison: "Filtre département cassé — dep=72 retourne résultats nationaux (21 000+ annonces France entière, prix à millions d'€). Sélecteur div.blocAnnonce fonctionnel mais filtrage géographique impossible."
+    dernier_test: "2026-05-26"
+    alternative: "bienici, orpi"
+
+  - id: sextantfrance
+    nom: "Sextant France"
+    url_base: "https://www.sextantfrance.fr"
+    raison: "Aucun filtre département fonctionnel côté serveur — tous les URL patterns testés (slug sarthe dans URL, ?departement=72) retournent 1 489 maisons France entière. Données chargées via API adaptimmo nécessitant auth."
+    dernier_test: "2026-05-26"
+    alternative: "iad, proprietes_privees"
+
+  - id: megagence_old_urls
+    nom: "megAgence (anciennes URLs)"
+    url_base: "https://www.megagence.com/annonces/"
+    raison: "Pattern /annonces/achat/maison/sarthe-72/ et variantes retournent 404. Utiliser /acheter/maison/{slug}/ à la place (scraper megagence.py)."
+    dernier_test: "2026-05-26"
+    alternative: "megagence (actif)"
+
+  - id: 3g_immo
+    nom: "3G Immo"
+    url_base: "https://www.3g-immo.com"
+    raison: "Domaine DNS inexistant (ERR_NAME_NOT_RESOLVED) — site fermé ou migré"
+    dernier_test: "2026-05-26"
+    alternative: "megagence, optimhome"
+
+  - id: expertimo
+    nom: "Expertimo"
+    url_base: "https://www.expertimo.com"
+    raison: "Connexion refusée/réinitialisée — serveur inaccessible"
+    dernier_test: "2026-05-26"
+    alternative: "remax, proprietes_privees"
+
+  - id: solvimo
+    nom: "Solvimo Immobilier"
+    url_base: "https://www.solvimo.com"
+    raison: "404 sur toutes les routes de recherche"
+    dernier_test: "2026-05-26"
+    alternative: "nestenn, ladresse"
+
+  - id: agoraimmobilier
+    nom: "Agora Immobilier"
+    url_base: "https://www.agoraimmobilier.fr"
+    raison: "Cloudflare — 403 sur toutes les routes"
+    dernier_test: "2026-05-26"
+    alternative: "orpi, safti"
+
+  - id: swixim
+    nom: "Swixim International"
+    url_base: "https://www.swixim.fr"
+    raison: "Filtre département non fonctionnel — ?departement=72 retourne des annonces de Bordeaux (33) et autres régions France entière"
+    dernier_test: "2026-05-26"
+    alternative: "safti, optimhome"
+
+  - id: efficity
+    nom: "Efficity"
+    url_base: "https://www.efficity.com"
+    raison: "Filtre département non fonctionnel — ?departement=72 retourne des annonces de Seine-et-Marne (77) et toute la France"
+    dernier_test: "2026-05-26"
+    alternative: "proprietes_privees, iad"
+
+  - id: immoregion
+    nom: "ImmoRegion"
+    url_base: "https://www.immoregion.fr"
+    raison: "Filtre département non fonctionnel — /vente/maison/sarthe-72/, /vente/maison/?departement=72 retournent tous 84 annonces France entière (aucune du dept 72)"
+    dernier_test: "2026-05-26"
+    alternative: "bienici, orpi"
+
+  - id: drimki
+    nom: "Drimki"
+    url_base: "https://www.drimki.fr"
+    raison: "drimki.fr redirige vers toutvabiens.com (rachat) qui retourne 403 Cloudflare même sous Playwright headless et headful"
+    dernier_test: "2026-05-26"
+    alternative: "orpi, nestenn"
+
+  - id: fnaim
+    nom: "FNAIM"
+    url_base: "https://www.fnaim.fr"
+    raison: "fnaim.fr est le site de la fédération professionnelle, pas un portail d'annonces — l'URL /annonces/achat/maison/ redirige vers la homepage"
+    dernier_test: "2026-05-26"
+    alternative: "ladresse, nestenn (agences membres FNAIM)"
+
+  - id: human_immo
+    nom: "Human Immobilier"
+    url_base: "https://www.human-immobilier.com"
+    raison: "Domaine inexistant — le vrai site est human-immobilier.fr mais sans filtre département fonctionnel (Selectize.js non interactable, URL dept ignoré côté serveur)"
+    dernier_test: "2026-05-26"
+    alternative: "safti, iad"
+
+  - id: ouestfrance_immo
+    nom: "OuestFrance-Immo"
+    url_base: "https://www.ouestfrance-immo.com"
+    raison: "Cloudflare — bot challenge sous httpx ET Playwright headless (HTML 1942b 'Challenge Validation')"
+    dernier_test: "2026-05-27"
+    alternative: "bienici, orpi, foncia"
+
+  - id: keymex
+    nom: "Keymex"
+    url_base: "https://www.keymex.fr"
+    raison: "CSR pur — les annonces sont chargées par JS, httpx ne retourne aucune card (0 cards sur /acheter-bien-immobilier/)"
+    dernier_test: "2026-05-27"
+    alternative: "optimhome, proprietes_privees"
+
+  - id: immo_diffusion
+    nom: "Immo-Diffusion"
+    url_base: "https://www.immo-diffusion.fr"
+    raison: "Filtre département non fonctionnel — /fr/pays-de-la-loire/sarthe/vente retourne 19/20 annonces du Languedoc (Hérault, Aude) — site d'une agence locale, pas un portail national"
+    dernier_test: "2026-05-27"
+    alternative: "bienici, orpi"
+
+  - id: proprietes_lefigaro
+    nom: "Propriétés Le Figaro"
+    url_base: "https://proprietes.lefigaro.fr"
+    raison: "Cloudflare — 403 sur toutes les routes de recherche"
+    dernier_test: "2026-05-27"
+    alternative: "greenacres, bienici"
+
+  - id: bellesdemeures_com
+    nom: "BellesDemeures.com (Sotheby's)"
+    url_base: "https://www.bellesdemeures.com"
+    raison: "CSR pur (homepage 228KB) + 403 sur les pages filtrées"
+    dernier_test: "2026-05-27"
+    alternative: "greenacres"
+
+  - id: avendre_alouer
+    nom: "À Vendre À Louer (Groupe Ouest-France)"
+    url_base: "https://www.avendre-alouer.fr"
+    raison: "ConnectTimeout systématique — site inaccessible depuis ce réseau (pas de Cloudflare détecté, probablement filtrage IP ou CDN restrictif)"
+    dernier_test: "2026-05-27"
+    alternative: "bienici, orpi, foncia"
+
+  - id: maxihome
+    nom: "Maxihome (réseau mandataires)"
+    url_base: "https://www.maxihome.com"
+    raison: "DNS getaddrinfo failed — domaine maxihome.com inexistant (site probablement déplacé ou fermé)"
+    dernier_test: "2026-05-27"
+    alternative: "iad, safti, proprietes_privees"
+
+  - id: laresidence
+    nom: "La Résidence Immobilier"
+    url_base: "https://www.laresidence.fr"
+    raison: "Soft 404 — /achat/maison/sarthe-72/ retourne HTTP 200 mais affiche 'Page introuvable' (URL dept inconnue du site, pas de filtre par département fonctionnel)"
+    dernier_test: "2026-05-27"
+    alternative: "nestenn, ladresse, citya"
+
+  # ── Batch 2026-05-27 : 10 candidats testés, tous échoués ────────────────
+  - id: belles_demeures_figaro
+    nom: "Belles Demeures / bellesdemeures.com (Le Figaro)"
+    url_base: "https://www.bellesdemeures.com"
+    raison: "CSR pur (homepage 228 KB, 0 card httpx) + 403 sur les pages filtrées dept. Même résultat depuis belles-demeures.com (mauvais domaine)."
+    dernier_test: "2026-05-27"
+    alternative: "greenacres, bienici"
+
+  - id: mercure_net
+    nom: "Mercure Immobilier"
+    url_base: "https://www.mercure.net"
+    raison: "Site fermé — 410 GONE sur toutes les routes (/, /acheter, /catalogue). Aucune redirection vers successeur."
+    dernier_test: "2026-05-27"
+    alternative: "patrice_besse, greenacres"
+
+  - id: leggett_immo
+    nom: "Leggett Immobilier"
+    url_base: "https://www.leggett-immobilier.com"
+    raison: "403 Forbidden sur leggett.fr et leggett-immobilier.com — anti-bot applicatif sur toutes les routes de recherche."
+    dernier_test: "2026-05-27"
+    alternative: "greenacres, proprietes_privees"
+
+  - id: espaces_atypiques_com
+    nom: "Espaces Atypiques"
+    url_base: "https://espaces-atypiques.com"
+    raison: "CSR React — aucun filtre département côté serveur. Seule la page /fr/annonces/?search_type=sell&nature_id=1 existe mais charge toutes les villes sans dept. Nécessiterait un appel d'API interne introuvable."
+    dernier_test: "2026-05-27"
+    alternative: "greenacres, bienici"
+
+  - id: proprietes_de_france_com
+    nom: "Propriétés de France"
+    url_base: "https://www.proprietes-de-france.com"
+    raison: "DNS fail — domaine inexistant (ERR_NAME_NOT_RESOLVED). Probablement fermé ou migré."
+    dernier_test: "2026-05-27"
+    alternative: "patrice_besse, greenacres"
+
+  - id: nexity_fr
+    nom: "Nexity"
+    url_base: "https://www.nexity.fr"
+    raison: "403 anti-bot sur toutes les routes SSR (/particuliers/acheter-un-logement, /annonces, /recherche). Site principalement axé neuf/promotion, peu d'annonces ancien."
+    dernier_test: "2026-05-27"
+    alternative: "bienici, orpi, foncia"
+
+  - id: sothebysrealty_fr
+    nom: "Sotheby's International Realty France"
+    url_base: "https://www.sothebysrealty.fr"
+    raison: "DNS fail (domaine .fr inexistant). Vrai site: sothebysrealty.com — anti-bot, 403 sur les routes de recherche filtrées."
+    dernier_test: "2026-05-27"
+    alternative: "greenacres, patrice_besse"
+
+  - id: barnes_international
+    nom: "Barnes International / Barnes Immobilier"
+    url_base: "https://www.barnes-international.com"
+    raison: "CSR SPA (React/Next.js) — 0 card httpx sur barnes-international.com. barnes-immobilier.com est un faux domaine. Aucune API JSON publique trouvée."
+    dernier_test: "2026-05-27"
+    alternative: "greenacres, bienici"
+
+  - id: superimmo_com
+    nom: "Superimmo (agrégateur)"
+    url_base: "https://www.superimmo.com"
+    raison: "503 Service Unavailable systématique sur toutes les routes — site probablement hors ligne ou derrière un WAF."
+    dernier_test: "2026-05-27"
+    alternative: "properstar, bienici"
+
+  - id: vitrineimmo_fr
+    nom: "Vitrine Immobilière"
+    url_base: "https://www.vitrineimmo.fr"
+    raison: "DNS fail — domaine vitrineimmo.fr inexistant (ERR_NAME_NOT_RESOLVED). Site probablement fermé."
+    dernier_test: "2026-05-27"
+    alternative: "nestenn, arthurimmo"
+
+  - id: kw_france_csr
+    nom: "Keller Williams France"
+    url_base: "https://www.kwfrance.com"
+    raison: "React CSR — Playwright networkidle détecte 0 card. Annonces probablement chargées via API privée kwx-engine non documentée. Aucun JSON accessible."
+    dernier_test: "2026-05-27"
+    alternative: "safti, proprietes_privees, iad"

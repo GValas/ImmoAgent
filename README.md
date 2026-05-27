@@ -1,0 +1,94 @@
+# Immo-Agent 🏠
+
+Système multi-agents Claude pour la recherche automatisée de biens immobiliers.
+
+## Architecture
+
+```
+orchestrator.py          ← point d'entrée unique
+├── agents/discovery.py  ← Agent 1 : identifie les sources via web_search
+├── agents/builder.py    ← Agent 2 : génère les scrapers Python
+├── agents/hunter.py     ← Agent 3 : lance les scrapers en parallèle
+└── agents/analyst.py    ← Agent 4 : score, enrichit DVF, export Excel
+```
+
+## Installation
+
+```bash
+git clone / copier le projet
+cd immo-agent
+
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium   # si scraping JS nécessaire
+
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+## Configuration
+
+### 1. Définir tes départements cibles
+
+Édite `config/criteria.md` — bloc de code du haut :
+```
+06  # Alpes-Maritimes
+83  # Var
+```
+
+### 2. Ajuster les critères
+
+Édite `config/criteres.yaml` : budget, surface, types de biens, pondérations de scoring.
+
+## Utilisation
+
+```bash
+# Pipeline complet (discovery → build → hunt → analyse)
+python orchestrator.py
+
+# Re-lancer seulement la recherche (scrapers déjà générés)
+python orchestrator.py --skip-discovery --skip-build
+
+# Re-scorer le dernier jeu de données sans re-scraper
+python orchestrator.py --only-analyse
+
+# Agents individuels
+python agents/discovery.py
+python agents/builder.py
+python agents/hunter.py
+python agents/analyst.py
+```
+
+## Output
+
+- `data/raw/biens_raw_YYYYMMDD_HHMM.json` — données brutes
+- `data/output/resultats_YYYYMMDD_HHMM.xlsx` — Excel scoré avec résumé LLM
+
+### Colonnes Excel
+
+| Colonne | Description |
+|---|---|
+| Score | Score pondéré /100 (vert ≥70, jaune ≥45, rouge <45) |
+| Prix/m² | Prix calculé du bien |
+| Prix/m² marché | Médiane DVF du département |
+| Alertes | Anomalies détectées (DPE, prix, travaux...) |
+
+## Ajouter un scraper manuellement
+
+Crée `scrapers/mon_site.py` avec cette interface :
+
+```python
+async def search(criteres: dict) -> list[dict]:
+    """
+    criteres: {departements, types_bien, surface_min, prix_max, ...}
+    Retourne une liste de dicts conformes au modèle Bien.
+    """
+    ...
+```
+
+Puis ajoute la source dans `config/sources.yaml`.
+
+## Notes légales
+
+- **PAP**, **DVF (data.gouv.fr)**, **immonot** : usage autorisé
+- **LeBonCoin**, **SeLoger** : scraping interdit par CGU — utiliser avec discernement
+- Pour usage intensif, privilégier des services comme Apify ou ScraperAPI
