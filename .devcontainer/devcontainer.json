@@ -25,6 +25,7 @@
   "customizations": {
     "vscode": {
       "extensions": [
+        "anthropic.claude-code",
         "ms-python.python",
         "ms-python.vscode-pylance",
         "ms-python.debugpy",
@@ -49,8 +50,8 @@
         "visualstudioexptteam.vscodeintellicode"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "python.terminal.activateEnvironment": false,
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
         "[python]": {
           "editor.formatOnSave": false
         },
