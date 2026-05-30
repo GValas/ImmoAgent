@@ -48,7 +48,12 @@ data/
 
 ---
 
-## Scrapers actifs (25 + DVF)
+## Scrapers actifs (41 + DVF)
+
+> Source de vérité : `config/sources.yaml` (le tableau ci-dessous peut être en retard).
+> Ajouts 2026-05-30 : cabinet_le_nail, terresetdemeuresdefrance, architecturedecollection,
+> french_property, emile_garcin, groupe_mercure, drhouse, exp_france, webimmo123,
+> meilleursbiens, imkiz, liberkeys, cimm, le_tuc (filtre département vérifié, 0 fuite).
 
 ### API REST (httpx, pas de Playwright)
 | Fichier | Site | Notes |
@@ -172,6 +177,54 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
 ### DVF
 - `analyst.py` utilise des prix de référence hardcodés par département (2024)
 - Pour des données temps réel, remplacer `_prix_m2_reference()` par un appel API
+
+### Géolocalisation (`scrapers/geolocate.py`)
+- Module utilitaire (pas une source) : `search()` renvoie toujours `[]`, comme `gares.py`
+- Pré-localise un bien à partir de la position de l'annonce :
+  - **Bien'ici** expose `blurInfo` (centre + rayon de floutage ~125 m) → extrait dans
+    `latitude`/`longitude`/`blur_radius_m` par `bienici.py`
+  - **Sources sans coords dans la liste** : `coords_from_detail()` récupère les
+    coordonnées sur la **page/API détail** de l'annonce, au moment de la géoloc et
+    sur les seuls biens survivants (quelques requêtes httpx). Stratégie :
+    1. **API notaires** (`/v1/annonces/{id}` → `bien.maison.coordonneesExactesW84`)
+       → coordonnées **exactes**.
+    2. **Parsing HTML générique** (toutes les autres sources), en cascade :
+       paires étiquetées (`"lat":x,"lng":y`, `data-latitude/longitude`,
+       `L.marker([lat,lon])`, `@lat,lon`) → valeurs lat/lon étiquetées **séparées**
+       croisées (citya, megagence) → paires de décimaux adjacents en testant **les
+       deux ordres** (lesiteimmo encode lon,lat).
+    Chaque candidat est **validé contre le centre commune** (≤ 10 km), ce qui lève
+    l'ambiguïté lat/lon et rejette les centroïdes région/pays et coords d'agence.
+    Couvre ~12 sources (foncia, seloger, era, immonot, citya, ladresse, laforet,
+    lesiteimmo, megagence, proprietes_privees, entreparticuliers, squarehabitat,
+    arthurimmo, greenacres…). **Non couvertes** : iad & paruvendu (coords seulement
+    en JS, absentes du SSR) et optimhome (403 sous httpx) → lien satellite commune
+    seulement ; nécessiteraient Playwright.
+  - La **déduplication** (`hunter.py`) fusionne les coords d'un doublon Bien'ici écarté
+    vers le bien conservé (Bien'ici aggrège IAD/SAFTI/ERA… → coords sinon perdues).
+  - croise avec le **cadastre IGN** (`apicarto.ign.fr`, gratuit) : ne garde que les
+    parcelles dont la `contenance` ≈ `surface_terrain` annoncée (±`geoloc_terrain_tol_pct`)
+  - option `geoloc_piscine_ortho` : pour chaque parcelle candidate, télécharge une
+    **orthophoto IGN** haute résolution (WMS, gratuit) dimensionnée à la parcelle, puis
+    *detect-then-classify* : localise les amas turquoise compacts (composantes connexes
+    filtrées par taille en m², compacité, allongement, couleur) et **confirme par CLIP**
+    (`clip_pool_confidence` dans `agents/vision.py`, classif. zero-shot contrastive).
+    La parcelle contenant une piscine devient la localisation la plus probable.
+- Ajoute dans l'Excel : `Parcelle probable`, `Piscine ortho` (score gradué + lien
+  satellite centré sur la piscine), liens `Satellite` (Google) et `Ortho+cadastre`
+  (Geoportail, idéal pour la vérification visuelle manuelle)
+- Lancé par `hunter.py` après le filtre gare, si `geoloc_actif` (criteria.md)
+- **Limites** :
+  - Parcelles candidates uniquement si coords précises (Bien'ici `blurInfo`) ; le repli
+    centre-commune ne donne qu'un lien satellite.
+  - La détection piscine marche bien en **rural/grand terrain** (peu de parcelles, gros
+    bassins) ; elle échoue en **urbain dense** (parcelle ambiguë par la seule surface)
+    ou si le `blurInfo` est grossier (rayon ~1 km) ou les coords erronées.
+  - Le score est **gradué** (≥0.6 « probable », 0.45–0.6 « possible ») — c'est une
+    *piste à vérifier à l'œil* via le lien satellite, pas un verdict. La couleur seule
+    ne sépare pas piscine et toit ardoise (une piscine sombre/ombragée est peu saturée).
+- **CGU** : on ne scrape pas les tuiles Google (liens pour le clic humain seulement) ;
+  toute détection auto se fait sur l'orthophoto IGN (licence ouverte).
 
 ### Anti-bot & blacklist
 - **Cloudflare** (LeBonCoin, PAP, Logic-Immo, OuestFrance-Immo, MeilleursAgents) — infranchissable sans proxy rotatif ou cookie de session réel

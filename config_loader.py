@@ -25,6 +25,11 @@ DEFAULTS = {
     "dpe_exclus":          ["G"],
     "mots_cles_negatifs":  ["viager", "enchères", "occupé", "indivision"],
     "equipements_requis":  [],
+    "gare_obligatoire":    False,
+    "gare_rayon_km":       10,
+    "geoloc_actif":          True,   # pré-localisation cadastrale (liens + parcelles)
+    "geoloc_piscine_ortho":  False,  # détection piscine sur ortho IGN (lourd)
+    "geoloc_terrain_tol_pct": 25,    # tolérance écart contenance vs terrain annoncé (%)
     "poids_prix":          25,
     "poids_surface":       20,
     "poids_terrain":       15,
@@ -80,6 +85,11 @@ def load_criteria() -> CriteresRecherche:
         mots_cles_negatifs=get("mots_cles_negatifs"),
         equipements_requis=get("equipements_requis"),
         poids_scoring=poids,
+        gare_obligatoire=bool(get("gare_obligatoire")),
+        gare_rayon_km=float(get("gare_rayon_km")),
+        geoloc_actif=bool(get("geoloc_actif")),
+        geoloc_piscine_ortho=bool(get("geoloc_piscine_ortho")),
+        geoloc_terrain_tol_pct=float(get("geoloc_terrain_tol_pct")),
     )
 
 

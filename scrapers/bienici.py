@@ -12,26 +12,32 @@ import httpx
 BASE_URL = "https://www.bienici.com"
 API_URL = f"{BASE_URL}/realEstateAds.json"
 
-# Zone IDs Bienici par département (découverts par interception réseau)
+# Zone IDs Bienici par département.
+# Résolus via l'API de suggestion : https://res.bienici.com/suggest.json?q={nom}
+#   (filtrer type == "department" et name == nom officiel exact)
+# Les 11 départements cibles sont vérifiés ; en cas de doute, re-résoudre via suggest.json.
+# Un zone ID erroné est de toute façon neutralisé par le post-filtre _bien_in_dept().
 DEPT_ZONE_IDS = {
+    # ── Départements cibles (vérifiés) ──
     "72": ["-7443"],   # Sarthe
     "28": ["-7374"],   # Eure-et-Loir
     "45": ["-7440"],   # Loiret
+    "89": ["-7392"],   # Yonne
+    "49": ["-7409"],   # Maine-et-Loire
+    "37": ["-7408"],   # Indre-et-Loire
+    "36": ["-7417"],   # Indre
+    "18": ["-7456"],   # Cher
+    "58": ["-7448"],   # Nièvre
     "41": ["-7399"],   # Loir-et-Cher
-    "61": ["-7419"],   # Orne
     "53": ["-7438"],   # Mayenne
-    "37": ["-7458"],   # Indre-et-Loire
-    "49": ["-7436"],   # Maine-et-Loire
-    "36": ["-7376"],   # Indre
-    "18": ["-7366"],   # Cher
+    # ── Autres (non vérifiés — re-résoudre via suggest.json si activés) ──
+    "61": ["-7419"],   # Orne
     "86": ["-7480"],   # Vienne
     "79": ["-7451"],   # Deux-Sèvres
     "85": ["-7479"],   # Vendée
     "44": ["-7413"],   # Loire-Atlantique
     "87": ["-7481"],   # Haute-Vienne
     "23": ["-7372"],   # Creuse
-    "58": ["-7450"],   # Nièvre
-    "89": ["-7484"],   # Yonne
     "03": ["-7360"],   # Allier
     "63": ["-7453"],   # Puy-de-Dôme
 }
@@ -69,9 +75,22 @@ async def search(criteres: dict) -> list[dict]:
     return results
 
 
+def _bien_in_dept(bien: dict, dept: str) -> bool:
+    """
+    Vrai si le bien appartient réellement au département demandé.
+    Priorité au préfixe du code postal (fiable) ; repli sur departement.
+    Neutralise les zone IDs erronés qui renverraient des annonces hors-zone.
+    """
+    cp = str(bien.get("code_postal") or "").strip()
+    if len(cp) >= 2 and cp[:2].isdigit():
+        return cp[:2] == dept
+    return str(bien.get("departement") or "").strip().zfill(2) == dept
+
+
 async def _fetch_dept(client: httpx.AsyncClient, dept: str, zone_ids: list[str],
                       prix_max: int, surface_min: int) -> list[dict]:
     results = []
+    hors_zone = 0
 
     for page_num in range(MAX_PAGES):
         filters = {
@@ -98,14 +117,21 @@ async def _fetch_dept(client: httpx.AsyncClient, dept: str, zone_ids: list[str],
 
         for ad in ads:
             bien = _parse_ad(ad, dept)
-            if bien:
+            if not bien:
+                continue
+            if _bien_in_dept(bien, dept):
                 results.append(bien)
+            else:
+                hors_zone += 1
 
         total = data.get("total", 0)
         fetched_so_far = (page_num + 1) * PAGE_SIZE
         if fetched_so_far >= total:
             break
 
+    if hors_zone:
+        print(f"[Bienici] Dept {dept}: {hors_zone} annonces hors-zone écartées "
+              f"(zone ID à vérifier via suggest.json ?)")
     return results
 
 
@@ -133,11 +159,24 @@ def _parse_ad(ad: dict, dept: str) -> dict | None:
         ad_id = str(ad.get("id", ""))
         ad_url = f"{BASE_URL}/annonce/{ad_id}"
 
+        # Position approximative (floutée) : Bien'ici expose un centre + un rayon
+        # de floutage. Exploité par scrapers/geolocate.py pour la pré-localisation.
+        lat = lon = blur_radius = None
+        blur = ad.get("blurInfo") or {}
+        center = blur.get("centroid") or blur.get("position") or {}
+        if isinstance(center, dict) and center.get("lat") is not None:
+            lat = float(center["lat"])
+            lon = float(center["lon"])
+            blur_radius = blur.get("radius")
+
         return {
             "source": "bienici",
             "url": ad_url,
             "id_annonce": ad_id,
             "has_pool": ad.get("hasPool") or False,
+            "latitude": lat,
+            "longitude": lon,
+            "blur_radius_m": float(blur_radius) if blur_radius else None,
             "titre": ad.get("title", ""),
             "type_bien": "maison",
             "description": ad.get("description", "")[:1200],

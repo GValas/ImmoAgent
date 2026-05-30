@@ -48,10 +48,32 @@ async def run_scraper(source_id: str, criteres: CriteresRecherche) -> list[dict]
         return []
 
 
+# Champs à récupérer d'un doublon écarté vers le bien conservé (ne pas perdre les
+# coordonnées de Bien'ici quand le doublon gardé vient d'une source sans géoloc).
+_MERGE_FIELDS = (
+    "latitude", "longitude", "blur_radius_m",
+    "surface_terrain", "dpe", "chambres", "pieces", "date_publication",
+)
+
+
+def _merge_duplicate(base: dict, other: dict) -> dict:
+    """Complète `base` (in place) avec les champs utiles de `other` qui lui manquent."""
+    for k in _MERGE_FIELDS:
+        if not base.get(k) and other.get(k):
+            base[k] = other[k]
+    if not base.get("photos") and other.get("photos"):
+        base["photos"] = other["photos"]
+    if other.get("has_pool"):            # une piscine signalée par une source suffit
+        base["has_pool"] = True
+    return base
+
+
 def deduplicate(biens: list[dict]) -> list[dict]:
     """
     Déduplique par hash (prix + surface + ville).
-    Garde la version la plus complète (plus de champs renseignés).
+    Garde la version la plus complète, mais récupère les champs manquants (surtout
+    les coordonnées) depuis le doublon écarté — Bien'ici aggrège IAD/SAFTI/ERA…, donc
+    sans cette fusion ses coordonnées seraient perdues au profit du doublon direct.
     """
     seen: dict[str, dict] = {}
     for bien in biens:
@@ -61,12 +83,16 @@ def deduplicate(biens: list[dict]) -> list[dict]:
         key = hashlib.md5(f"{prix}-{surface}-{ville}".encode()).hexdigest()
 
         if key not in seen:
-            seen[key] = bien
+            seen[key] = dict(bien)
+            continue
+
+        existing = seen[key]
+        # Le plus complet devient la base ; l'autre lui cède ses champs manquants.
+        if sum(1 for v in bien.values() if v) > sum(1 for v in existing.values() if v):
+            base, extra = dict(bien), existing
         else:
-            # Garder le plus complet
-            existing = seen[key]
-            if sum(1 for v in bien.values() if v) > sum(1 for v in existing.values() if v):
-                seen[key] = bien
+            base, extra = existing, bien
+        seen[key] = _merge_duplicate(base, extra)
 
     return list(seen.values())
 
@@ -75,7 +101,7 @@ def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
     """Applique les filtres d'exclusion durs."""
     filtered = []
     for b in biens:
-        desc = (b.get("description", "") + " " + b.get("titre", "")).lower()
+        desc = ((b.get("description") or "") + " " + (b.get("titre") or "")).lower()
 
         # Mots-clés négatifs
         if any(mot.lower() in desc for mot in criteres.mots_cles_negatifs):
@@ -143,7 +169,7 @@ def filter_equipements_post_vision(biens: list[dict], criteres: CriteresRecherch
 
     kept, excluded = [], 0
     for b in biens:
-        texte = (b.get("titre", "") + " " + b.get("description", "")).lower()
+        texte = ((b.get("titre") or "") + " " + (b.get("description") or "")).lower()
 
         exclure = False
         for e in equipements:
@@ -194,6 +220,12 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     filtered = filter_biens(deduped, criteres)
     print(f"[Hunter] Après filtrage : {len(filtered)} annonces")
 
+    # Filtre gare SNCF voyageurs à proximité (avant la vision pour épargner le CLIP)
+    if getattr(criteres, "gare_obligatoire", False):
+        from scrapers.gares import filter_biens_gare
+        filtered = await filter_biens_gare(filtered, criteres.gare_rayon_km)
+        print(f"[Hunter] Après filtre gare : {len(filtered)} annonces")
+
     # Sauvegarde pré-vision (permet --only-vision sans re-scraper)
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     prevision_path = RAW_DIR / f"biens_prevision_{ts}.json"
@@ -207,6 +239,12 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     # Exclusion dure équipements requis (piscine texte + CLIP)
     filtered = filter_equipements_post_vision(filtered, criteres)
     print(f"[Hunter] Après filtre équipements : {len(filtered)} annonces\n")
+
+    # Pré-localisation cadastrale (liens satellite + parcelles candidates par surface
+    # terrain, et optionnellement détection piscine sur orthophoto IGN).
+    if getattr(criteres, "geoloc_actif", True):
+        from scrapers.geolocate import annotate_biens as geo_annotate
+        filtered = await geo_annotate(filtered, criteres)
 
     # Sauvegarde raw finale
     raw_path = RAW_DIR / f"biens_raw_{ts}.json"

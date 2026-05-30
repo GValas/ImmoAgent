@@ -29,6 +29,12 @@ pip install git+https://github.com/openai/CLIP.git
 echo "==> Installing Playwright Chromium + system deps"
 playwright install --with-deps chromium
 
+# Claude Code CLI (binaire natif, pas besoin de Node) → ~/.local/bin/claude,
+# déjà dans le PATH via ~/.profile. Lançable au terminal via `claude`.
+# Non bloquant : un échec réseau ne doit pas casser la création du conteneur.
+echo "==> Installing Claude Code CLI"
+curl -fsSL https://claude.ai/install.sh | bash || echo "⚠ Claude Code non installé (réseau ?) — relancer: curl -fsSL https://claude.ai/install.sh | bash"
+
 echo "==> Creating runtime directories"
 mkdir -p data/raw data/output logs
 

@@ -58,6 +58,69 @@ python agents/hunter.py
 python agents/analyst.py
 ```
 
+## Déploiement en production (Docker + GPU)
+
+Le **scheduler** (`scheduler.py`) tourne en boucle continue et c'est lui — et lui seul —
+qui maintient `data/output/suivi_actif.xlsx` (le fichier de suivi cumulatif). En prod on
+le fait tourner dans un conteneur Docker avec GPU NVIDIA pour le scoring CLIP.
+
+> ⚠️ `orchestrator.py` produit des instantanés `resultats_*.xlsx` mais **ne met jamais à
+> jour** `suivi_actif.xlsx`. Seul le scheduler le fait.
+
+### Prérequis sur l'hôte
+
+- Docker Engine + Docker Compose v2
+- **GPU NVIDIA** : driver à jour + [`nvidia-container-toolkit`](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+- Sous **WSL2** : driver NVIDIA installé côté **Windows** (pas dans WSL), puis le toolkit dans WSL
+
+Vérifier que Docker voit le GPU :
+```bash
+docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+```
+
+### Build & lancement
+
+```bash
+docker compose up -d --build       # construit l'image (torch CUDA + Chromium + CLIP) et démarre le scheduler
+docker compose logs -f scheduler   # suivre la boucle en direct
+```
+
+Au démarrage, le log doit afficher le GPU — sinon le conteneur **s'arrête en erreur**
+(garde-fou `IMMO_FORCE_GPU=1`, pas de repli CPU silencieux) :
+```
+[Vision] CLIP chargé sur cuda (NVIDIA GeForce RTX ...)
+```
+
+### Persistance
+
+Trois volumes sont montés (cf. `docker-compose.yml`) :
+
+| Montage | Contenu | Pourquoi |
+|---|---|---|
+| `./data` → `/app/data` | `suivi_actif.xlsx`, `biens_vus.json`, `scheduler_state.json`, `raw/`, `output/` | survit aux redémarrages **et** reste lisible depuis l'hôte (ouvre l'Excel dans `./data/output/`) |
+| `./config` → `/app/config` | `criteria.md`, `style_references/` | édition **à chaud** : le prochain cycle relit `criteria.md`, pas de rebuild |
+| `./logs` → `/app/logs` | journaux | accessibles depuis l'hôte |
+
+### Exploitation
+
+```bash
+docker compose ps                  # état du conteneur
+docker compose logs -f scheduler   # logs en direct
+docker compose restart scheduler   # redémarrer (relit criteria.md)
+docker compose down                # arrêter
+docker compose up -d --build       # après un git pull / nouveau scraper : rebuild + relance
+```
+
+### Repli CPU (sans GPU)
+
+Pour tourner sans GPU : dans `Dockerfile` remplacer l'index `cu124` par `cpu`, et dans
+`docker-compose.yml` retirer `gpus: all` et passer `IMMO_FORCE_GPU` à `"0"`.
+
+### ⚠️ Un seul scheduler à la fois
+
+Ne pas lancer `scheduler.py` sur l'hôte **et** dans le conteneur simultanément : ils
+écriraient dans le même `data/` (dédup, état, Excel) → conflits.
+
 ## Output
 
 - `data/raw/biens_raw_YYYYMMDD_HHMM.json` — données brutes

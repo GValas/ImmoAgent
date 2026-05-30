@@ -1,0 +1,22 @@
+# Le venv hôte est cassé (symlink devcontainer) et inutile dans l'image
+.venv/
+# Historique git, lourd et inutile au runtime
+.git/
+.gitignore
+# Caches Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+# Données générées (montées via volume, pas besoin dans l'image)
+data/raw/
+data/output/
+logs/
+*.xlsx
+~$*
+# Outillage de dev
+.devcontainer/
+.claude/
+*.log
+# Note : config/ (criteria.md + style_references/) est VOLONTAIREMENT gardé
+# dans l'image pour qu'elle soit lançable même sans bind-mount.

@@ -73,7 +73,7 @@ def score_bien(bien: dict, criteres_dict: dict, prix_m2_marche: dict) -> dict:
     scores["localisation"] = (50 if has_address else 20) + (30 if has_photos else 0)
 
     # --- État (proxy : mots-clés dans description) ---
-    desc = (bien.get("description", "") + bien.get("titre", "")).lower()
+    desc = ((bien.get("description") or "") + " " + (bien.get("titre") or "")).lower()
     if any(w in desc for w in ["neuf", "rénov", "refait", "récent"]):
         scores["etat"] = 90
     elif any(w in desc for w in ["travaux", "rénover", "à rafraîchir"]):
@@ -204,10 +204,11 @@ def export_excel(biens: list[dict], resume: str) -> Path:
     ws.title = "Résultats"
 
     headers = [
-        "Score", "Score Visuel", "Verdict Style", "Source", "Titre", "Ville", "Dép", "Type",
+        "Score", "Score Visuel", "Verdict Style", "Source", "Titre", "Ville", "Dép", "Gare", "Type",
         "Surface", "Terrain", "Pièces", "DPE",
         "Prix (€)", "Prix/m²", "Prix/m² marché",
-        "Résumé style", "Alertes", "URL"
+        "Résumé style", "Alertes",
+        "Parcelle probable", "Piscine ortho", "Satellite", "Ortho+cadastre", "URL"
     ]
     header_fill = PatternFill("solid", fgColor="2C3E50")
     header_font = Font(color="FFFFFF", bold=True)
@@ -224,9 +225,27 @@ def export_excel(biens: list[dict], resume: str) -> Path:
         "low":    PatternFill("solid", fgColor="FADBD8"),  # rouge
     }
 
+    # Colonnes affichées comme hyperliens : {index_1based: libellé du lien}
+    link_labels = {
+        headers.index("Satellite") + 1: "Vue satellite",
+        headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
+        headers.index("URL") + 1: "Voir l'annonce",
+    }
+
     for row, b in enumerate(biens, 2):
         score = b.get("score_total", 0)
         fill = score_fills["high"] if score >= 70 else score_fills["medium"] if score >= 45 else score_fills["low"]
+
+        piscine = b.get("piscine_ortho")
+        p_score = b.get("piscine_ortho_score") or 0.0
+        if piscine is None:
+            piscine_str = ""                       # détection non activée
+        elif not piscine:
+            piscine_str = "non"
+        elif p_score >= 0.6:
+            piscine_str = f"🏊 probable ({p_score:.2f})"
+        else:
+            piscine_str = f"🏊? possible ({p_score:.2f})"
 
         values = [
             score,
@@ -236,6 +255,8 @@ def export_excel(biens: list[dict], resume: str) -> Path:
             b.get("titre", ""),
             b.get("ville", ""),
             b.get("departement", ""),
+            (f"{b.get('gare_nom')} ({b.get('gare_distance_km')} km)"
+             if b.get("gare_nom") else ""),
             b.get("type_bien", ""),
             b.get("surface"),
             b.get("surface_terrain"),
@@ -246,21 +267,31 @@ def export_excel(biens: list[dict], resume: str) -> Path:
             b.get("prix_m2_marche_dep"),
             b.get("resume_visuel", ""),
             " | ".join(b.get("alerte", [])),
+            b.get("parcelle_match", ""),
+            piscine_str,
+            b.get("maps_satellite_url", ""),
+            b.get("geoportail_url", ""),
             b.get("url", ""),
         ]
-        url_col = len(headers)  # dernière colonne = URL
+        piscine_col = headers.index("Piscine ortho") + 1
+        piscine_url = b.get("piscine_ortho_url")
         for col, val in enumerate(values, 1):
             if isinstance(val, (list, dict)):
                 val = str(val) if val else ""
             cell = ws.cell(row=row, column=col, value=val)
             cell.fill = fill
-            if col == url_col and val:
+            if col in link_labels and val:
                 cell.hyperlink = str(val)
-                cell.value = "Voir l'annonce"
+                cell.value = link_labels[col]
                 cell.style = "Hyperlink"  # style natif Excel → change de couleur après clic
+            # Si une piscine est localisée, "🏊 oui" pointe vers la vue satellite de la piscine
+            elif col == piscine_col and piscine == True and piscine_url:  # noqa: E712
+                cell.hyperlink = str(piscine_url)
+                cell.style = "Hyperlink"
 
     # Largeurs colonnes
-    widths = [8, 12, 14, 12, 40, 20, 6, 12, 9, 9, 8, 6, 12, 10, 14, 45, 40, 50]
+    widths = [8, 12, 14, 12, 40, 20, 6, 24, 12, 9, 9, 8, 6, 12, 10, 14, 45, 40,
+              20, 12, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 

@@ -75,12 +75,23 @@ def _init_clip():
         return
 
     try:
+        import os
         import clip
         import torch
-        _clip_device = "cuda" if torch.cuda.is_available() else "cpu"
+        cuda_ok = torch.cuda.is_available()
+        # IMMO_FORCE_GPU=1 : exige un GPU et échoue bruyamment plutôt que de
+        # retomber silencieusement sur CPU (10× plus lent). Activé en prod (Docker).
+        if os.environ.get("IMMO_FORCE_GPU") == "1" and not cuda_ok:
+            raise RuntimeError(
+                "IMMO_FORCE_GPU=1 mais torch ne voit aucun GPU CUDA. "
+                "Vérifie : torch CUDA installé, --gpus all / nvidia-container-toolkit, "
+                "et le driver NVIDIA sur l'hôte."
+            )
+        _clip_device = "cuda" if cuda_ok else "cpu"
         _clip_model, _clip_preprocess = clip.load("ViT-B/32", device=_clip_device)
         _clip_model.eval()
-        print(f"[Vision] CLIP chargé sur {_clip_device}")
+        gpu_name = torch.cuda.get_device_name(0) if _clip_device == "cuda" else "CPU"
+        print(f"[Vision] CLIP chargé sur {_clip_device} ({gpu_name})")
     except ImportError:
         raise ImportError(
             "CLIP non installé. Lance :\n"
@@ -111,6 +122,60 @@ def _get_pool_text_embeddings() -> np.ndarray:
         embs = embs / embs.norm(dim=-1, keepdim=True)
     _pool_text_embeddings = embs.cpu().numpy()
     return _pool_text_embeddings
+
+
+# Détection piscine sur orthophoto (vue aérienne) — classification CLIP contrastive.
+# Utilisé par scrapers/geolocate.py pour confirmer un amas turquoise repéré sur l'ortho.
+AERIAL_POOL_PROMPTS = [
+    "an aerial satellite view of a backyard swimming pool",
+    "a rectangular swimming pool seen from directly above",
+]
+AERIAL_NEG_PROMPTS = [
+    "an aerial satellite view of a rooftop",
+    "an aerial satellite view of a green garden with grass",
+    "an aerial satellite view of trees and vegetation",
+    "an aerial satellite view of a road, driveway or parking lot",
+    "an aerial satellite view of a blue tarpaulin, trampoline or car",
+]
+_aerial_pool_text_emb = None  # np.ndarray (pos+neg, 512)
+
+
+def clip_pool_confidence(pil_image: Image.Image) -> float:
+    """
+    Probabilité (0–1) qu'un crop d'orthophoto représente une piscine, par
+    classification zero-shot CLIP contrastive (softmax sur prompts piscine vs
+    prompts négatifs : toit, jardin, route, bâche…).
+
+    Retourne -1.0 si CLIP est indisponible (le détecteur appelant retombe alors
+    sur la seule heuristique couleur).
+    """
+    global _aerial_pool_text_emb
+    try:
+        _init_clip()
+    except ImportError:
+        return -1.0
+
+    if _aerial_pool_text_emb is None:
+        import torch
+        import clip
+        prompts = AERIAL_POOL_PROMPTS + AERIAL_NEG_PROMPTS
+        tokens = clip.tokenize(prompts).to(_clip_device)
+        with torch.no_grad():
+            embs = _clip_model.encode_text(tokens)
+            embs = embs / embs.norm(dim=-1, keepdim=True)
+        _aerial_pool_text_emb = embs.cpu().numpy()
+
+    try:
+        emb = _encode_image(pil_image.convert("RGB"))
+    except Exception:
+        return -1.0
+
+    sims = _aerial_pool_text_emb @ emb            # cosinus (vecteurs normalisés)
+    logits = sims * 100.0                          # logit_scale CLIP ≈ 100
+    logits -= logits.max()
+    exp = np.exp(logits)
+    probs = exp / exp.sum()
+    return float(probs[:len(AERIAL_POOL_PROMPTS)].sum())
 
 
 def detect_piscine_in_photos(photos: list) -> bool:

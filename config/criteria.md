@@ -33,7 +33,7 @@ pieces_min:   6         # 4 chambres + séjour + cuisine minimum
 pieces_max:   13        # au-delà = trop grand / immeuble de rapport
 terrain_min:  4000      # m² — terrain arboré impératif
 prix_min:     330000    # €
-prix_max:     550000    # €
+prix_max:     600000    # €
 dpe_exclus:   ["E", "F", "G"]    # A B C D acceptés
 ```
 
@@ -58,6 +58,8 @@ poids_style:         10   # style ancien/rustique/campagnard (CLIP)
 ```
 mots_cles_negatifs: ["viager", "enchères", "occupé", "indivision", "inondable", "zone inondable"]
 equipements_requis: ["piscine"]
+gare_obligatoire: true     # éliminer les biens sans gare SNCF voyageurs à proximité
+gare_rayon_km: 15          # rayon max (km) entre le bien et la gare la plus proche
 ```
 
 ---
@@ -106,6 +108,21 @@ style_seuil_exclusion: 30   # score style < X → rejeté
 style_seuil_warning:   50   # score style < X → alerte
 style_seuil_ban:       99   # score ban > X   → rejeté (ressemble trop à une image ban)
 ```
+
+---
+
+## Géolocalisation
+
+```
+geoloc_actif: true              # pré-localisation cadastrale (liens satellite + parcelles)
+geoloc_piscine_ortho: true      # détecter la piscine sur l'orthophoto IGN (plus lent)
+geoloc_terrain_tol_pct: 25      # écart toléré entre contenance cadastrale et terrain annoncé (%)
+```
+
+# Repère le bien sur image satellite à partir des coordonnées approximatives de
+# l'annonce (Bien'ici) croisées avec le cadastre (parcelles ~ surface terrain).
+# Ajoute dans l'Excel : lien satellite Google, lien ortho+cadastre Geoportail,
+# parcelle probable, et — si geoloc_piscine_ortho — détection piscine sur l'ortho.
 
 ---
 

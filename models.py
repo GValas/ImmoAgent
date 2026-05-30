@@ -28,6 +28,23 @@ class Bien:
     adresse: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    blur_radius_m: Optional[float] = None   # rayon de floutage de la position (m)
+
+    # Pré-localisation cadastrale (rempli par scrapers/geolocate.py)
+    geo_precis: Optional[bool] = None        # coords issues de l'annonce (vs centre commune)
+    maps_satellite_url: Optional[str] = None
+    geoportail_url: Optional[str] = None     # ortho IGN + parcellaire superposés
+    cadastre_url: Optional[str] = None
+    parcelles_candidates: list = field(default_factory=list)
+    parcelle_match: Optional[str] = None     # "Section Numéro — N m²"
+    piscine_ortho: Optional[bool] = None     # piscine détectée sur l'orthophoto IGN
+    piscine_ortho_score: Optional[float] = None
+    piscine_ortho_url: Optional[str] = None  # lien satellite centré sur la piscine détectée
+
+    # Gare SNCF voyageurs la plus proche (rempli par scrapers/gares.py)
+    gare: Optional[bool] = None
+    gare_nom: Optional[str] = None
+    gare_distance_km: Optional[float] = None
 
     # Caractéristiques
     surface: Optional[float] = None       # m²
@@ -94,3 +111,8 @@ class CriteresRecherche:
     mots_cles_negatifs: list[str]
     equipements_requis: list[str]
     poids_scoring: dict
+    gare_obligatoire: bool = False
+    gare_rayon_km: float = 10.0
+    geoloc_actif: bool = True
+    geoloc_piscine_ortho: bool = False
+    geoloc_terrain_tol_pct: float = 25.0
