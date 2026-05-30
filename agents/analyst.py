@@ -183,6 +183,44 @@ def llm_summary(top_biens: list[dict]) -> str:
 # EXPORT EXCEL
 # ──────────────────────────────────────────────
 
+# Département (code INSEE) → nom en toutes lettres. Partagé avec scheduler.py.
+DEPT_NOMS = {
+    "01": "Ain", "02": "Aisne", "03": "Allier", "04": "Alpes-de-Haute-Provence",
+    "05": "Hautes-Alpes", "06": "Alpes-Maritimes", "07": "Ardèche", "08": "Ardennes",
+    "09": "Ariège", "10": "Aube", "11": "Aude", "12": "Aveyron",
+    "13": "Bouches-du-Rhône", "14": "Calvados", "15": "Cantal", "16": "Charente",
+    "17": "Charente-Maritime", "18": "Cher", "19": "Corrèze", "2A": "Corse-du-Sud",
+    "2B": "Haute-Corse", "21": "Côte-d'Or", "22": "Côtes-d'Armor", "23": "Creuse",
+    "24": "Dordogne", "25": "Doubs", "26": "Drôme", "27": "Eure", "28": "Eure-et-Loir",
+    "29": "Finistère", "30": "Gard", "31": "Haute-Garonne", "32": "Gers",
+    "33": "Gironde", "34": "Hérault", "35": "Ille-et-Vilaine", "36": "Indre",
+    "37": "Indre-et-Loire", "38": "Isère", "39": "Jura", "40": "Landes",
+    "41": "Loir-et-Cher", "42": "Loire", "43": "Haute-Loire", "44": "Loire-Atlantique",
+    "45": "Loiret", "46": "Lot", "47": "Lot-et-Garonne", "48": "Lozère",
+    "49": "Maine-et-Loire", "50": "Manche", "51": "Marne", "52": "Haute-Marne",
+    "53": "Mayenne", "54": "Meurthe-et-Moselle", "55": "Meuse", "56": "Morbihan",
+    "57": "Moselle", "58": "Nièvre", "59": "Nord", "60": "Oise", "61": "Orne",
+    "62": "Pas-de-Calais", "63": "Puy-de-Dôme", "64": "Pyrénées-Atlantiques",
+    "65": "Hautes-Pyrénées", "66": "Pyrénées-Orientales", "67": "Bas-Rhin",
+    "68": "Haut-Rhin", "69": "Rhône", "70": "Haute-Saône", "71": "Saône-et-Loire",
+    "72": "Sarthe", "73": "Savoie", "74": "Haute-Savoie", "75": "Paris",
+    "76": "Seine-Maritime", "77": "Seine-et-Marne", "78": "Yvelines",
+    "79": "Deux-Sèvres", "80": "Somme", "81": "Tarn", "82": "Tarn-et-Garonne",
+    "83": "Var", "84": "Vaucluse", "85": "Vendée", "86": "Vienne",
+    "87": "Haute-Vienne", "88": "Vosges", "89": "Yonne", "90": "Territoire de Belfort",
+    "91": "Essonne", "92": "Hauts-de-Seine", "93": "Seine-Saint-Denis",
+    "94": "Val-de-Marne", "95": "Val-d'Oise", "971": "Guadeloupe", "972": "Martinique",
+    "973": "Guyane", "974": "La Réunion", "976": "Mayotte",
+}
+
+
+def dept_nom(code) -> str:
+    """Nom du département en toutes lettres ('72' → 'Sarthe'). Repli : le code brut."""
+    if code is None:
+        return ""
+    return DEPT_NOMS.get(str(code).strip().zfill(2), str(code))
+
+
 def export_excel(biens: list[dict], resume: str) -> Path:
     """Exporte les résultats scorés dans un fichier Excel."""
     try:
@@ -204,7 +242,8 @@ def export_excel(biens: list[dict], resume: str) -> Path:
     ws.title = "Résultats"
 
     headers = [
-        "Score", "Score Visuel", "Verdict Style", "Source", "Titre", "Ville", "Dép", "Gare", "Type",
+        "Score", "Score Visuel", "Verdict Style", "Source", "Titre", "Ville",
+        "Dép", "Département", "Gare", "Bus", "Type",
         "Surface", "Terrain", "Pièces", "DPE",
         "Prix (€)", "Prix/m²", "Prix/m² marché",
         "Résumé style", "Alertes",
@@ -219,11 +258,13 @@ def export_excel(biens: list[dict], resume: str) -> Path:
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
 
+    # Couleur du Score (qualité, sur la seule cellule Score) + zébrage des lignes.
     score_fills = {
         "high":   PatternFill("solid", fgColor="D5F5E3"),  # vert
         "medium": PatternFill("solid", fgColor="FEF9E7"),  # jaune
         "low":    PatternFill("solid", fgColor="FADBD8"),  # rouge
     }
+    zebra_fill = PatternFill("solid", fgColor="F2F4F4")    # 1 ligne sur 2
 
     # Colonnes affichées comme hyperliens : {index_1based: libellé du lien}
     link_labels = {
@@ -231,10 +272,15 @@ def export_excel(biens: list[dict], resume: str) -> Path:
         headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
         headers.index("URL") + 1: "Voir l'annonce",
     }
+    piscine_col = headers.index("Piscine ortho") + 1
+    score_col = headers.index("Score") + 1
+    price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché")}
 
     for row, b in enumerate(biens, 2):
         score = b.get("score_total", 0)
-        fill = score_fills["high"] if score >= 70 else score_fills["medium"] if score >= 45 else score_fills["low"]
+        score_fill = (score_fills["high"] if score >= 70
+                      else score_fills["medium"] if score >= 45 else score_fills["low"])
+        zebra = zebra_fill if row % 2 == 0 else None   # 1 ligne sur 2
 
         piscine = b.get("piscine_ortho")
         p_score = b.get("piscine_ortho_score") or 0.0
@@ -255,8 +301,11 @@ def export_excel(biens: list[dict], resume: str) -> Path:
             b.get("titre", ""),
             b.get("ville", ""),
             b.get("departement", ""),
+            dept_nom(b.get("departement")),
             (f"{b.get('gare_nom')} ({b.get('gare_distance_km')} km)"
              if b.get("gare_nom") else ""),
+            (f"{b.get('bus_nom')} ({b.get('bus_distance_km')} km)"
+             if b.get("bus_proche") else ""),
             b.get("type_bien", ""),
             b.get("surface"),
             b.get("surface_terrain"),
@@ -273,13 +322,19 @@ def export_excel(biens: list[dict], resume: str) -> Path:
             b.get("geoportail_url", ""),
             b.get("url", ""),
         ]
-        piscine_col = headers.index("Piscine ortho") + 1
         piscine_url = b.get("piscine_ortho_url")
         for col, val in enumerate(values, 1):
             if isinstance(val, (list, dict)):
                 val = str(val) if val else ""
             cell = ws.cell(row=row, column=col, value=val)
-            cell.fill = fill
+            # Fond : Score en couleur de qualité, le reste en zébrage 1 ligne/2
+            if col == score_col:
+                cell.fill = score_fill
+            elif zebra is not None:
+                cell.fill = zebra
+            # Séparateur de milliers sur les prix
+            if col in price_cols and isinstance(val, (int, float)):
+                cell.number_format = "#,##0"
             if col in link_labels and val:
                 cell.hyperlink = str(val)
                 cell.value = link_labels[col]
@@ -290,7 +345,7 @@ def export_excel(biens: list[dict], resume: str) -> Path:
                 cell.style = "Hyperlink"
 
     # Largeurs colonnes
-    widths = [8, 12, 14, 12, 40, 20, 6, 24, 12, 9, 9, 8, 6, 12, 10, 14, 45, 40,
+    widths = [8, 12, 14, 12, 40, 20, 6, 18, 24, 22, 12, 9, 9, 8, 6, 12, 10, 14, 45, 40,
               20, 12, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w

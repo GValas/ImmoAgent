@@ -6,9 +6,14 @@ et sauvegarde les biens bruts en JSON dans data/raw/.
 import asyncio
 import hashlib
 import importlib.util
+import io
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
+
+import httpx
+from PIL import Image
 
 from models import Bien, CriteresRecherche
 from agents import vision as vision_agent
@@ -95,6 +100,215 @@ def deduplicate(biens: list[dict]) -> list[dict]:
         seen[key] = _merge_duplicate(base, extra)
 
     return list(seen.values())
+
+
+# ──────────────────────────────────────────────
+# DÉDUPLICATION INTER-SOURCES PAR EMPREINTE PHOTO
+# ──────────────────────────────────────────────
+#
+# Problème : un même bien publié sur deux sites (URL/prix/ville différents) échappe
+# à `deduplicate()` (hash prix+surface+ville) — ex. prix net vendeur vs FAI, ville
+# mal saisie (notaires Romorantin-41 vs proprietes_privees "Châteauroux"-36).
+# Seules les PHOTOS sont fiables : même bien ⇒ mêmes photos.
+#
+# Conception (coût borné) :
+#   1. On NE traite QUE les survivants post-filtres (gare/vision) — petit ensemble,
+#      photos déjà jugées pertinentes — pas les ~12000 biens bruts.
+#   2. Clé de BLOCAGE bon marché = surface arrondie à l'entier → on ne compare que
+#      les biens de surface quasi identique. (Le prix n'entre PAS dans la clé : net
+#      vs FAI peut différer de >10%.) Les groupes de taille 1 sont ignorés.
+#   3. Empreinte = dHash 64 bits (resize 9×8 grayscale, comparaison des pixels
+#      horizontaux adjacents) de la 1ʳᵉ photo, via Pillow uniquement.
+#   4. Doublon ssi distance de Hamming ≤ HAMMING_THRESHOLD ET surface ±SURFACE_TOL_PCT
+#      ET sources différentes.
+#   5. Fusion : on garde le bien au prix le plus bas (= net vendeur, le plus utile),
+#      union des champs manquants via `_merge_duplicate`.
+# Non-fatal : toute photo absente / illisible ⇒ le bien est simplement laissé tel quel.
+
+# Seuil de Hamming sur 64 bits. dHash sur une même image ré-encodée/redimensionnée
+# par deux sites diffère typiquement de 0–6 bits ; des images réellement distinctes
+# dépassent largement 12. 8 est un compromis prudent (peu de faux positifs).
+HAMMING_THRESHOLD = 8
+# Tolérance surface entre deux candidats fusionnés (la surface habitable annoncée
+# est en général identique d'une source à l'autre, contrairement au prix).
+SURFACE_TOL_PCT = 2.0
+
+
+def dhash(pil_image: Image.Image, hash_size: int = 8) -> int:
+    """
+    Perceptual hash (dHash) d'une image → entier de hash_size² bits (64 par défaut).
+    Resize en (hash_size+1)×hash_size niveaux de gris, puis compare chaque pixel à
+    son voisin de droite. Robuste au ré-encodage / redimensionnement / léger recadrage.
+    """
+    img = pil_image.convert("L").resize(
+        (hash_size + 1, hash_size), Image.Resampling.LANCZOS
+    )
+    px = list(img.getdata())
+    bits = 0
+    bit_index = 0
+    for row in range(hash_size):
+        row_off = row * (hash_size + 1)
+        for col in range(hash_size):
+            left = px[row_off + col]
+            right = px[row_off + col + 1]
+            if left > right:
+                bits |= (1 << bit_index)
+            bit_index += 1
+    return bits
+
+
+def hamming_distance(a: int, b: int) -> int:
+    """Nombre de bits différents entre deux empreintes (popcount du XOR)."""
+    return (a ^ b).bit_count()
+
+
+def _block_key_surface(bien: dict) -> Optional[int]:
+    """Clé de blocage = surface habitable arrondie. None si pas de surface."""
+    surface = bien.get("surface")
+    if not surface:
+        return None
+    try:
+        return int(round(float(surface)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _surfaces_compatibles(a: dict, b: dict, tol_pct: float = SURFACE_TOL_PCT) -> bool:
+    sa, sb = a.get("surface"), b.get("surface")
+    if not sa or not sb:
+        return False
+    try:
+        sa, sb = float(sa), float(sb)
+    except (TypeError, ValueError):
+        return False
+    if max(sa, sb) == 0:
+        return False
+    return abs(sa - sb) / max(sa, sb) * 100.0 <= tol_pct
+
+
+async def _first_photo_hash(bien: dict, session: httpx.AsyncClient) -> Optional[int]:
+    """Télécharge la 1ʳᵉ photo d'un bien et retourne son dHash. None si indisponible."""
+    urls = bien.get("photos") or []
+    if not urls:
+        return None
+    try:
+        r = await session.get(urls[0], timeout=10, follow_redirects=True)
+        r.raise_for_status()
+        img = Image.open(io.BytesIO(r.content))
+        return dhash(img)
+    except Exception:
+        return None
+
+
+async def deduplicate_by_photo(
+    biens: list[dict],
+    concurrency: int = 8,
+) -> list[dict]:
+    """
+    Déduplication inter-sources par empreinte photo (dHash de la 1ʳᵉ photo).
+
+    À lancer sur un petit ensemble (survivants post-filtres). Stratégie de blocage
+    par surface arrondie ⇒ on ne calcule l'empreinte QUE dans les groupes de taille
+    ≥2 mélangeant des sources différentes : aucun téléchargement hors candidats.
+
+    Fusionne chaque cluster de doublons en un seul bien (prix le plus bas = net
+    vendeur conservé, union des champs). Non-fatal : photo absente/illisible ⇒ bien
+    laissé intact. Retourne la liste dédupliquée.
+    """
+    # 1. Blocage par surface : on ne garde comme candidats que les biens d'un groupe
+    #    contenant au moins 2 sources distinctes.
+    groups: dict[int, list[int]] = {}
+    for idx, b in enumerate(biens):
+        k = _block_key_surface(b)
+        if k is None:
+            continue
+        groups.setdefault(k, []).append(idx)
+
+    candidate_idx: set[int] = set()
+    for idxs in groups.values():
+        if len(idxs) < 2:
+            continue
+        sources = {biens[i].get("source") for i in idxs}
+        if len(sources) < 2:
+            continue
+        candidate_idx.update(idxs)
+
+    if not candidate_idx:
+        return biens
+
+    # 2. Empreinte photo uniquement pour les candidats (petits groupes).
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def hash_one(i: int, session: httpx.AsyncClient):
+        async with semaphore:
+            return i, await _first_photo_hash(biens[i], session)
+
+    async with httpx.AsyncClient(
+        headers={"User-Agent": "Mozilla/5.0 (compatible; immo-agent/1.0)"},
+        timeout=15,
+    ) as session:
+        hashed = await asyncio.gather(
+            *[hash_one(i, session) for i in candidate_idx]
+        )
+    hashes: dict[int, int] = {i: h for i, h in hashed if h is not None}
+
+    # 3. Clustering : dans chaque groupe de surface, relie les biens dont les
+    #    empreintes sont proches (Hamming ≤ seuil), surface compatible, sources ≠.
+    parent = {i: i for i in hashes}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        parent[find(x)] = find(y)
+
+    for idxs in groups.values():
+        hs = [i for i in idxs if i in hashes]
+        for a in range(len(hs)):
+            for bb in range(a + 1, len(hs)):
+                i, j = hs[a], hs[bb]
+                if biens[i].get("source") == biens[j].get("source"):
+                    continue
+                if not _surfaces_compatibles(biens[i], biens[j]):
+                    continue
+                if hamming_distance(hashes[i], hashes[j]) <= HAMMING_THRESHOLD:
+                    union(i, j)
+
+    # 4. Fusion des clusters (>1 membre). On garde le prix le plus bas.
+    clusters: dict[int, list[int]] = {}
+    for i in hashes:
+        clusters.setdefault(find(i), []).append(i)
+
+    drop: set[int] = set()
+    merged_count = 0
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        # Bien conservé = prix le plus bas (net vendeur). À prix égal/absent, le plus complet.
+        def _sort_key(i):
+            prix = biens[i].get("prix")
+            prix_rank = prix if prix else float("inf")
+            completeness = -sum(1 for v in biens[i].values() if v)
+            return (prix_rank, completeness)
+
+        members_sorted = sorted(members, key=_sort_key)
+        keeper = members_sorted[0]
+        for other in members_sorted[1:]:
+            _merge_duplicate(biens[keeper], biens[other])
+            biens[keeper].setdefault("alerte", []).append(
+                f"📸 Doublon photo fusionné depuis {biens[other].get('source')} "
+                f"({biens[other].get('prix')}€ / {biens[other].get('ville')})"
+            )
+            drop.add(other)
+            merged_count += 1
+
+    if merged_count:
+        print(f"[Dedup] {merged_count} doublon(s) inter-sources fusionné(s) (empreinte photo)")
+
+    return [b for idx, b in enumerate(biens) if idx not in drop]
 
 
 def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
@@ -239,6 +453,20 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     # Exclusion dure équipements requis (piscine texte + CLIP)
     filtered = filter_equipements_post_vision(filtered, criteres)
     print(f"[Hunter] Après filtre équipements : {len(filtered)} annonces\n")
+
+    # Déduplication inter-sources par empreinte photo (sur les survivants, peu nombreux —
+    # ne télécharge la 1ʳᵉ photo que des candidats regroupés par surface). Attrape un même
+    # bien publié sur deux sites avec prix/ville différents, que le hash exact rate.
+    before = len(filtered)
+    filtered = await deduplicate_by_photo(filtered)
+    if len(filtered) != before:
+        print(f"[Hunter] Après dédup photo : {len(filtered)} annonces\n")
+
+    # Annotation bus (informatif, NON éliminatoire) — sur les survivants pour
+    # limiter les requêtes Overpass. Non-fatal : n'élimine ni ne plante rien.
+    if getattr(criteres, "bus_actif", True):
+        from scrapers.bus import annotate_biens as bus_annotate
+        filtered = await bus_annotate(filtered, criteres.bus_rayon_km)
 
     # Pré-localisation cadastrale (liens satellite + parcelles candidates par surface
     # terrain, et optionnellement détection piscine sur orthophoto IGN).

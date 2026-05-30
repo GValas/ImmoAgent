@@ -27,6 +27,8 @@ DEFAULTS = {
     "equipements_requis":  [],
     "gare_obligatoire":    False,
     "gare_rayon_km":       10,
+    "bus_actif":           True,    # annoter l'arrêt de bus le plus proche (informatif)
+    "bus_rayon_km":        2,       # rayon court — un arrêt de bus utile est proche
     "geoloc_actif":          True,   # pré-localisation cadastrale (liens + parcelles)
     "geoloc_piscine_ortho":  False,  # détection piscine sur ortho IGN (lourd)
     "geoloc_terrain_tol_pct": 25,    # tolérance écart contenance vs terrain annoncé (%)
@@ -87,6 +89,8 @@ def load_criteria() -> CriteresRecherche:
         poids_scoring=poids,
         gare_obligatoire=bool(get("gare_obligatoire")),
         gare_rayon_km=float(get("gare_rayon_km")),
+        bus_actif=bool(get("bus_actif")),
+        bus_rayon_km=float(get("bus_rayon_km")),
         geoloc_actif=bool(get("geoloc_actif")),
         geoloc_piscine_ortho=bool(get("geoloc_piscine_ortho")),
         geoloc_terrain_tol_pct=float(get("geoloc_terrain_tol_pct")),

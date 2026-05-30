@@ -60,6 +60,8 @@ mots_cles_negatifs: ["viager", "enchères", "occupé", "indivision", "inondable"
 equipements_requis: ["piscine"]
 gare_obligatoire: true     # éliminer les biens sans gare SNCF voyageurs à proximité
 gare_rayon_km: 15          # rayon max (km) entre le bien et la gare la plus proche
+bus_actif: true            # annoter l'arrêt de bus le plus proche (informatif, NON éliminatoire)
+bus_rayon_km: 2            # rayon court (km) — un arrêt de bus utile est proche du bien
 ```
 
 ---

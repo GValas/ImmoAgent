@@ -1,18 +1,33 @@
 """
 scrapers/proprietes_privees.py — Propriétés Privées (réseau mandataires)
-Méthode : Playwright + parsing HTML (.trade-item-container)
+Méthode : httpx pur + parsing HTML (.trade-item-container) — le SSR Nuxt rend
+la liste complète sans JS, donc pas de Playwright nécessaire.
 URL : /achat/maison/{slug-dept} (slug = nom dept sans numéro, ex: sarthe)
 Pas de <a> dans les cards — URL construite depuis <p class="trade-reference">Ref. XXXRRN</p>
+
+Localisation du BIEN (pas de l'agence) :
+  - Sur la liste, `.trade-location` donne la ville/CP du bien (fiable, par card).
+  - Repli fiche détail (concurrence limitée) quand la liste ne donne pas une
+    localisation cohérente avec le département cible : on lit le tableau de
+    localisation du payload Nuxt ("<slug>-<cp>","VILLE","<cp>",lat,lon) qui est
+    celui du bien — à distinguer du bloc conseiller `location:{...label:"..."}`
+    qui porte l'adresse du mandataire.
+
 Interface : async def search(criteres: dict) -> list[dict]
 """
 import re
 import asyncio
 
+import httpx
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
 
 
 BASE_URL = "https://www.proprietes-privees.com"
+
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 # Slugs : nom seul, sans numéro (ex: "sarthe" et non "sarthe-72")
 DEPT_SLUGS = {
@@ -31,6 +46,16 @@ DEPT_SLUGS = {
 }
 
 MAX_PAGES = 5
+DETAIL_CONCURRENCY = 5
+
+# Localisation du bien dans le payload Nuxt :
+#   ...,"city","<slug>-<cp>","VILLE","<cp>",<lat>,<lon>,...
+# (le bloc conseiller est `location:{placeId:"...",label:"..."}` — non capté ici)
+_DETAIL_LOC_RE = re.compile(
+    r'"([a-z0-9][a-z0-9\-]*?)-(\d{5})",'
+    r'"([A-ZÀ-Ÿ0-9 \-\']{2,60})",'
+    r'"(\d{5})",-?\d+\.\d+,-?\d+\.\d+'
+)
 
 
 async def search(criteres: dict) -> list[dict]:
@@ -40,25 +65,23 @@ async def search(criteres: dict) -> list[dict]:
     surface_min = criteres.get("surface_min", 80)
 
     results = []
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            locale="fr-FR",
-        )
+    async with httpx.AsyncClient(
+        headers={"User-Agent": UA, "Accept-Language": "fr-FR,fr;q=0.9"},
+        follow_redirects=True,
+        timeout=30,
+    ) as client:
         for dept in departements:
             try:
-                biens = await _scrape_dept(context, str(dept), prix_min, prix_max, surface_min)
+                biens = await _scrape_dept(client, str(dept), prix_min, prix_max, surface_min)
                 results.extend(biens)
                 print(f"[PropPrivées] Dept {dept}: {len(biens)} annonces")
             except Exception as e:
                 print(f"[PropPrivées] Erreur dept {dept}: {e}")
-        await browser.close()
 
     return results
 
 
-async def _scrape_dept(context, dept: str, prix_min: int, prix_max: int, surface_min: int) -> list[dict]:
+async def _scrape_dept(client, dept: str, prix_min: int, prix_max: int, surface_min: int) -> list[dict]:
     slug = DEPT_SLUGS.get(dept)
     if not slug:
         return []
@@ -71,17 +94,13 @@ async def _scrape_dept(context, dept: str, prix_min: int, prix_max: int, surface
         if page_num > 1:
             url += f"?page={page_num}"
 
-        page = await context.new_page()
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            try:
-                await page.wait_for_selector(".trade-item-container", timeout=10000)
-            except Exception:
-                pass
-            await asyncio.sleep(4)
-            html = await page.content()
-        finally:
-            await page.close()
+            resp = await client.get(url)
+            resp.raise_for_status()
+            html = resp.text
+        except Exception as e:
+            print(f"[PropPrivées] Dept {dept} page {page_num}: {e}")
+            break
 
         cards = _parse_html(html, dept)
         if not cards:
@@ -104,7 +123,58 @@ async def _scrape_dept(context, dept: str, prix_min: int, prix_max: int, surface
         if new_found == 0 and page_num > 1:
             break
 
-    return biens
+    # Repli fiche détail : pour les biens dont la localisation liste est absente
+    # ou incohérente avec le département cible, récupérer la vraie loc du bien.
+    await _resolve_locations(client, biens, dept)
+
+    # Sécurité dépt : ne pas laisser fuiter un bien hors département cible une
+    # fois la vraie localisation connue.
+    coherent = [b for b in biens if not b["code_postal"] or b["code_postal"][:2] == dept]
+    leaked = len(biens) - len(coherent)
+    if leaked:
+        print(f"[PropPrivées] Dept {dept}: {leaked} annonces écartées (hors département)")
+    for b in coherent:
+        b.pop("_type_str", None)
+    return coherent
+
+
+async def _resolve_locations(client, biens: list[dict], dept: str) -> None:
+    """Complète/corrige la localisation via la fiche détail quand nécessaire."""
+    to_fix = [
+        b for b in biens
+        if not b["code_postal"] or b["code_postal"][:2] != dept
+    ]
+    if not to_fix:
+        return
+
+    sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
+
+    async def fix(b):
+        async with sem:
+            loc = await _location_from_detail(client, b["url"])
+        if loc:
+            ville, cp = loc
+            b["ville"] = ville[:80]
+            b["code_postal"] = cp
+            b["departement"] = cp[:2]
+            # rafraîchir le titre dérivé si besoin
+            b["titre"] = _make_titre(b.get("_type_str", "Maison"), b.get("pieces"), ville)
+
+    await asyncio.gather(*(fix(b) for b in to_fix), return_exceptions=True)
+
+
+async def _location_from_detail(client, url: str) -> tuple[str, str] | None:
+    try:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    except Exception:
+        return None
+    m = _DETAIL_LOC_RE.search(resp.text)
+    if not m:
+        return None
+    ville = m.group(3).strip()
+    cp = m.group(4)
+    return ville, cp
 
 
 def _parse_html(html: str, dept: str) -> list[dict]:
@@ -121,6 +191,10 @@ def _parse_html(html: str, dept: str) -> list[dict]:
     return results
 
 
+def _make_titre(type_str: str, pieces, ville: str) -> str:
+    return f"{type_str} {pieces or ''} p. {ville}".strip()[:150]
+
+
 def _parse_card(card, dept: str) -> dict | None:
     # Référence : <p class="trade-reference">Ref. 433855RRN</p>
     ref_el = card.select_one(".trade-reference")
@@ -134,11 +208,13 @@ def _parse_card(card, dept: str) -> dict | None:
     url = f"{BASE_URL}/annonces/{ad_id}"
 
     # Prix : <p class="trade-price">143 500 €</p>
+    # Le site utilise des espaces insécables (U+00A0) et fines (U+202F) comme
+    # séparateurs de milliers → on les supprime avant le parsing.
     price_el = card.select_one(".trade-price")
     prix = None
     if price_el:
-        raw = price_el.get_text().replace("\xa0", " ").replace(" ", " ").replace(" ", " ")
-        prix = _re_float(r"([\d ]+)\s*€", raw) or _re_float(r"([\d ]+)\s*€", raw)
+        raw = re.sub(r"\s", "", price_el.get_text())
+        prix = _re_float(r"(\d+)\s*€", raw)
 
     # Surface, pièces, chambres : balises .trade-feature avec img[alt] + <p> valeur
     surface = None
@@ -165,17 +241,20 @@ def _parse_card(card, dept: str) -> dict | None:
     terrain = float(terrain_m.group(1).replace(" ", "")) if terrain_m else None
     dpe = _re_str(r"\bDPE\s*:?\s*(?:classe\s*)?([A-G])\b", desc_text)
 
-    # Ville + CP : <div class="trade-location">CHAMPAGNE (72470)</div>
+    # Ville + CP du BIEN : <div class="trade-location">CHAMPAGNE (72470)</div>
+    # (par-card sur la liste : c'est la localisation du bien, pas de l'agence)
     loc_el = card.select_one(".trade-location")
     loc_text = loc_el.get_text(strip=True) if loc_el else ""
     city_m = re.search(r"([A-ZÀ-ÿ][^\d\(]{1,40})\s*\((\d{5})\)", loc_text)
     ville = city_m.group(1).strip() if city_m else ""
     cp = city_m.group(2) if city_m else ""
+    # departement dérivé du VRAI code postal (corrigé via détail au besoin)
+    departement = cp[:2] if cp else dept
 
     # Titre
     titre_el = card.select_one(".trade-title, h2, h3")
     type_str = titre_el.get_text(strip=True) if titre_el else "Maison"
-    titre = f"{type_str} {pieces or ''} p. {ville}".strip()[:150]
+    titre = _make_titre(type_str, pieces, ville)
 
     # Photos : srcset → extraire URLs images.proprietes-privees.com
     photos = []
@@ -201,7 +280,7 @@ def _parse_card(card, dept: str) -> dict | None:
         "titre": titre,
         "type_bien": "maison",
         "description": desc_text[:1200],
-        "departement": dept,
+        "departement": departement,
         "ville": ville[:80],
         "code_postal": cp,
         "surface": surface,
@@ -212,6 +291,7 @@ def _parse_card(card, dept: str) -> dict | None:
         "photos": photos,
         "dpe": dpe,
         "agence": "Propriétés Privées",
+        "_type_str": type_str,
     }
 
 
@@ -248,4 +328,4 @@ if __name__ == "__main__":
     }))
     print(f"\nTotal Propriétés Privées: {len(biens)} annonces")
     for b in biens[:5]:
-        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m² — {b['ville']}")
+        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m² — {b['ville']} ({b['code_postal']}) dept {b['departement']}")

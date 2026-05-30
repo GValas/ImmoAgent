@@ -1,0 +1,314 @@
+"""scrapers/equirodi.py — Equirodi (immobilier équestre : propriétés, haras, fermes équestres)
+
+Méthode : scrape_simple (httpx) — SSR HTML (.htm), pas de JS requis.
+
+URL pattern (listing par RÉGION) :
+    /annonces/equestre-a-vendre/propriete-equestre/{region}.htm[?page=N]
+    (PAS de préfixe /fr/ — /fr/… redirige vers la home.)
+    Pagination : ?page=2, ?page=3 … (liens a[href*='page=N']).
+
+⚠️ Piège majeur du filtre département / région (identique à equidomain.py) :
+    Le site n'a PAS de filtre par département. Le filtre se fait par RÉGION dans
+    l'URL, MAIS seuls les slugs des ANCIENNES régions sont reconnus :
+      - "centre"           → Indre-et-Loire 37, Loiret 45, Loir-et-Cher 41,
+                              Cher 18, Eure-et-Loir 28, Indre 36
+      - "bourgogne"        → Yonne 89, Nièvre 58, Saône-et-Loire 71, Côte d'Or 21
+      - "pays-de-la-loire" → Loire-Atlantique 44, Sarthe 72, Maine-et-Loire 49,
+                              Mayenne 53, Vendée 85
+    Un slug NON reconnu (ex "centre-val-de-loire", "pays-de-loire", "toto") ne
+    renvoie PAS d'erreur : il RETOMBE silencieusement sur l'inventaire NATIONAL
+    complet (tous départements) → fuite massive. On n'utilise donc QUE les slugs
+    validés ci-dessus (vérifié 2026-05-30).
+
+    Sécurité supplémentaire : aucune annonce ne porte de code postal sur la liste,
+    seulement le NOM du département dans div.col-md-5 .location (1er bloc). On mappe
+    ce nom vers son code (NORM_DEPT) et on POST-FILTRE strictement sur les
+    départements cibles. Double garde-fou ⇒ 0 fuite garantie même si un slug
+    régional retombe sur national.
+
+Cartes : article.myadlist (id="tab_{ref}", data-adlisting="{ref}")
+  - URL/titre : a.display_search[href][title] > h2   (href en //www… → https:)
+  - prix      : div.price                            ("895 000 €")
+  - description : p.description
+  - détails   : ul.content li  ("Propriété équestre", "6 Boxes", "3.56 ha")
+                 → surface en HECTARES → surface_terrain (m²)
+  - localisation : div.col-md-5 .location (1er) = nom département ; (2e) = "France"
+  - photo     : div.thumb img[data-src]
+
+Limites :
+  - Pas de surface HABITABLE ni de code postal sur la liste (seul le dept-nom).
+    On remplit surface_terrain (ha→m²) ; surface (habitable) reste None.
+  - Tout l'inventaire est de type propriété/ferme équestre → type_bien depuis le 1er li.
+
+Interface : async def search(criteres: dict) -> list[dict]
+"""
+
+import asyncio
+import re
+import unicodedata
+
+import httpx
+from bs4 import BeautifulSoup
+
+BASE_URL = "https://www.equirodi.com"
+LISTING = BASE_URL + "/annonces/equestre-a-vendre/propriete-equestre/{region}.htm"
+MAX_PAGES = 8
+PHOTOS_PER_CARD = 1
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "fr-FR,fr;q=0.9",
+}
+
+# Slugs de RÉGION (anciennes régions) reconnus par le site. Chaque slug couvre
+# plusieurs départements cibles. NE PAS utiliser les slugs "nouvelles régions"
+# (ex centre-val-de-loire) : ils retombent sur l'inventaire national.
+REGION_SLUGS = ["centre", "bourgogne", "pays-de-la-loire"]
+
+# Nom de département (.location, sans accents/casse normalisés) → code.
+# Couvre les départements présents dans les 3 régions ci-dessus.
+NORM_DEPT: dict[str, str] = {
+    "indre-et-loire": "37",
+    "loiret": "45",
+    "loir-et-cher": "41",
+    "cher": "18",
+    "eure-et-loir": "28",
+    "indre": "36",
+    "yonne": "89",
+    "nievre": "58",
+    "saone-et-loire": "71",
+    "cote d'or": "21",
+    "cote-d'or": "21",
+    "loire-atlantique": "44",
+    "sarthe": "72",
+    "maine-et-loire": "49",
+    "mayenne": "53",
+    "vendee": "85",
+}
+
+
+def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.lower().strip()
+
+
+async def search(criteres: dict) -> list[dict]:
+    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
+    prix_max = criteres.get("prix_max") or 0
+    prix_min = criteres.get("prix_min") or 0
+
+    results: list[dict] = []
+    seen: set[str] = set()
+
+    async with httpx.AsyncClient(
+        headers=HEADERS, follow_redirects=True, timeout=25
+    ) as client:
+        for region in REGION_SLUGS:
+            try:
+                cards = await _fetch_region(client, region)
+            except Exception as e:
+                print(f"[Equirodi] Erreur région {region}: {e}")
+                continue
+
+            for card in cards:
+                bien = _parse_card(card)
+                if not bien:
+                    continue
+
+                # POST-FILTRE strict par département (nom → code).
+                dept = bien.get("departement") or ""
+                if departements and dept not in departements:
+                    continue
+
+                p = bien.get("prix") or 0
+                if prix_max and p and p > prix_max:
+                    continue
+                if prix_min and p and p < prix_min:
+                    continue
+
+                aid = bien.get("id_annonce") or bien.get("url")
+                if aid in seen:
+                    continue
+                seen.add(aid)
+                results.append(bien)
+
+    by_dept: dict[str, int] = {}
+    for b in results:
+        by_dept[b["departement"]] = by_dept.get(b["departement"], 0) + 1
+    for dept, n in sorted(by_dept.items()):
+        print(f"[Equirodi] Dept {dept}: {n} annonces")
+
+    return results
+
+
+async def _fetch_region(client: httpx.AsyncClient, region: str) -> list:
+    cards: list = []
+    for page in range(1, MAX_PAGES + 1):
+        url = LISTING.format(region=region)
+        if page > 1:
+            url += f"?page={page}"
+        r = await client.get(url)
+        if r.status_code != 200:
+            break
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        page_cards = soup.select("article.myadlist")
+        if not page_cards:
+            break
+        cards.extend(page_cards)
+
+        # Page suivante ?
+        if not soup.select_one(f"a[href*='page={page + 1}']"):
+            break
+        await asyncio.sleep(0.4)
+
+    return cards
+
+
+def _parse_card(card) -> dict | None:
+    try:
+        a = card.select_one("a.display_search[href]")
+        if not a:
+            return None
+        href = a.get("href", "").strip()
+        if not href:
+            return None
+        if href.startswith("//"):
+            url = "https:" + href
+        elif href.startswith("http"):
+            url = href
+        else:
+            url = BASE_URL + href
+
+        h2 = a.select_one("h2")
+        titre = (h2.get_text(" ", strip=True) if h2 else a.get("title") or "").strip()
+        titre = re.sub(r"\s+", " ", titre)
+
+        # id annonce : data-adlisting / id="tab_{ref}" sinon depuis -{ref}.htm
+        ref = card.get("data-adlisting", "") or ""
+        if not ref:
+            m = re.search(r"tab_(\d+)", card.get("id", ""))
+            ref = m.group(1) if m else ""
+        if not ref:
+            m2 = re.search(r"-(\d+)\.htm", href)
+            ref = m2.group(1) if m2 else url
+
+        # Localisation : 1er bloc .location = nom département ; 2e = "France"
+        loc_blocks = card.select("div.col-md-5 .location")
+        if not loc_blocks:
+            loc_blocks = card.select(".listing_r .location")
+        dept_nom = loc_blocks[0].get_text(" ", strip=True) if loc_blocks else ""
+        dept_nom = re.sub(r"\s+", " ", dept_nom).strip()
+        dept = NORM_DEPT.get(_norm(dept_nom), "")
+
+        # Prix
+        price_el = card.select_one("div.price")
+        prix = _parse_num(price_el.get_text(" ", strip=True)) if price_el else None
+
+        # Description
+        desc_el = card.select_one("p.description")
+        description = desc_el.get_text(" ", strip=True) if desc_el else ""
+
+        # Détails (ul.content li) : type, "A vendre", "N Boxes", "X ha"
+        li_texts = [li.get_text(" ", strip=True) for li in card.select("ul.content li")]
+        type_bien = "propriété équestre"
+        for t in li_texts:
+            tl = _norm(t)
+            if tl and tl != "a vendre" and "box" not in tl and "ha" not in tl:
+                type_bien = t.lower()
+                break
+
+        # Surface en HECTARES → surface_terrain (m²)
+        surface_terrain = None
+        for t in li_texts:
+            mha = re.search(r"([\d.,]+)\s*ha", t, re.IGNORECASE)
+            if mha:
+                try:
+                    ha = float(mha.group(1).replace(",", "."))
+                    # Garde-fou : rejette les saisies absurdes (> 10 000 ha).
+                    surface_terrain = ha * 10000 if 0 < ha <= 10000 else None
+                except ValueError:
+                    surface_terrain = None
+                break
+
+        # Photo de couverture
+        photos: list[str] = []
+        img = card.select_one("div.thumb img[data-src]") or card.select_one(
+            "div.thumb img[src]"
+        )
+        if img:
+            src = (img.get("data-src") or img.get("src") or "").strip()
+            if src.startswith("//"):
+                src = "https:" + src
+            elif src.startswith("/"):
+                src = BASE_URL + src
+            if src.startswith("http"):
+                photos.append(src)
+        photos = photos[:PHOTOS_PER_CARD]
+
+        return {
+            "source": "equirodi",
+            "url": url,
+            "id_annonce": ref,
+            "titre": titre[:150],
+            "type_bien": type_bien,
+            "description": description[:1200],
+            "departement": dept,
+            "ville": dept_nom,          # pas de ville exacte sur la liste
+            "code_postal": "",          # absent de la liste (seul le dept-nom)
+            "surface": None,            # surface habitable absente de la liste
+            "surface_terrain": surface_terrain,
+            "pieces": None,
+            "chambres": None,
+            "prix": prix,
+            "dpe": None,
+            "photos": photos,
+            "agence": "Equirodi",
+        }
+    except Exception:
+        return None
+
+
+def _parse_num(text: str) -> float | None:
+    cleaned = re.sub(r"[^\d,\.]", "", text.replace("\xa0", " ").replace(" ", ""))
+    cleaned = cleaned.replace(",", ".")
+    if cleaned.count(".") > 1:
+        cleaned = cleaned.replace(".", "")
+    try:
+        return float(cleaned) if cleaned else None
+    except ValueError:
+        return None
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
+    from config_loader import load_criteria
+
+    criteres = load_criteria()
+    biens = asyncio.run(
+        search(
+            {
+                "departements": criteres.departements,
+                "prix_max": criteres.prix_max,
+                "prix_min": getattr(criteres, "prix_min", 0),
+                "surface_min": criteres.surface_min,
+            }
+        )
+    )
+    print(f"\nTotal Equirodi (depts cibles): {len(biens)} annonces")
+    depts = sorted({b["departement"] for b in biens if b["departement"]})
+    print(f"Départements vus : {depts}")
+    for b in biens[:12]:
+        print(
+            f"  [{b['departement']}] {b['titre'][:55]}"
+            f" — {b['prix']}€"
+            f" — terrain {b.get('surface_terrain') or '?'}m²"
+            f" — {b['type_bien']} — {b['ville']}"
+        )

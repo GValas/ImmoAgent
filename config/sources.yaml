@@ -634,7 +634,134 @@ sources:
       Scraper fonctionnel conserve. Dernier test 2026-05-30.
 
 
+  # ── Nouveaux scrapers 2026-05-30 (workflow #3 — filtre dept vérifié, 0 fuite) ──
+  - id: notaires_valdeloire
+    nom: Notaires Val de Loire (Chambre interdép.)
+    url_base: https://chambre-interdep-valdeloire.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: >-
+      Portail notarial régional SSR (Novius), httpx pur. Listing
+      /petites-annonces?typeTransactions[]=VENTE&typeBiens[]=MAI&typeBiens[]=AGR&page=N
+      (12/page, ~96 pages). Filtre TYPE serveur (typeBiens[] MAI/AGR) ; PAS de param dept
+      serveur -> post-filtre dept depuis le slug de fiche (.../{ville}-{NN}/{id}) + CP de
+      la description. 0 fuite. ~1126 maisons/propriétés VENTE ; cœur de zone 37=558,
+      45=280, 41=270 ; marginal 18/36/72/89/28 ; 49/53/58=0. Prix=FAI. Complémentaire de
+      immobilier_notaires (API nationale).
+  - id: equirodi
+    nom: Equirodi
+    url_base: https://www.equirodi.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx .htm, immobilier équestre (calqué sur equidomain). Listing par REGION
+      /annonces/equestre-a-vendre/propriete-equestre/{region}.htm?page=N (PAS de /fr/).
+      Cartes article.myadlist ; surface en hectares -> surface_terrain. Filtre dept via
+      slug ANCIENNE région (centre/bourgogne/pays-de-la-loire, couvrent les 11 depts) ;
+      PIEGE : slug inconnu retombe sur le national -> post-filtre strict par NOM de dept
+      (garde-fou). 0 fuite. ~41 biens (9/11 depts) ; pas de CP ni surface habitable.
+  - id: clefrance
+    nom: Cle France
+    url_base: https://www.clefrance.co.uk
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Portail anglophone (Joomla/OS Property, pas de Cloudflare). Listing par REGION
+      /all-properties-for-sale-in-pays-de-la-loire (53/72/49) et -in-centre-france
+      (28/45/41/37/36/18) ; pagination /country-and-region-{reg}/page-N/{catid} (catid
+      découvert page 1). Cartes div.property_item (data-lat/long). Filtre dept 0-fuite via
+      reverse-geocode des coords (API BAN) car le slug est plein de coquilles. Exclut les
+      biens vendus (SLD*). ~154 biens (53:84, 72:28, 28:21, 49:11, 45:9, 18:1). Limites :
+      surface/pièces absentes ; 89/58 non couverts.
+  - id: iii_immobilier
+    nom: Agence Pollet (iii-immobilier)
+    url_base: https://www.iii-immobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR PHP httpx. Listing global /tous-les-biens-liste.php?page=N (a.prop-card), ~50
+      biens ruraux curated (demeures/moulins/propriétés ha) Cher/Sologne. Fiche
+      /bien/{id}/{slug} : prix JSON-LD, specs table.fiche-features, coords Leaflet (centre
+      secteur flouté). Pas de CP/commune exposés -> filtre dept par reverse-geocode des
+      coords via geo.api.gouv.fr (codeDepartement réel). 18/41/45 uniquement, 0 fuite.
+      Limites : ville/CP approximatifs, inventaire petit (Cher).
+  - id: sergic
+    nom: Sergic
+    url_base: https://www.sergic.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx. Inventaire national (~693 biens vente) rendu en UNE page :
+      /rechercher-un-bien/?transaction=vente (pas de pagination ; ?localisation= ignoré
+      serveur). POST-FILTRE code_postal[:2] (CP dans 693/693 cartes div.listing-biens__card
+      + slug = 0 fuite). Exclut parking/garage/cave/terrain. Couverture cible MODESTE :
+      45=20, 49=22, 58=1 (gros du stock Lille/Nantes/Paris, bcp d'appartements). Limite :
+      1 photo/carte, pas de terrain/DPE en liste.
+  - id: maisons_bourgogne
+    nom: Maisons Bourgogne (Agence Prunier)
+    url_base: https://maisons-bourgogne.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Vieux CMS PHP SSR (index.php?action=list, pagination ?page=N&action=list). Petite
+      agence Autun/Morvan (~61 biens : 50 en 71, 9 en 58 CIBLE, 2 en 21). Ni CP ni filtre
+      dept serveur ; commune via le slug de fiche /offre/{ville}/bien/{id}/, résolue en
+      dept+CP via geo.api.gouv.fr RESTREINTE aux depts agence (58/71/21/89) + match exact
+      du nom (évite les homonymes : auxy->71 pas 45). 0 fuite. Stock cible = 9 maisons (58).
+
+  # ── Scrapers fonctionnels mais 0 stock dans la zone cible (conservés, actif:false) ──
+  - id: immobilier_equestre
+    nom: Immobilier Equestre
+    url_base: https://www.immobilier-equestre.com
+    methode: scrape_simple
+    actif: false
+    priorite: 3
+    note: >-
+      SSR httpx WordPress (equirodi-immo). Listing /proprietes/, pagination
+      /proprietes/page/N/. Cartes div.listing-wrap sans CP -> post-filtre code_postal[:2]
+      récupéré sur la fiche (ul.listings-datas). 0 fuite. INACTIF : site mono-agence 100%
+      Normandie (14/61/76), 0 stock dans les depts cibles. dernier_test 2026-05-30.
+  - id: proprietesdecharme
+    nom: Propriétés De Charme
+    url_base: https://www.proprietesdecharme.com
+    methode: scrape_simple
+    actif: false
+    priorite: 4
+    note: >-
+      SSR WordPress (thème Houzez), vitrine prestige nationale (~3389 biens). Pas de filtre
+      dept serveur (taxo par ville) ; CP absent des cartes, présent seulement sur la fiche
+      (JSON-LD) -> filtrer la zone imposerait de fetcher ~3389 fiches/run. INACTIF : 0 stock
+      zone cible (417 fiches récentes = 0) ; inventaire concentré 06/83/13/84/56/44/75.
+      dernier_test 2026-05-30.
+  - id: immobilier_bourgogne
+    nom: Portail Immobilier Bourgogne
+    url_base: https://www.immobilier-bourgogne.net
+    methode: scrape_simple
+    actif: false
+    priorite: 4
+    note: >-
+      SSR HTML (CMS GLI, ISO-8859-1), accessible httpx (UA Chrome). Listing maisons
+      /type_bien/4-40/a-vendre.html (pagination link rel=next) ; CP seulement sur la fiche
+      /fiches/{cat}_{id}/ (bloc clé/valeur) -> on visite chaque fiche, post-filtre
+      code_postal[:2] (0 fuite). INACTIF : ~22 maisons 100% Côte-d'Or (21, agence CADR'IMMO
+      Dijon), 0 bien dans les depts cibles (58/89 inclus). dernier_test 2026-05-30.
+
+
 blacklist:
+
+  # ── Ajouts 2026-05-30 (workflow #3 — Cloudflare Bot Management) ──
+  - id: sixiemeavenue
+    nom: "Sixième Avenue"
+    url_base: "https://www.sixiemeavenue.com"
+    raison: "SPA Vue.js + backend Laravel mutualisé SPF Tech (= Stéphane Plaza Immobilier). HTML SSR /acheter = coquille CSR. Données via XHR /place-search puis /search-goods?{departement,page,perPage,order} (filtre dept serveur), mais les 2 endpoints renvoient HTTP 403 corps vide (server: cloudflare) malgré UA Chrome + cookies de session + X-XSRF-TOKEN + sec-ch-ua/sec-fetch complets — Cloudflare Bot Management sur empreinte TLS/JA3 (pas un 419 CSRF ni challenge JS). Réactivation : Playwright ou impersonation TLS (curl_cffi/tls-client). Scraper conservé actif:false."
+    dernier_test: "2026-05-30"
+    alternative: "iad, safti, proprietes_privees"
 
   # ── Ajouts 2026-05-30 (workflow #2 — Cloudflare managed challenge) ──
   - id: bi21

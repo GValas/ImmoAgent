@@ -46,6 +46,11 @@ class Bien:
     gare_nom: Optional[str] = None
     gare_distance_km: Optional[float] = None
 
+    # Arrêt de bus le plus proche (rempli par scrapers/bus.py — informatif, non éliminatoire)
+    bus_proche: Optional[bool] = None
+    bus_nom: Optional[str] = None
+    bus_distance_km: Optional[float] = None
+
     # Caractéristiques
     surface: Optional[float] = None       # m²
     surface_terrain: Optional[float] = None
@@ -113,6 +118,8 @@ class CriteresRecherche:
     poids_scoring: dict
     gare_obligatoire: bool = False
     gare_rayon_km: float = 10.0
+    bus_actif: bool = True
+    bus_rayon_km: float = 2.0
     geoloc_actif: bool = True
     geoloc_piscine_ortho: bool = False
     geoloc_terrain_tol_pct: float = 25.0

@@ -124,7 +124,9 @@ def save_seen(seen: set):
 
 
 def bien_hash(b: dict) -> str:
-    key = f"{b.get('prix')}-{b.get('surface')}-{b.get('ville','').lower().strip()}"
+    # ville peut être None (scrapers sans ville exposée : proprietes_rurales,
+    # equidomain, horse_immo…) — `or ''` couvre clé absente ET valeur None.
+    key = f"{b.get('prix')}-{b.get('surface')}-{str(b.get('ville') or '').lower().strip()}"
     return hashlib.md5(key.encode()).hexdigest()
 
 
@@ -162,6 +164,24 @@ def update_suivi(new_biens_scored: list[dict], cfg: dict):
     qualifying = [b for b in new_biens_scored if (b.get("score_total") or 0) >= seuil]
     merged = existing + qualifying
 
+    # Garde-fou département : ne JAMAIS conserver un bien hors zone cible.
+    # Auto-nettoie les fuites historiques du suivi cumulatif (ex. bienici qui
+    # renvoyait des biens 05/94 avant le post-filtre _bien_in_dept du scraper).
+    try:
+        target = {str(d).strip().zfill(2) for d in load_criteria().departements}
+    except Exception:
+        target = set()
+    if target:
+        def _dept_ok(b: dict) -> bool:
+            cp = str(b.get("code_postal") or "").strip()
+            if len(cp) >= 2 and cp[:2].isdigit():
+                return cp[:2] in target
+            return str(b.get("departement") or "").strip().zfill(2) in target
+        before = len(merged)
+        merged = [b for b in merged if _dept_ok(b)]
+        if before - len(merged):
+            print(f"[Scheduler] Garde-fou dept : {before - len(merged)} bien(s) hors-zone écarté(s)")
+
     # Tri par score décroissant, déduplique, tronque
     seen_h = set()
     deduped = []
@@ -194,10 +214,13 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
     ws = wb.active
     ws.title = "Suivi actif"
 
+    # Aligné sur l'export resultats_*.xlsx (agents/analyst.py) + colonne
+    # suivi-spécifique « Ajouté le ». Inclut géoloc et liens satellite/cadastre.
     headers = [
-        "Score", "Score visuel", "Ajouté le", "Source", "Titre",
-        "Ville", "Dép", "Surface", "Terrain", "Pièces", "DPE",
-        "Prix (€)", "Prix/m²", "Prix/m² marché", "Résumé style", "Alertes", "URL"
+        "Score", "Score visuel", "Verdict Style", "Ajouté le", "Source", "Titre",
+        "Ville", "Dép", "Département", "Gare", "Bus", "Type", "Surface", "Terrain", "Pièces", "DPE",
+        "Prix (€)", "Prix/m²", "Prix/m² marché", "Résumé style", "Alertes",
+        "Parcelle probable", "Piscine ortho", "Satellite", "Ortho+cadastre", "URL"
     ]
     hfill = PatternFill("solid", fgColor="2C3E50")
     hfont = Font(color="FFFFFF", bold=True)
@@ -207,22 +230,54 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
         c.font = hfont
         c.alignment = Alignment(horizontal="center")
 
+    # Couleur du Score (sur la seule cellule Score) + zébrage 1 ligne sur 2.
     fills = {
         "high":   PatternFill("solid", fgColor="D5F5E3"),
         "medium": PatternFill("solid", fgColor="FEF9E7"),
     }
+    zebra_fill = PatternFill("solid", fgColor="F2F4F4")
+
+    # Colonnes affichées comme hyperliens : {index_1based: libellé}
+    link_labels = {
+        headers.index("Satellite") + 1: "Vue satellite",
+        headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
+        headers.index("URL") + 1: "Voir l'annonce",
+    }
+    piscine_col = headers.index("Piscine ortho") + 1
+    score_col = headers.index("Score") + 1
+    price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché")}
 
     for row, b in enumerate(biens, 2):
         score = b.get("score_total", 0)
-        fill  = fills["high"] if score >= 75 else fills["medium"]
+        score_fill = fills["high"] if score >= 75 else fills["medium"]
+        zebra = zebra_fill if row % 2 == 0 else None
+
+        piscine = b.get("piscine_ortho")
+        p_score = b.get("piscine_ortho_score") or 0.0
+        if piscine is None:
+            piscine_str = ""                       # détection non activée
+        elif not piscine:
+            piscine_str = "non"
+        elif p_score >= 0.6:
+            piscine_str = f"🏊 probable ({p_score:.2f})"
+        else:
+            piscine_str = f"🏊? possible ({p_score:.2f})"
+
         vals  = [
             score,
             b.get("score_visuel"),
-            b.get("date_scraped", "")[:10],
+            b.get("verdict_visuel", ""),
+            (b.get("date_scraped") or "")[:10],
             b.get("source", ""),
             b.get("titre", ""),
             b.get("ville", ""),
             b.get("departement", ""),
+            analyst.dept_nom(b.get("departement")),
+            (f"{b.get('gare_nom')} ({b.get('gare_distance_km')} km)"
+             if b.get("gare_nom") else ""),
+            (f"{b.get('bus_nom')} ({b.get('bus_distance_km')} km)"
+             if b.get("bus_proche") else ""),
+            b.get("type_bien", ""),
             b.get("surface"),
             b.get("surface_terrain"),
             b.get("pieces"),
@@ -232,18 +287,35 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
             b.get("prix_m2_marche_dep"),
             b.get("resume_visuel", ""),
             " | ".join(b.get("alerte", [])),
+            b.get("parcelle_match", ""),
+            piscine_str,
+            b.get("maps_satellite_url", ""),
+            b.get("geoportail_url", ""),
             b.get("url", ""),
         ]
-        url_col = len(headers)  # dernière colonne = URL
+        piscine_url = b.get("piscine_ortho_url")
         for col, v in enumerate(vals, 1):
+            if isinstance(v, (list, dict)):
+                v = str(v) if v else ""
             c = ws.cell(row=row, column=col, value=v)
-            c.fill = fill
-            if col == url_col and v:
+            # Fond : Score en couleur, le reste en zébrage 1 ligne/2
+            if col == score_col:
+                c.fill = score_fill
+            elif zebra is not None:
+                c.fill = zebra
+            if col in price_cols and isinstance(v, (int, float)):
+                c.number_format = "#,##0"
+            if col in link_labels and v:
                 c.hyperlink = str(v)
-                c.value = "Voir l'annonce"
+                c.value = link_labels[col]
+                c.style = "Hyperlink"
+            # Piscine localisée → le libellé pointe vers la vue satellite de la piscine
+            elif col == piscine_col and piscine is True and piscine_url:
+                c.hyperlink = str(piscine_url)
                 c.style = "Hyperlink"
 
-    widths = [8, 12, 12, 12, 40, 18, 6, 9, 9, 8, 6, 12, 10, 14, 40, 35, 50]
+    widths = [8, 12, 14, 12, 12, 40, 18, 6, 18, 24, 22, 12, 9, 9, 8, 6, 12, 10, 14, 45, 35,
+              20, 12, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 

@@ -91,6 +91,45 @@ Au démarrage, le log doit afficher le GPU — sinon le conteneur **s'arrête en
 [Vision] CLIP chargé sur cuda (NVIDIA GeForce RTX ...)
 ```
 
+### Variante pas à pas (commandes Docker brutes, sans Compose)
+
+Si tu veux comprendre ce que fait Compose, voici l'équivalent en commandes Docker
+directes. Chaque option correspond à une ligne du `docker-compose.yml`.
+
+```bash
+# 1) Construire l'image (la 1re fois, ou après une modif du code/des deps).
+#    Télécharge torch CUDA + Chromium + le modèle CLIP : plusieurs Go, plusieurs minutes.
+docker build -t immo-agent:prod .
+
+# 2) Lancer le scheduler dans un conteneur détaché.
+docker run -d \
+  --name immo-agent-scheduler \
+  --restart unless-stopped \          # redémarre après crash / reboot
+  --gpus all \                        # expose le GPU NVIDIA au conteneur
+  -e IMMO_FORCE_GPU=1 \               # exige le GPU (échoue si absent)
+  -v "$(pwd)/data:/app/data" \        # persiste suivi_actif.xlsx, biens_vus.json, etc.
+  -v "$(pwd)/config:/app/config" \    # criteria.md éditable à chaud
+  -v "$(pwd)/logs:/app/logs" \        # logs lisibles depuis l'hôte
+  immo-agent:prod                     # l'image construite à l'étape 1
+#  → la commande lancée dans le conteneur est `python scheduler.py` (CMD du Dockerfile)
+
+# 3) Suivre la boucle en direct
+docker logs -f immo-agent-scheduler
+
+# 4) Piloter le conteneur
+docker stop immo-agent-scheduler       # arrêter
+docker start immo-agent-scheduler      # relancer
+docker rm -f immo-agent-scheduler      # supprimer (les données restent dans ./data)
+```
+
+> Le conteneur exécute `python scheduler.py` en PID 1 : la boucle infinie du scheduler
+> EST le processus principal du conteneur. Pas besoin de `nohup` ni de `&` — Docker gère
+> le détachement (`-d`) et le redémarrage (`--restart`).
+
+C'est strictement équivalent à `docker compose up -d --build` ; Compose ne fait que lire
+ces mêmes options depuis `docker-compose.yml`. Utilise l'un **ou** l'autre, pas les deux
+(ils créeraient deux conteneurs concurrents).
+
 ### Persistance
 
 Trois volumes sont montés (cf. `docker-compose.yml`) :
