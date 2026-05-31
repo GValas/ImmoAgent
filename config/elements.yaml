@@ -47,14 +47,18 @@ elements:
 
   # ── Éléments en ALERTE (non calibrés) : non destructif, à calibrer avant de
   #    passer en mode: exclusion — voir « ## Style visuel » de criteria.md ─────
+  # ── DÉSACTIVÉ : non fiable (comme aucun_arbre). En version étroite (astroturf)
+  #    il rate les vraies pelouses trop-parfaites (ex. Corquilleroy=0.37) ; en
+  #    version large il signale aussi les maisons de caractère à pelouse verte
+  #    (longère pierre Niherne=0.99, Francueil=0.88). CLIP ne sépare pas « pelouse
+  #    parfaite » de « pelouse verte d'une belle maison ». À juger à l'œil.
   - nom: gazon_parfait
     description: >
-      Gazon artificiel / pelouse synthétique (vert uniforme, sans texture, type
-      astroturf) — signe de jardin sans charme. À ne pas confondre avec une
-      pelouse naturelle bien tondue.
-    actif: true
-    mode: alerte          # séparation nette → passable en exclusion si tu confirmes
-    seuil: 0.75           # calibré : pelouse synthétique ≈0.90, le reste ≤0.48
+      Gazon artificiel / pelouse trop parfaite. NON FIABLE en CLIP zero-shot
+      (voir commentaire) — à juger à l'œil via les photos.
+    actif: false
+    mode: alerte
+    seuil: 0.75
     positifs:
       - "a lawn of fake plastic artificial turf, perfectly uniform green"
       - "a garden with synthetic astroturf grass"

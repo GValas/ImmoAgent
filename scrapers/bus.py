@@ -38,6 +38,12 @@ OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 ]
+
+# Sentinelle : Overpass injoignable (≠ "joignable mais aucun arrêt trouvé").
+_OVERPASS_UNAVAILABLE = object()
+# Coupe-circuit : si Overpass échoue N fois d'affilée, on cesse de l'appeler pour
+# le reste du run (annotation bus non critique) → évite ~80 s perdues par bien.
+_BREAKER_THRESHOLD = 3
 GEO_API_URL = "https://geo.api.gouv.fr/communes"
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) immo-agent"}
@@ -158,10 +164,9 @@ async def _nearest_bus(
         await asyncio.sleep(1.5)
 
     if elements is None:
-        print("[Bus] Overpass indisponible — arrêt non annoté pour ce bien")
-        return None
+        return _OVERPASS_UNAVAILABLE     # injoignable (géré par le coupe-circuit)
     if not elements:
-        return None
+        return None                       # joignable, aucun arrêt dans le rayon
 
     best_name, best_d = None, float("inf")
     for el in elements:
@@ -201,6 +206,7 @@ async def annotate_biens(biens: list[dict], rayon_km: float = 2.0) -> list[dict]
         # Overpass public demande un accès quasi-séquentiel (sinon 429). Sur les
         # quelques biens survivants annotés ici, le coût total reste faible.
         overpass_sem = asyncio.Semaphore(1)
+        breaker = {"fails": 0, "dead": False}   # coupe-circuit Overpass
 
         async def coords_for(b: dict) -> tuple[float, float] | None:
             lat, lon = b.get("latitude"), b.get("longitude")
@@ -212,20 +218,33 @@ async def annotate_biens(biens: list[dict], rayon_km: float = 2.0) -> list[dict]
                     b.get("departement", ""),
                 )
 
+        def _no_bus(b: dict):
+            b["bus_proche"] = False
+            b["bus_nom"] = None
+            b["bus_distance_km"] = None
+
         async def annotate_one(b: dict):
             coords = await coords_for(b)
-            if not coords:
-                b["bus_proche"] = False
-                b["bus_nom"] = None
-                b["bus_distance_km"] = None
+            if not coords or breaker["dead"]:
+                _no_bus(b)
                 return
             async with overpass_sem:
+                if breaker["dead"]:          # tombé entre-temps (accès séquentiel)
+                    _no_bus(b)
+                    return
                 res = await _nearest_bus(client, coords[0], coords[1], rayon_m)
-            if res is None:
-                b["bus_proche"] = False
-                b["bus_nom"] = None
-                b["bus_distance_km"] = None
+            if res is _OVERPASS_UNAVAILABLE:
+                breaker["fails"] += 1
+                if breaker["fails"] >= _BREAKER_THRESHOLD:
+                    breaker["dead"] = True
+                    print(f"[Bus] Overpass injoignable {_BREAKER_THRESHOLD}× d'affilée "
+                          f"— annotation bus désactivée pour ce run (non critique)")
+                _no_bus(b)
+            elif res is None:
+                breaker["fails"] = 0         # joignable → reset
+                _no_bus(b)
             else:
+                breaker["fails"] = 0
                 nom, dist = res
                 b["bus_proche"] = dist <= rayon_km
                 b["bus_nom"] = nom

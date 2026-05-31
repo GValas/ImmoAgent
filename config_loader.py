@@ -32,6 +32,7 @@ DEFAULTS = {
     "geoloc_actif":          True,   # pré-localisation cadastrale (liens + parcelles)
     "geoloc_piscine_ortho":  False,  # détection piscine sur ortho IGN (lourd)
     "geoloc_terrain_tol_pct": 25,    # tolérance écart contenance vs terrain annoncé (%)
+    "photos_min":            0,      # nb minimal de photos exigé (0 = pas de filtre)
     "poids_prix":          25,
     "poids_surface":       20,
     "poids_terrain":       15,
@@ -86,6 +87,7 @@ def load_criteria() -> CriteresRecherche:
         mots_cles_negatifs=get("mots_cles_negatifs"),
         equipements_requis=get("equipements_requis"),
         poids_scoring=poids,
+        photos_min=int(get("photos_min")),
         gare_obligatoire=bool(get("gare_obligatoire")),
         gare_rayon_km=float(get("gare_rayon_km")),
         bus_actif=bool(get("bus_actif")),

@@ -68,9 +68,10 @@ surface_max:  300
 pieces_min:   6         # 4 chambres + séjour + cuisine minimum
 pieces_max:   13        # au-delà = trop grand / immeuble de rapport
 terrain_min:  4000      # m² — terrain arboré impératif
-prix_min:     330000    # €
+prix_min:     300000    # €
 prix_max:     600000    # €
 dpe_exclus:   ["E", "F", "G"]    # A B C D acceptés
+photos_min:   3         # exclure les annonces avec moins de N photos (info trop pauvre)
 ```
 
 
@@ -86,9 +87,13 @@ dpe_exclus:   ["E", "F", "G"]    # A B C D acceptés
 #                        (mention propre au bien) OU par la détection visuelle CLIP.
 
 ```
-mots_cles_negatifs: ["viager", "enchères", "occupé", "indivision", "inondable", "zone inondable"]
+mots_cles_negatifs: ["viager", "enchères", "occupé", "indivision", "inondable", "zone inondable", "toit plat", "toit-terrasse", "toit terrasse", "toiture terrasse", "toiture-terrasse", "toiture plate"]
 equipements_requis: ["piscine"]
 ```
+
+# Note « toit plat » : exclusion par TEXTE (CLIP confond toit plat et toit en pente,
+# vérifié). Attrape les annonces qui le mentionnent ; une maison à toit plat dont le
+# texte ne le dit pas passera (rare — c'est en général un argument mis en avant).
 
 
 ## Analyse VISUELLE (CLIP sur les photos) — Exclusions
@@ -100,13 +105,14 @@ equipements_requis: ["piscine"]
 
 ```
 piscine hors-sol (bassin posé au sol, à parois/habillage bois) | alerte
-gazon artificiel / pelouse synthétique                         | alerte
-# aucun arbre sur le terrain                                   | désactivé (non fiable en CLIP, cf. note)
+# gazon artificiel / pelouse trop parfaite                      | désactivé (non fiable en CLIP, cf. note)
+# aucun arbre sur le terrain                                    | désactivé (non fiable en CLIP, cf. note)
 ```
 
-> 🌳 *« aucun arbre »* est **désactivé** : détecter une *absence* d'arbres marche mal
-> en CLIP (déclenche sur les vues de champs, cartes de localisation, plans… même quand
-> le bien a des arbres). À juger plutôt à l'œil via le lien satellite de l'Excel.
+> 🌳 *« aucun arbre »* et *« gazon parfait »* sont **désactivés** : CLIP ne sait pas
+> détecter de façon fiable une *absence* d'arbres (déclenche sur vues de champs/cartes/plans)
+> ni une *pelouse trop parfaite* (indistinguable d'une belle pelouse verte de maison de
+> caractère). À juger à l'œil via les photos / le lien satellite de l'Excel.
 
 > ⚙️ **Comment ça s'applique** : cette liste est ta source en français. Les prompts
 > réellement soumis à CLIP vivent dans `config/elements.yaml` (en anglais — CLIP est

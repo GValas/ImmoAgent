@@ -156,6 +156,66 @@ def filter_new(biens: list[dict], seen: set) -> tuple[list[dict], set]:
 
 
 # ──────────────────────────────────────────────
+# GARDE-FOU LIVENESS — retire les annonces mortes du suivi
+# ──────────────────────────────────────────────
+
+# Marqueurs textuels FORTS d'une annonce retirée (pour les pages qui renvoient 200
+# avec un message au lieu d'un 404/410). Volontairement spécifiques pour éviter de
+# supprimer une annonce vivante par coïncidence.
+_DEAD_MARKERS = (
+    "plus disponible", "n'est plus disponible", "annonce supprimée",
+    "cette annonce n'existe plus", "annonce n'est plus en ligne",
+    "ce bien n'est plus", "no longer available", "property is no longer",
+)
+
+
+async def prune_dead_listings(biens: list[dict], concurrency: int = 8) -> tuple[list[dict], int]:
+    """Retire les biens dont l'URL est morte. CONSERVATEUR : on ne retire QUE sur
+    404/410/451 ou un marqueur « plus disponible » explicite. Sur timeout, erreur
+    réseau, 403 (anti-bot) ou 5xx → on GARDE (pas de suppression sur incertitude).
+    Retourne (biens_vivants, nb_retirés)."""
+    import httpx
+    from urllib.parse import urlparse
+    targets = [b for b in biens if str(b.get("url") or "").startswith("http")]
+    if not targets:
+        return biens, 0
+    sem = asyncio.Semaphore(concurrency)
+    dead = set()
+
+    async def check(b: dict, client: httpx.AsyncClient):
+        url = str(b["url"])
+        async with sem:
+            try:
+                r = await client.get(url, timeout=12)
+            except Exception:
+                return  # transitoire → garder
+            if r.status_code in (404, 410, 451):
+                dead.add(id(b))
+                return
+            if r.status_code != 200:
+                return  # 3xx/403/5xx → incertain, garder
+            # Redirigé HORS de la fiche (l'identifiant disparaît de l'URL finale)
+            # → annonce retirée renvoyée vers un index/accueil (ex. proprietes-privees
+            # /annonces/XXX → /annonces-immobilieres). follow_redirects masque le 404.
+            req_id = urlparse(url).path.rstrip("/").split("/")[-1]
+            if len(req_id) >= 4 and req_id not in urlparse(str(r.url)).path:
+                dead.add(id(b))
+                return
+            low = r.text[:60000].lower()
+            if any(m in low for m in _DEAD_MARKERS):
+                dead.add(id(b))
+
+    async with httpx.AsyncClient(
+        headers={"User-Agent": "Mozilla/5.0 (compatible; immo-agent/1.0)"},
+        follow_redirects=True,
+    ) as client:
+        await asyncio.gather(*[check(b, client) for b in targets])
+
+    alive = [b for b in biens if id(b) not in dead]
+    return alive, len(biens) - len(alive)
+
+
+# ──────────────────────────────────────────────
 # MISE À JOUR DU FICHIER DE SUIVI ACTIF
 # ──────────────────────────────────────────────
 
@@ -211,6 +271,15 @@ async def update_suivi(new_biens_scored: list[dict], cfg: dict):
         merged = [b for b in merged if _dept_ok(b)]
         if before - len(merged):
             print(f"[Scheduler] Garde-fou dept : {before - len(merged)} bien(s) hors-zone écarté(s)")
+
+    # Garde-fou liveness : retire les annonces mortes (vendues/retirées → 404/410
+    # ou page « plus disponible »). Le suivi cumulatif les garderait sinon → liens vides.
+    try:
+        merged, n_dead = await prune_dead_listings(merged)
+        if n_dead:
+            print(f"[Scheduler] Garde-fou liveness : {n_dead} annonce(s) morte(s) retirée(s)")
+    except Exception as e:
+        print(f"[Scheduler] Garde-fou liveness ignoré ({e})")
 
     # « Ajouté le » : date d'entrée dans le suivi. On préserve la date d'origine
     # d'un bien déjà suivi (clé d'identité) ; un bien jamais vu est stampé à

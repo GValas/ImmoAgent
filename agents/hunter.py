@@ -343,6 +343,9 @@ def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
         if pieces and getattr(criteres, "pieces_max", 0) and pieces > criteres.pieces_max:
             continue
 
+        # NB : photos_min n'est PAS appliqué ici — la vue liste ne capte que 0-1 photo.
+        # Il l'est dans run(), APRÈS l'enrichissement galerie (page détail).
+
         filtered.append(b)
 
     return filtered
@@ -439,6 +442,42 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
         from scrapers.gares import filter_biens_gare
         filtered = await filter_biens_gare(filtered, criteres.gare_rayon_km)
         print(f"[Hunter] Après filtre gare : {len(filtered)} annonces")
+
+    # Enrichissement galerie : récupère la galerie COMPLÈTE depuis la page détail
+    # des survivants (la plupart des scrapers ne captent que 0-1 photo en vue liste).
+    # Fait ici, sur ~les survivants, pour ne pas visiter 12000 pages détail.
+    import httpx as _httpx
+    from collections import defaultdict as _dd
+    from urllib.parse import urlparse as _up
+    from scrapers.gallery import fetch_gallery
+    async with _httpx.AsyncClient(
+        headers={"User-Agent": "Mozilla/5.0 (compatible; immo-agent/1.0)"},
+        follow_redirects=True, timeout=20,
+    ) as _gc:
+        _sem = asyncio.Semaphore(16)               # plafond global
+        _dom_sem = _dd(lambda: asyncio.Semaphore(2))  # max 2 requêtes simultanées / domaine
+        async def _enrich(b):                       # évite le 429 (ex. century21)
+            dom = _up(str(b.get("url") or "")).netloc
+            async with _sem, _dom_sem[dom]:
+                try:
+                    g = await fetch_gallery(b, _gc)
+                    if g and len(g) > len(b.get("photos") or []):
+                        b["photos"] = g
+                except Exception:
+                    pass
+        await asyncio.gather(*[_enrich(b) for b in filtered])
+    import statistics as _st
+    _counts = [len(b.get("photos") or []) for b in filtered]
+    _med = int(_st.median(_counts)) if _counts else 0
+    print(f"[Hunter] Galerie enrichie : médiane {_med} photos/bien "
+          f"({sum(1 for c in _counts if c >= 3)}/{len(filtered)} ont ≥3 photos)")
+
+    # photos_min : exclure les annonces trop pauvres (APRÈS enrichissement galerie)
+    pmin = getattr(criteres, "photos_min", 0)
+    if pmin:
+        before = len(filtered)
+        filtered = [b for b in filtered if len(b.get("photos") or []) >= pmin]
+        print(f"[Hunter] Filtre photos_min({pmin}) : {len(filtered)}/{before} conservés")
 
     # Sauvegarde pré-vision (permet --only-vision sans re-scraper)
     ts = datetime.now().strftime("%Y%m%d_%H%M")

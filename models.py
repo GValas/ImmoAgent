@@ -114,6 +114,7 @@ class CriteresRecherche:
     mots_cles_negatifs: list[str]
     equipements_requis: list[str]
     poids_scoring: dict
+    photos_min: int = 0          # nb minimal de photos (0 = pas de filtre)
     gare_obligatoire: bool = False
     gare_rayon_km: float = 10.0
     bus_actif: bool = True

@@ -82,6 +82,7 @@ def _item_to_bien(item: dict, dept: str) -> dict | None:
         "longitude": None,
         "url": url,
         "photo_url": photos[0] if photos else None,
+        "photos": photos,                 # galerie complète (l'API liste la renvoie)
         "source": "iad",
         "date_ajout": "",
     }
