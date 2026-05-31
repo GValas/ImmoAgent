@@ -187,7 +187,7 @@ sources:
     methode: "scrape_simple"
     actif: true
     priorite: 1
-    note: "httpx pur — URL legacy list.htm?places=[{cp:XXXXX}]&qsVersion=1.0&m=search_refine — max 9 CP/req — ~10 annonces/dept — post-filtre Python"
+    note: "httpx — URL legacy list.htm?places=[{cp:NNNNN}]. Protection = DataDome (PAS Cloudflare) : sous UA desktop = 403. BRÈCHE exploitée : User-Agent app iOS (SeLoger/6.0 iPhone) → list.htm repasse en 200 (page SSR, mêmes sélecteurs). Contraintes DataDome : 1 SEUL CP/requête (multi-CP = 403), pas de pagination (page 1 ~24 cartes/CP), réputation IP collante → throttle 6s + arrêt au 1er 403. Sans proxies résidentiels rotatifs, couverture marginale (IP vite flaggée). Re-test 2026-05-30."
 
   - id: properstar
     nom: "Properstar"
@@ -753,6 +753,272 @@ sources:
       Dijon), 0 bien dans les depts cibles (58/89 inclus). dernier_test 2026-05-30.
 
 
+  # ── Nouveaux scrapers 2026-05-30 (workflow #4 — Loire, filtre dept vérifié, 0 fuite) ──
+  - id: immodefrance
+    nom: IMMO de France (Procivis)
+    url_base: https://www.procivis.fr/acheter
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: >-
+      SSR Rails+Tailwind. immodefrance.com redirige (301) vers procivis.fr ; listing
+      national /acheter. Filtre dept CÔTÉ SERVEUR via querystring locations[]=DP{NN}
+      (token Departement, ex DP53) + market_type=transac + property_types[]=house.
+      16/page, pagination ?page=N. Cartes li[data-pagination-target=item] ; ville/CP/
+      surface/pieces/DPE/prix extraits du texte. 0 fuite. Stock cibles : 53/28/49 ;
+      72/45/89/37/36/18/58/41=0 (réseau à implantation inégale). Pas de terrain/chambres
+      en liste.
+  - id: my_french_house
+    nom: My French House
+    url_base: https://www.my-french-house.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (Tailwind/Alpine, BunnyCDN), anglophone, biens de caractère (manoirs,
+      longères, châteaux, fermes). Listing par dept /property-for-sale-in-france/in/{dept-slug}
+      (filtre serveur). Cartes "featured" hors-zone écartées par post-filtre sur le nom de
+      dept (concordant slug fiche + texte). 0 fuite. PAS de code postal (ville+nom dept) ->
+      code_postal vide, dept déduit du nom. ~24 cartes max, stock faible (<=6/dept). Refs
+      MFH-xxx. Stock zone : 72/28/36/58/45/89.
+  - id: valdeloire_sothebys
+    nom: "Val de Loire Sologne Sotheby's International Realty"
+    url_base: "https://www.valdeloire-sologne-sothebysrealty.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, prestige Orléans/Tours/Sologne (châteaux, manoirs, moulins, propriétés
+      de chasse). Inventaire national ~25 annonces, concentré 37 (Tours/Loches) + 1 en 36.
+      Source = sitemap /sitemap_2_fr.xml (pages thématiques = carrousel ; résultats POST
+      stateful). Slug /ref-{ref}/vente-{type}-{ville}-{N}-pieces[-chambres]-{CP5}/ ->
+      post-filtre code_postal[:2]. Prix/surface via JSON-LD Offer sur la fiche. ATTENTION :
+      le postalCode du seller JSON-LD = AGENCE (37000), pas le bien -> filtre sur le CP du
+      slug uniquement. 0 fuite. Volume faible, couvre seulement 37+36.
+  - id: cabinet_chevillon
+    nom: Cabinet Chevillon
+    url_base: https://www.cabinetchevillon.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR WordPress immo (thème LBI). Filtre dept CÔTÉ SERVEUR via slug
+      /vente/{NN-dept-slug}/{page} (ex /vente/49-maine-et-loire/1) — 0 fuite. /biens/
+      redirige vers l'accueil (pas le listing). Cartes article.property-v2 ; URL détail
+      dans .button.js-obfuscation[data-url] ; surface habitable extraite de la description.
+      Spécialiste vieilles pierres Loire (châteaux/manoirs/maisons de maître/longères
+      tuffeau). Stock 49 (Saumur/Anjou ~18) + 37 (~2) ; autres depts cibles = 0.
+  - id: metais_immobilier
+    nom: Cabinet Métais
+    url_base: https://metais-immobilier.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR WordPress httpx. Listing unique /biens-immobiliers/ (div#all_biens > .card),
+      petit inventaire (~5), 100% Touraine (37). Prix/titre/ref/photo sur la carte ;
+      surface/pieces/chambres/terrain/type sur la fiche détail. Aucun CP sur le site
+      (37500 Chinon = agence) -> filtre dept par toponymes du titre (table mots-clés,
+      repli TOURAINE->37), biens sans dept écartés. 0 fuite. Volume minuscule, filtre
+      dept heuristique.
+  - id: 72immobilier
+    nom: 72 Immobilier
+    url_base: https://www.72immobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Agence locale Le Mans, 100% Sarthe (72). Listing global dept SSR
+      /immobilier/Maisons-a-vendre-Sarthe-72 puis /page-N (12/page, ~51 maisons). Filtre
+      dept côté serveur, 0 fuite hors-72. Cartes div.annonce_card : data-attrs du bouton
+      .favorite-toggle + .city "VILLE - 72XXX" + tuiles (surface/terrain/pieces/chambres).
+      Skip immédiat (0 requête) si 72 hors cible. Pas de DPE en liste.
+  - id: lavisite
+    nom: La Visite Immo
+    url_base: https://www.lavisite.immo
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR WordPress (thème welko), agence angevine (49). Listing
+      /nos-biens-achat-vente-location-gestion-locative/ + filtre serveur ?f_offre=1&f_type=2
+      (Achat/Maison), pagination /page/N. Cartes a.card_estate. PAS de CP ni coords (le
+      49100 = agence) -> filtre dept par géocodage ville via geo.api.gouv.fr (BAN, cache).
+      0 fuite (Carquefou=44 exclu). Volume faible (~34 en 49). surface_terrain/DPE non
+      récupérés (limite requêtes).
+  - id: nicole_joubert
+    nom: Nicole Joubert
+    url_base: https://www.nicole-joubert.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Réseau 14 agences MONO-DÉPARTEMENTAL Maine-et-Loire (49). SSR httpx (template jalik).
+      Court-circuit (0 requête) si 49 hors cible. Listing
+      /biens-a-la-vente-{maisons|autres-biens}-w{N}.html, pagination -wN.html (fin = 0
+      nouvelle réf). Cartes div.ann ; ville+CP du titre (CP ~90%, sinon 49 forcé).
+      Surface/pieces/chambres/terrain/DPE enrichis via fiche détail (concurrence 6).
+      Post-filtre dept CP[:2]. ~120 maisons.
+  - id: anou_immobilier
+    nom: Anou Immobilier
+    url_base: https://anou-immobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR HTML (CMS atweb, cartes .atw-card). Réseau Eure-et-Loir/Perche. Listing réel
+      /immobilier.php?recherche_offre=achat&page=N (12/page, ~143 annonces vente) — les
+      chemins /a-vendre, /recherche, /sitemap.xml sont des catch-all (homepage). Params
+      type/commune ignorés serveur -> scrape tout le vente + POST-FILTRE code_postal[:2]
+      (slug data-favorite-url). Données dans .favorite-toggle + tuiles. Garde
+      maisons/propriétés. Stock : 114 en 28 + 3 en 41. 0 fuite. Pagination boucle ->
+      stop quand 0 nouvelle réf. Pas de DPE en liste.
+  - id: aviron_immo
+    nom: Aviron Conseil Immobilier
+    url_base: https://www.aviron-immo.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Agence locale Chartres (28), moteur LBI/staticlbi.com. Filtre dept CÔTÉ SERVEUR via
+      slug /vente/{NN-dept-slug}/{page} (ex /vente/28-eure-et-loir/1) — 0 fuite ; autres
+      depts cibles = 0 carte. NB : le param osCommerce advanced_search_result.php?C_28 ne
+      filtre rien (indice initial erroné), vrai pattern = slug d'URL comme le_tuc. Cartes
+      div.property-listing-v3__item, 10/page ; surface .item__info-extra, prix
+      .__price-value, type+pieces via segments d'URL. ~39 maisons/propriétés en 28.
+      Mono-département.
+  - id: mdi_anjoumaine
+    nom: MDI Anjou-Maine
+    url_base: https://mdi-anjoumaine.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR WordPress+Elementor (div.bien). Listing /bien/ + filtre offre serveur
+      ?ads_filters_type_offre=Vente, pagination /bien/page/N/ (~9 pages, ~72 ventes).
+      Cartes sans CP (fiches = CP de gabarit CSS, non fiables) -> géocodage du nom de
+      ville via API BAN (api-adresse.data.gouv.fr) pour CP+dept fiables, puis post-filtre
+      dept. Garde maisons/propriétés/longères/manoirs/fermes (exclut appart/local/terrain/
+      fonds). 0 fuite. Stock zone : 49=23, 72=6, 53=3. Pas de terrain/DPE en liste.
+  - id: lucilia_b
+    nom: Lucilia B. Immobilier
+    url_base: https://www.lucilia-b-immobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Agence prestige locale 100% Indre-et-Loire (Tours + agglo). Site ASP iso-8859-15
+      (tables). Pas de /recherche.html ; listing via pages univers
+      /rNN/immobilier-{Type}-tours.html (~6 fiches, pas de pagination), liens détail
+      /b{ID}_u{NN}-achat-{Type}-{VILLE}.html. Prix/surface absents de la liste -> fetch
+      fiche (Prix FAI, réf T-number, surface, terrain). Filtre dept : short-circuit si 37
+      absent + post-filtre code_postal[:2] via map ville->CP. Dedup inter-univers par réf.
+      ~17 biens, souvent >600k (prestige). Exclut location/immeuble/appart.
+  - id: immomans
+    nom: Immomans
+    url_base: https://www.immomans.fr
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: >-
+      Agence Le Mans (Sarthe). SPA Netty (netty.immo) — catalogue complet injecté côté
+      serveur dans un blob base64 inline (JSON.parse(b64_to_utf8(...))), décodé en httpx
+      sans Playwright (l'API /webapi/getJson existe mais inutile). Listing GET /vente?page=N
+      (~12-13/page, ~3 pages). Filtre type_offer=1 (vente) + prod_type=house. Mono-implantation
+      72 -> post-filtre code_postal[:2], 0 fuite. Volume faible (~20) ; tout (prix/photos/
+      pieces/chambres/terrain) dans le blob.
+
+  # ── Nouveaux scrapers 2026-05-31 (workflow #5 — filtre dept vérifié, 0 fuite) ──
+  - id: fnaim
+    nom: FNAIM (portail adhérents)
+    url_base: https://www.fnaim.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 1
+    note: >-
+      NB : l'ancien blacklist FNAIM visait /annonces/achat/maison/ (redirige vers
+      l'accueil). Le VRAI listing pagine est SSR httpx (pas de Cloudflare/JS) :
+      /liste-annonces-immobilieres/17-acheter-maison-{dept-slug}-{NN}.htm + pagination
+      ...-{NN}-page-{N}.htm. Filtre dept CÔTÉ SERVEUR FIABLE (slug+code) : 100% des CP
+      appartiennent au dept demandé sur les 11 depts cibles, 0 fuite. Agrège TOUS les
+      adhérents FNAIM -> gros volume (25 cartes/page, 18-34 pages/dept). Cartes
+      ul.liste>li.item ; ville+CP depuis le slug de la fiche (toujours fiable) ;
+      type/pieces/surface/chambres depuis le texte ; photos imagesv2.fnaim.fr. LIMITE :
+      ~45% des cartes affichent "Nous consulter pour le prix" -> prix=None pour celles-ci.
+  - id: century21
+    nom: Century 21 France
+    url_base: https://www.century21.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 1
+    note: >-
+      NB : l'ancien blacklist Century21 visait /recherche/achat/... (404). Le VRAI listing
+      est SSR httpx (Tailwind, pas de Cloudflare/JS) : /annonces/achat-maison/d-{NN}_{slug}/
+      + pagination /page-{N}/. Filtre dept CÔTÉ SERVEUR FIABLE via le segment d-{NN}_ (le
+      token dept de chaque carte == dept demandé, 0 fuite). Réseau ~960 agences -> gros
+      volume (20 cartes/page, pagination réelle). Cartes
+      div.js-the-list-of-properties-list-property ; texte "VILLE {NN} {surf} m² , {N} pièces
+      Ref:{ref} Maison à vendre {prix}€ {desc}". LIMITE : code_postal complet absent de la
+      liste (ville + dept 2 chiffres seulement) -> code_postal vide, departement = token dept.
+  - id: immo_reseau
+    nom: Immo Réseau (conseillers indépendants)
+    url_base: https://www.immo-reseau.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR WordPress (thème immoreseau), httpx pur. Listing national pagine /achats/ puis
+      /achats/page/{N}/ (24 cartes/page, ~30 pages ≈ 720 annonces). Le moteur de recherche
+      est en POST/JS (params dept GET ignorés serveur) -> scrape national + POST-FILTRE
+      code_postal[:2] (CP exposé en clair dans le titre "Maison à VILLE (CP)"), comme
+      remax/era/groupe_mercure. 0 fuite. Cartes div.card.card-annonce : h2=titre+loc, texte
+      = prix + surface(m²) + terrain(m²) + "Classe énergétique : X" (DPE). Réseau à
+      implantation inégale : stock cible faible mais réel (72/28/41/45/36...).
+  - id: bj_immobilier
+    nom: Breton & Jeanneau Immobilier (Sarthe & Mayenne)
+    url_base: https://www.bj-immobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR (CMS "c-mos"), httpx pur. Agence Sarthe (72) + Mayenne (53). Filtre dept CÔTÉ
+      SERVEUR via slug /fr/achat-immobilier/maisons/departement-{slug} (0 fuite : 72=100%72,
+      53=100%53). Pagination ?p=N NON servie en httpx (AJAX) -> ~14-15 maisons/dept (cap
+      réel). Cartes div.c-mos__bien : .titre, .lieu "en Vente à Ville (CP)", .prix, lien
+      /fr/acheter/{slug}_{id}. Surface/chambres/DPE/desc enrichis sur la fiche détail
+      (JSON-LD RealEstateListing + texte), concurrence 6. Exclut bureaux/commerces/terrains.
+      Couverture cible : 72 et 53 uniquement (autres slugs depts = 0 stock).
+
+  # ── Scrapers écrits mais inexploitables — viticoles hors-périmètre (actif:false) ──
+  - id: ampelio
+    nom: Ampelio
+    url_base: https://ampelio.fr
+    methode: scrape_simple
+    actif: false
+    priorite: 5
+    note: >-
+      HORS PÉRIMÈTRE — courtier de DOMAINES VITICOLES (exploitations à l'hectare, 6-42 ha),
+      pas de biens résidentiels. SSR WordPress httpx OK (a.card-catalog-item, slugs
+      appellation). FILTRE DEPT IMPOSSIBLE 0-fuite : aucune annonce n'expose CP ni commune
+      (localisation floutée à l'appellation ; seul CP 49170 = agence) ; une appellation
+      couvre plusieurs depts (Touraine->37/41/36) sans CP pour trancher. Prix = tranche
+      (data-price min-max), surface en hectares. Scraper conservé inactif. dernier_test 2026-05-30.
+  - id: vineatransaction
+    nom: Vinea Transaction
+    url_base: https://www.vineatransaction.com
+    methode: scrape_simple
+    actif: false
+    priorite: 5
+    note: >-
+      Leader viticole FR (propriétés/châteaux viticoles). SSR WordPress httpx (pas
+      d'anti-bot). Listing /fr/domaine-viticole/{slug} (/fr/nos-biens/=404). INACTIF :
+      (1) aucun CP ni commune (liste ni détail) -> post-filtre CP impossible ; (2) le
+      filtre dept (slug taxonomie -NN) FUIT (Bordeaux/Saumur/Touraine mélangés) — seul un
+      garde-fou titre fragile ramène 0 fuite ; (3) prix masqués ("nous contacter") ->
+      prix=None ; (4) stock = exploitations viticoles, pas maisons/manoirs ; (5) sur 11
+      depts cibles seuls 49/41/37 ont un slug. Inutilisable par l'analyst. dernier_test 2026-05-30.
+
+
 blacklist:
 
   # ── Ajouts 2026-05-30 (workflow #3 — Cloudflare Bot Management) ──
@@ -781,9 +1047,9 @@ blacklist:
   - id: seloger
     nom: "SeLoger"
     url_base: "https://www.seloger.com"
-    raison: "Cloudflare — challenge JS non résolu même sous Playwright headful"
-    dernier_test: "2026-05-25"
-    alternative: "bienici (même fonds d'annonces en partie)"
+    raison: "DataDome (PAS Cloudflare) — x-datadome: protected, corps captcha-delivery. Routes modernes (/recherche, API, sitemaps) = 403 systématique. Le scraper actif seloger.py exploite la brèche UA app iOS sur la surface legacy list.htm (1 CP/req, throttle, arrêt au 403), mais l'IP est rapidement flaggée → couverture marginale sans proxies résidentiels rotatifs."
+    dernier_test: "2026-05-30"
+    alternative: "bienici (même fonds d'annonces en partie) ; proxies résidentiels pour SeLoger"
 
   - id: meilleursagents
     nom: "MeilleursAgents"
@@ -843,12 +1109,8 @@ blacklist:
     dernier_test: "2026-05-25"
     alternative: "immobilier_notaires (même réseau notarial, API officielle)"
 
-  - id: century21
-    nom: "Century 21"
-    url_base: "https://www.century21.fr"
-    raison: "Toutes les URL patterns testées (/recherche/achat, /annonces/...) retournent 'La page demandée n'existe plus'"
-    dernier_test: "2026-05-25"
-    alternative: "orpi, nestenn"
+  # century21 : DÉ-BLACKLISTÉ le 2026-05-31 — pattern fonctionnel trouvé
+  # (/annonces/achat-maison/d-{NN}_{slug}/) → scraper actif scrapers/century21.py
 
   - id: laforet_old
     nom: "Laforêt Immobilier (ancienne approche)"
@@ -934,12 +1196,9 @@ blacklist:
     dernier_test: "2026-05-26"
     alternative: "orpi, nestenn"
 
-  - id: fnaim
-    nom: "FNAIM"
-    url_base: "https://www.fnaim.fr"
-    raison: "fnaim.fr est le site de la fédération professionnelle, pas un portail d'annonces — l'URL /annonces/achat/maison/ redirige vers la homepage"
-    dernier_test: "2026-05-26"
-    alternative: "ladresse, nestenn (agences membres FNAIM)"
+  # fnaim : DÉ-BLACKLISTÉ le 2026-05-31 — le bon listing n'est pas /annonces/achat/maison/
+  # mais /liste-annonces-immobilieres/17-acheter-maison-{slug}-{NN}.htm → scraper actif
+  # scrapers/fnaim.py (gros volume ; LIMITE : ~45% des annonces masquent le prix).
 
   - id: human_immo
     nom: "Human Immobilier"

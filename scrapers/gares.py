@@ -102,15 +102,22 @@ async def _geocode_commune(
     if key in _GEOCODE_CACHE:
         return _GEOCODE_CACHE[key]
 
+    # Il faut une VILLE ou un CODE POSTAL complet pour localiser une commune.
+    # Le département seul ne suffit PAS : l'API renvoie alors une commune
+    # arbitraire (la 1ʳᵉ du dept, ex. « Allonnes » pour le 49) → localisation
+    # bidon. Dans ce cas on renvoie None (le bien sera exclu, faute de position).
     params = {"fields": "centre", "format": "json", "limit": "1"}
     if ville:
         params["nom"] = ville
-    if len(cp) >= 5:
-        params["codePostal"] = cp[:5]
-    elif dep:
-        params["codeDepartement"] = dep
-    elif len(cp) == 2:
-        params["codeDepartement"] = cp
+        if len(cp) >= 5:
+            params["codePostal"] = cp[:5]      # commune précise
+        elif dep:
+            params["codeDepartement"] = dep    # désambigue les homonymes
+    elif len(cp) >= 5:
+        params["codePostal"] = cp[:5]          # commune identifiée par le seul CP
+    else:
+        _GEOCODE_CACHE[key] = None             # département seul → pas localisable
+        return None
 
     coords = None
     try:

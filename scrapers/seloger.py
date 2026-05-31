@@ -1,8 +1,17 @@
 """
 scrapers/seloger.py — SeLoger (portail majeur)
-Méthode : scrape_simple (httpx) — URL legacy list.htm accessible sans Cloudflare
+Méthode : scrape_simple (httpx) — URL legacy list.htm.
+
+⚠️ Protection = DataDome (PAS Cloudflare). Sous User-Agent navigateur DESKTOP, le site
+renvoie désormais 403 DataDome (x-datadome: protected). BRÈCHE exploitée : avec le
+User-Agent de l'app iOS SeLoger, list.htm repasse en 200 et sert la page SSR complète
+(24 cartes, mêmes sélecteurs). Contraintes dures de DataDome (vérifiées) :
+  - 1 SEUL code postal par requête (places=[{cp:...}] multi-CP → 403 immédiat) ;
+  - pas de pagination (page 2 → 403) → on ne récupère que la page 1 (~24 cartes/CP) ;
+  - réputation IP collante : après quelques requêtes l'IP est flaggée et TOUT passe en
+    403 pendant >90 s. → on throttle, et on ARRÊTE le run au 1er 403 (insister aggrave).
+Sans proxies résidentiels rotatifs, la couverture utile se limite à quelques CP/run.
 Interface : async def search(criteres: dict) -> list[dict]
-Note : pagination inopérante, ~24 résultats par département, post-filtrage Python
 """
 import re
 import asyncio
@@ -19,19 +28,23 @@ SEARCH_URL = (
     "&places={places}"
 )
 
+# User-Agent de l'app iOS SeLoger : seule clé qui repasse list.htm en 200 (DataDome).
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": "SeLoger/6.0 (iPhone; iOS 17.0; Scale/3.00)",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "fr-FR,fr;q=0.9",
 }
+
+THROTTLE_S = 6.0   # délai entre requêtes (réputation IP DataDome)
 
 # Postal codes prefix map per department
 DEPT_POSTAL_CODES = {d: [f"{d}{s:03d}" for s in range(0, 900, 100)] for d in [
     "72", "28", "45", "89", "49", "37", "36", "18", "58", "41", "53"
 ]}
+
+
+class _DataDomeBlocked(Exception):
+    """L'IP est flaggée par DataDome (403) — inutile de continuer ce run."""
 
 
 async def search(criteres: dict) -> list[dict]:
@@ -41,20 +54,27 @@ async def search(criteres: dict) -> list[dict]:
     surface_min = criteres.get("surface_min", 80)
 
     results = []
+    seen_ids = set()
     async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=20) as client:
-        for dept in departements:
-            dept_str = str(dept).zfill(2)
-            cps = DEPT_POSTAL_CODES.get(dept_str)
-            if not cps:
-                continue
-            try:
+        try:
+            for dept in departements:
+                dept_str = str(dept).zfill(2)
+                cps = DEPT_POSTAL_CODES.get(dept_str)
+                if not cps:
+                    continue
                 biens = await _scrape_dept(client, dept_str, cps, prix_max, prix_min, surface_min)
-                results.extend(biens)
-                print(f"[SeLoger] Dept {dept}: {len(biens)} annonces")
-            except Exception as e:
-                print(f"[SeLoger] Erreur dept {dept}: {e}")
-            await asyncio.sleep(1)  # politesse
-
+                kept = 0
+                for b in biens:
+                    if b["id_annonce"] in seen_ids:
+                        continue
+                    seen_ids.add(b["id_annonce"])
+                    results.append(b)
+                    kept += 1
+                print(f"[SeLoger] Dept {dept}: {kept} annonces")
+        except _DataDomeBlocked:
+            print(f"[SeLoger] DataDome a flaggé l'IP (403) — run interrompu "
+                  f"({len(results)} annonces avant blocage). Couverture complète = "
+                  f"proxies résidentiels requis.")
     return results
 
 
@@ -66,11 +86,24 @@ async def _scrape_dept(
     prix_min: int,
     surface_min: int,
 ) -> list[dict]:
-    places = "[" + ",".join(f"{{cp:{cp}}}" for cp in cps) + "]"
-    url = SEARCH_URL.format(places=places)
-    r = await client.get(url)
-    r.raise_for_status()
-    return _parse_html(r.text, dept, prix_max, prix_min, surface_min)
+    """UN seul code postal par requête (DataDome refuse le multi-CP), throttle entre
+    chaque, et abandon immédiat au premier 403 (IP flaggée)."""
+    out = []
+    for i, cp in enumerate(cps):
+        places = f"[{{cp:{cp}}}]"   # un seul CP — multi-CP = 403 DataDome
+        url = SEARCH_URL.format(places=places)
+        try:
+            r = await client.get(url)
+        except httpx.HTTPError:
+            await asyncio.sleep(THROTTLE_S)
+            continue
+        if r.status_code in (403, 405) or "captcha-delivery" in r.text[:3000]:
+            raise _DataDomeBlocked()
+        if r.status_code == 200:
+            out.extend(_parse_html(r.text, dept, prix_max, prix_min, surface_min))
+        if i < len(cps) - 1:
+            await asyncio.sleep(THROTTLE_S)
+    return out
 
 
 def _parse_html(

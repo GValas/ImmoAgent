@@ -42,7 +42,7 @@ _builtins.print = _ts_print
 # ─────────────────────────────────────────────────────────────────────────
 
 from config_loader import load_criteria, load_sources
-from agents import discovery, builder, hunter, analyst
+from agents import discovery, builder, hunter, analyst, vision
 
 DATA_DIR   = Path("data")
 RAW_DIR    = DATA_DIR / "raw"
@@ -130,6 +130,20 @@ def bien_hash(b: dict) -> str:
     return hashlib.md5(key.encode()).hexdigest()
 
 
+def bien_identity(b: dict) -> str:
+    """Identité stable d'une annonce, INSENSIBLE au prix.
+
+    Sert à dédupliquer le suivi cumulatif : une même annonce dont le vendeur
+    a baissé le prix (450 000 → 439 000) doit rester UNE ligne, pas deux.
+    Clé sur l'URL normalisée si disponible (identifiant unique de l'annonce),
+    sinon repli sur surface+ville (les scrapers sans URL sont rares).
+    """
+    url = str(b.get("url") or "").strip().lower().rstrip("/")
+    if url:
+        return "url:" + url
+    return "sv:" + f"{b.get('surface')}-{str(b.get('ville') or '').lower().strip()}"
+
+
 def filter_new(biens: list[dict], seen: set) -> tuple[list[dict], set]:
     """Retourne uniquement les biens jamais vus, et le seen mis à jour."""
     new, updated_seen = [], set(seen)
@@ -145,7 +159,7 @@ def filter_new(biens: list[dict], seen: set) -> tuple[list[dict], set]:
 # MISE À JOUR DU FICHIER DE SUIVI ACTIF
 # ──────────────────────────────────────────────
 
-def update_suivi(new_biens_scored: list[dict], cfg: dict):
+async def update_suivi(new_biens_scored: list[dict], cfg: dict):
     """
     Fusionne les nouveaux biens scorés dans suivi_actif.xlsx.
     Garde uniquement les max_biens_suivi meilleurs au-dessus du seuil.
@@ -162,7 +176,23 @@ def update_suivi(new_biens_scored: list[dict], cfg: dict):
 
     # Ajouter les nouveaux au-dessus du seuil
     qualifying = [b for b in new_biens_scored if (b.get("score_total") or 0) >= seuil]
-    merged = existing + qualifying
+    # Les nouveaux d'abord : sur collision d'identité (même annonce), c'est la
+    # version fraîche — mieux parsée (géoloc, prix à jour) — qui est conservée.
+    merged = qualifying + existing
+
+    # Garde-fou éléments : (re)détecte les éléments indésirables (elements.yaml)
+    # sur les entrées legacy jamais évaluées. Rattrape les biens entrés au suivi
+    # AVANT l'ajout d'un élément — filter_new les empêche d'être re-scorés.
+    try:
+        newly_flagged = await vision.rescore_elements(merged)
+    except Exception as e:
+        newly_flagged = 0
+        print(f"[Scheduler] Garde-fou éléments ignoré ({e})")
+    before_elem = len(merged)
+    merged = [b for b in merged if not b.get("banni")]
+    if before_elem - len(merged):
+        print(f"[Scheduler] Garde-fou éléments : {before_elem - len(merged)} bien(s) écarté(s)"
+              f" ({newly_flagged} nouvellement détecté(s))")
 
     # Garde-fou département : ne JAMAIS conserver un bien hors zone cible.
     # Auto-nettoie les fuites historiques du suivi cumulatif (ex. bienici qui
@@ -182,15 +212,29 @@ def update_suivi(new_biens_scored: list[dict], cfg: dict):
         if before - len(merged):
             print(f"[Scheduler] Garde-fou dept : {before - len(merged)} bien(s) hors-zone écarté(s)")
 
-    # Tri par score décroissant, déduplique, tronque
-    seen_h = set()
-    deduped = []
-    for b in sorted(merged, key=lambda x: x.get("score_total") or 0, reverse=True):
-        h = bien_hash(b)
-        if h not in seen_h:
-            deduped.append(b)
-            seen_h.add(h)
+    # « Ajouté le » : date d'entrée dans le suivi. On préserve la date d'origine
+    # d'un bien déjà suivi (clé d'identité) ; un bien jamais vu est stampé à
+    # aujourd'hui. (Les scrapers ne fournissent pas de date fiable.)
+    today = datetime.now().strftime("%Y-%m-%d")
+    prior_dates = {bien_identity(b): b.get("date_ajout_suivi")
+                   for b in existing if b.get("date_ajout_suivi")}
+    for b in merged:
+        b["date_ajout_suivi"] = (
+            b.get("date_ajout_suivi") or prior_dates.get(bien_identity(b)) or today
+        )
 
+    # Déduplique par identité d'annonce (insensible au prix : une baisse de prix
+    # ne crée plus de doublon), en gardant la 1ʳᵉ occurrence — donc la version
+    # fraîche puisque `qualifying` précède `existing`. PUIS tri par score + tronque.
+    seen_id = set()
+    deduped = []
+    for b in merged:
+        ident = bien_identity(b)
+        if ident not in seen_id:
+            deduped.append(b)
+            seen_id.add(ident)
+
+    deduped.sort(key=lambda x: x.get("score_total") or 0, reverse=True)
     deduped = deduped[:max_biens]
 
     # Sauvegarder JSON intermédiaire
@@ -217,9 +261,10 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
     # Aligné sur l'export resultats_*.xlsx (agents/analyst.py) + colonne
     # suivi-spécifique « Ajouté le ». Inclut géoloc et liens satellite/cadastre.
     headers = [
-        "Score", "Score visuel", "Verdict Style", "Ajouté le", "Source", "Titre",
-        "Ville", "Dép", "Département", "Gare", "Bus", "Type", "Surface", "Terrain", "Pièces", "DPE",
-        "Prix (€)", "Prix/m²", "Prix/m² marché", "Résumé style", "Alertes",
+        "Score", "Ajouté le", "Source", "Titre",
+        "Ville", "Dép", "Département", "Gare", "Bus", "Surface", "Terrain", "Pièces", "DPE",
+        "Prix (€)", "Prix/m²", "Prix/m² marché", "Résumé vision", "Alertes",
+        "Piscine hors-sol", "Éléments détectés",
         "Parcelle probable", "Piscine ortho", "Satellite", "Ortho+cadastre", "URL"
     ]
     hfill = PatternFill("solid", fgColor="2C3E50")
@@ -245,7 +290,7 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
     }
     piscine_col = headers.index("Piscine ortho") + 1
     score_col = headers.index("Score") + 1
-    price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché")}
+    price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché", "Terrain")}
 
     for row, b in enumerate(biens, 2):
         score = b.get("score_total", 0)
@@ -265,9 +310,7 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
 
         vals  = [
             score,
-            b.get("score_visuel"),
-            b.get("verdict_visuel", ""),
-            (b.get("date_scraped") or "")[:10],
+            (b.get("date_ajout_suivi") or "")[:10],
             b.get("source", ""),
             b.get("titre", ""),
             b.get("ville", ""),
@@ -277,7 +320,6 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
              if b.get("gare_nom") else ""),
             (f"{b.get('bus_nom')} ({b.get('bus_distance_km')} km)"
              if b.get("bus_proche") else ""),
-            b.get("type_bien", ""),
             b.get("surface"),
             b.get("surface_terrain"),
             b.get("pieces"),
@@ -286,7 +328,14 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
             b.get("prix_m2_calcule"),
             b.get("prix_m2_marche_dep"),
             b.get("resume_visuel", ""),
-            " | ".join(b.get("alerte", [])),
+            " | ".join(a for a in b.get("alerte", []) if "piscine_hors_sol" not in a),
+            next((f"🛟 {e['score']}" for e in (b.get("elements_detectes") or [])
+                  if e["nom"] == "piscine_hors_sol"), ""),
+            " | ".join(
+                f"{'⛔' if e.get('mode') == 'exclusion' else '⚠️'} {e['nom']} ({e['score']})"
+                for e in (b.get("elements_detectes") or [])
+                if e["nom"] != "piscine_hors_sol"
+            ),
             b.get("parcelle_match", ""),
             piscine_str,
             b.get("maps_satellite_url", ""),
@@ -314,8 +363,8 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
                 c.hyperlink = str(piscine_url)
                 c.style = "Hyperlink"
 
-    widths = [8, 12, 14, 12, 12, 40, 18, 6, 18, 24, 22, 12, 9, 9, 8, 6, 12, 10, 14, 45, 35,
-              20, 12, 14, 16, 16]
+    widths = [8, 12, 12, 40, 18, 6, 18, 24, 22, 9, 9, 8, 6, 12, 10, 14, 45, 35,
+              14, 26, 20, 12, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -383,9 +432,13 @@ async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> dict:
                 for b in new_biens:
                     scored.append(score_bien(b, criteres_dict, prix_marche))
 
-                update_suivi(scored, cfg)
+                await update_suivi(scored, cfg)
             else:
-                print("[Scheduler] Aucun nouveau bien — suivi inchangé")
+                print("[Scheduler] Aucun nouveau bien — garde-fous sur suivi existant")
+                # Pas de nouveau bien, mais on repasse le suivi aux garde-fous
+                # (ban/dept) : une image ban ajoutée entre deux runs purge alors
+                # les entrées déjà accumulées.
+                await update_suivi([], cfg)
         else:
             print("[Scheduler] Aucun bien récupéré ce cycle")
 

@@ -35,9 +35,9 @@ scrapers/             25 scrapers actifs + 4 inactifs (voir liste ci-dessous)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
 
 config/
-  criteria.md         SEUL fichier édité par l'utilisateur
+  criteria.md         SEUL fichier édité par l'utilisateur (inclut les exclusions visuelles FR)
   sources.yaml        Éditable manuellement ou via Claude Code — contient aussi la blacklist
-  style_references/   Photos de référence CLIP (jpg/png/webp, illimité)
+  elements.yaml       Éléments visuels à écarter (prompts EN + seuil/mode), synchronisé depuis criteria.md
 
 data/
   raw/                JSON bruts par run (biens_raw_YYYYMMDD_HHMM.json)
@@ -106,19 +106,24 @@ data/
 `config_loader.py` le parse et utilise des valeurs par défaut intégrées (dictionnaire
 `DEFAULTS`) si une clé est absente — pas de fichier YAML externe.
 
-Sections de criteria.md :
-- `## Départements` — codes dept dans un bloc ```
-- `## Critères du bien` — surface, prix, types, DPE dans un bloc ```
-- `## Pondérations du scoring` — poids_* dans un bloc ``` (total = 100, auto-normalisé)
-- `## Filtres d'exclusion` — mots_cles_negatifs dans un bloc ```
-- `## Style visuel` — description texte libre + seuils CLIP dans un bloc ```
-- `## Scheduler` — intervalles et seuils dans un bloc ```
+Organisé en deux familles de critères (le parser lit le 1ᵉʳ bloc comme
+départements, puis toute ligne `clé: valeur` de n'importe quel bloc) :
+- **Zone** — `## Départements` (codes dept, doit rester le 1ᵉʳ bloc)
+- **Phase 1 — Scraping** (champs structurés) : `## Critères du bien`
+  (types, surface, pièces, terrain, prix, dpe_exclus)
+- **Phase 2 — Analyse** (interprétation) :
+  - `## Analyse du TEXTE` (mots_cles_negatifs, equipements_requis)
+  - `## Analyse VISUELLE` (exclusions visuelles FR → `elements.yaml`)
+  - `## Analyse GÉO` (gare/bus, géolocalisation cadastre/ortho)
+  - `## Critères qualitatifs` (texte libre, non parsé)
+- **Scoring** — `## Pondérations du scoring` (poids_*, auto-normalisé à 100)
+- **Pipeline** — `## Scheduler` (intervalles et seuils)
 
 ---
 
 ## Rôle de Claude Code
 
-Claude Code intervient dans 3 situations :
+Claude Code intervient dans 4 situations :
 
 **1. Générer un scraper**
 ```
@@ -140,6 +145,20 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
 "Compare les prix/m² du dernier run avec les références DVF"
 ```
 
+**4. Synchroniser les exclusions visuelles**
+```
+"synchronise les exclusions visuelles"
+```
+L'utilisateur décrit en **français** les éléments à écarter dans
+`criteria.md` (section `## Analyse VISUELLE — Exclusions`).
+Claude Code traduit chaque ligne en prompts **anglais** (CLIP est entraîné en
+anglais ; le français inverse la détection — vérifié), choisit les prompts
+**négatifs** (confondants proches) et le **seuil**, puis met à jour
+`config/elements.yaml` (le fichier réellement lu au runtime). Un élément non
+calibré reste en `mode: alerte` (non destructif) jusqu'à validation via
+`python agents/vision.py --calibrer <nom>`. Voir aussi `### Détecteur d'éléments`
+ci-dessous.
+
 ---
 
 ## Conventions de code
@@ -160,8 +179,24 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
 ### CLIP / Vision
 - Modèle CLIP (ViT-B/32) téléchargé automatiquement au premier lancement (~340 MB)
 - Cache dans `~/.cache/clip/`
-- `_ref_embeddings` est un cache global de session — recalculé si None
+- Embeddings texte (éléments, piscine) mis en cache global de session
 - Concurrence limitée à 8 pour les téléchargements de photos (httpx)
+- **Plus de scoring de style positif** ni de `style_references/` : le filtre visuel
+  est uniquement par exclusion d'éléments (voir ci-dessous)
+
+### Détecteur d'éléments (`config/elements.yaml`)
+- Remplace l'ancien ban par image (`config/style_ban/`, supprimé). Filtre par
+  **présence d'un élément** dans les photos, pas par ressemblance globale.
+- Chaque élément = `positifs`/`negatifs` (prompts EN) + `seuil` + `mode`
+  (`exclusion` | `alerte`). CLIP zero-shot contrastif (présent vs absent), MAX sur
+  les photos du bien. `description` est en français, documentaire (ignorée du moteur).
+- **Prompts en anglais obligatoires** (CLIP est EN ; le FR inverse la détection).
+- Précision = qualité des `negatifs` (confondants) + seuil **calibré par élément** :
+  `python agents/vision.py --calibrer <nom>`. CLIP ne sépare pas finement des features
+  proches (ex. piscine hors-sol vs creusée+bois) → seuils prudents, démarrer en `alerte`.
+- `vision.rescore_elements` (appelé par `scheduler.update_suivi`) ré-évalue
+  rétroactivement les entrées legacy du suivi quand un élément est ajouté.
+- Colonne Excel « Éléments détectés » (suivi + resultats).
 
 ### Scrapers
 - Interface obligatoire : `async def search(criteres: dict) -> list[dict]`

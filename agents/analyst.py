@@ -167,12 +167,12 @@ def llm_summary(top_biens: list[dict]) -> str:
         ville  = b.get("ville", "?")
         dep    = b.get("departement", "")
         dpe    = b.get("dpe", "?")
-        sv     = b.get("score_visuel")
-        sv_str = f" | style {sv:.0f}/100" if sv is not None else ""
+        els    = b.get("elements_detectes") or []
+        el_str = (" | ⚠️ " + ", ".join(e["nom"] for e in els)) if els else ""
         alertes = b.get("alerte", [])
         alert_str = f" ⚠ {alertes[0]}" if alertes else ""
         lignes.append(
-            f"#{i} [{score:.0f}/100{sv_str}] {b.get('titre','')[:50]}\n"
+            f"#{i} [{score:.0f}/100{el_str}] {b.get('titre','')[:50]}\n"
             f"   {ville} ({dep}) — {surf} — {prix} — DPE {dpe}{alert_str}"
         )
 
@@ -242,11 +242,11 @@ def export_excel(biens: list[dict], resume: str) -> Path:
     ws.title = "Résultats"
 
     headers = [
-        "Score", "Score Visuel", "Verdict Style", "Source", "Titre", "Ville",
-        "Dép", "Département", "Gare", "Bus", "Type",
+        "Score", "Source", "Titre", "Ville",
+        "Dép", "Département", "Gare", "Bus",
         "Surface", "Terrain", "Pièces", "DPE",
         "Prix (€)", "Prix/m²", "Prix/m² marché",
-        "Résumé style", "Alertes",
+        "Résumé vision", "Alertes", "Piscine hors-sol", "Éléments détectés",
         "Parcelle probable", "Piscine ortho", "Satellite", "Ortho+cadastre", "URL"
     ]
     header_fill = PatternFill("solid", fgColor="2C3E50")
@@ -274,7 +274,7 @@ def export_excel(biens: list[dict], resume: str) -> Path:
     }
     piscine_col = headers.index("Piscine ortho") + 1
     score_col = headers.index("Score") + 1
-    price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché")}
+    price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché", "Terrain")}
 
     for row, b in enumerate(biens, 2):
         score = b.get("score_total", 0)
@@ -295,8 +295,6 @@ def export_excel(biens: list[dict], resume: str) -> Path:
 
         values = [
             score,
-            b.get("score_visuel"),
-            b.get("verdict_visuel", ""),
             b.get("source", ""),
             b.get("titre", ""),
             b.get("ville", ""),
@@ -306,7 +304,6 @@ def export_excel(biens: list[dict], resume: str) -> Path:
              if b.get("gare_nom") else ""),
             (f"{b.get('bus_nom')} ({b.get('bus_distance_km')} km)"
              if b.get("bus_proche") else ""),
-            b.get("type_bien", ""),
             b.get("surface"),
             b.get("surface_terrain"),
             b.get("pieces"),
@@ -315,7 +312,14 @@ def export_excel(biens: list[dict], resume: str) -> Path:
             b.get("prix_m2_calcule"),
             b.get("prix_m2_marche_dep"),
             b.get("resume_visuel", ""),
-            " | ".join(b.get("alerte", [])),
+            " | ".join(a for a in b.get("alerte", []) if "piscine_hors_sol" not in a),
+            next((f"🛟 {e['score']}" for e in (b.get("elements_detectes") or [])
+                  if e["nom"] == "piscine_hors_sol"), ""),
+            " | ".join(
+                f"{'⛔' if e.get('mode') == 'exclusion' else '⚠️'} {e['nom']} ({e['score']})"
+                for e in (b.get("elements_detectes") or [])
+                if e["nom"] != "piscine_hors_sol"
+            ),
             b.get("parcelle_match", ""),
             piscine_str,
             b.get("maps_satellite_url", ""),
@@ -345,8 +349,8 @@ def export_excel(biens: list[dict], resume: str) -> Path:
                 cell.style = "Hyperlink"
 
     # Largeurs colonnes
-    widths = [8, 12, 14, 12, 40, 20, 6, 18, 24, 22, 12, 9, 9, 8, 6, 12, 10, 14, 45, 40,
-              20, 12, 14, 16, 16]
+    widths = [8, 12, 40, 20, 6, 18, 24, 22, 9, 9, 8, 6, 12, 10, 14, 45, 40,
+              14, 26, 20, 12, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 

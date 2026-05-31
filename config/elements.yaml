@@ -1,0 +1,86 @@
+# config/elements.yaml — Détecteur d'éléments indésirables (CLIP zero-shot)
+#
+# Chaque élément est détecté par classification binaire CONTRASTIVE sur les photos
+# du bien : pour chaque photo, CLIP compare la similarité aux prompts `positifs`
+# (l'élément est présent) vs `negatifs` (il est absent / autre chose), puis softmax.
+# Le score de l'élément = MAX sur toutes les photos du bien (une seule photo suffit).
+# L'élément est « détecté » si ce score >= `seuil`.
+#
+# nom         : identifiant court (sert de clé + libellé Excel).
+# description : texte libre EN FRANÇAIS — purement documentaire, ignoré par le moteur.
+# mode        : exclusion → si détecté, le bien est écarté du suivi (hard-exclude)
+#               alerte    → le bien est conservé, l'élément apparaît en colonne « Éléments détectés »
+# actif: false → l'élément est ignoré (utile pour préparer/calibrer un élément).
+#
+# ⚠️ Les prompts `positifs`/`negatifs` DOIVENT rester en ANGLAIS : CLIP (ViT-B/32)
+# est entraîné surtout en anglais. Testé : traduits en français, ils INVERSENT la
+# détection (la vraie piscine hors-sol passe de 0.77 à 0.18, sous les creusées).
+# La description française est là pour la lisibilité ; les prompts pour la machine.
+#
+# CALIBRER un élément (avant de l'activer en mode exclusion) :
+#   python agents/vision.py --calibrer <nom_element>
+# affiche le score de l'élément sur les biens du dernier run → choisis le seuil
+# qui sépare présents/absents, en vérifiant les photos à l'œil.
+#
+# Conseil prompts : les `negatifs` doivent inclure les CONFONDANTS proches (ce qui
+# ressemble mais n'est pas l'élément) — c'est eux qui font la précision. Ex. pour
+# la piscine hors-sol, lister « in-ground pool », « wooden terrace » écarte les
+# faux positifs (piscines creusées avec terrasse/pool-house/transats en bois).
+
+elements:
+  - nom: piscine_hors_sol
+    description: >
+      Piscine hors-sol (bassin posé au sol, souvent à parois/habillage bois, type
+      kit octogonal sur terrasse). À distinguer d'une piscine creusée entourée de
+      bois, qui elle est désirable et ne doit PAS déclencher.
+    actif: true
+    mode: alerte          # conservé dans le fichier (colonne dédiée « Piscine hors-sol »), n'exclut pas
+    seuil: 0.78          # calibré sur galeries completes : 355119=0.80 ; creusees<=0.74
+    positifs:
+      - "a photo of an above-ground swimming pool with wooden sides"
+      - "a backyard with a freestanding above-ground pool raised on a deck"
+    negatifs:
+      - "a photo of an in-ground swimming pool"
+      - "a backyard with no pool"
+      - "an interior room of a house"
+      - "a wooden terrace or balcony"
+
+  # ── Éléments en ALERTE (non calibrés) : non destructif, à calibrer avant de
+  #    passer en mode: exclusion — voir « ## Style visuel » de criteria.md ─────
+  - nom: gazon_parfait
+    description: >
+      Gazon artificiel / pelouse synthétique (vert uniforme, sans texture, type
+      astroturf) — signe de jardin sans charme. À ne pas confondre avec une
+      pelouse naturelle bien tondue.
+    actif: true
+    mode: alerte          # séparation nette → passable en exclusion si tu confirmes
+    seuil: 0.75           # calibré : pelouse synthétique ≈0.90, le reste ≤0.48
+    positifs:
+      - "a lawn of fake plastic artificial turf, perfectly uniform green"
+      - "a garden with synthetic astroturf grass"
+    negatifs:
+      - "a natural lawn with real grass and some imperfections"
+      - "a backyard with a swimming pool and plants"
+      - "a garden with trees, gravel or flowers"
+      - "an interior room of a house"
+
+  # ── DÉSACTIVÉ : non fiable. CLIP ne sait pas détecter l'ABSENCE d'arbres au
+  #    niveau d'une photo, et le MAX sur la galerie fait déclencher n'importe
+  #    quelle image dégagée (vue sur champs, carte de localisation, plan…) même
+  #    quand le bien a des arbres. Vérifié en calibration : faux positifs sur une
+  #    carte de France (0.90) et une photo de vue (0.81). Laissé pour mémoire.
+  - nom: aucun_arbre
+    description: >
+      Absence totale d'arbres (terrain nu). NON FIABLE en CLIP zero-shot (voir
+      commentaire ci-dessus) — à juger plutôt à l'œil via le lien satellite.
+    actif: false
+    mode: alerte
+    seuil: 0.85
+    positifs:
+      - "a suburban house with a bare lawn and no trees, surrounded by fences and neighbours"
+      - "an open plot of grass and pavement without any trees"
+    negatifs:
+      - "a property with mature trees in the garden"
+      - "a backyard with bushes, hedges or trees around"
+      - "a swimming pool with a cover on a paved terrace"
+      - "an interior room of a house"

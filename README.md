@@ -137,7 +137,7 @@ Trois volumes sont montés (cf. `docker-compose.yml`) :
 | Montage | Contenu | Pourquoi |
 |---|---|---|
 | `./data` → `/app/data` | `suivi_actif.xlsx`, `biens_vus.json`, `scheduler_state.json`, `raw/`, `output/` | survit aux redémarrages **et** reste lisible depuis l'hôte (ouvre l'Excel dans `./data/output/`) |
-| `./config` → `/app/config` | `criteria.md`, `style_references/` | édition **à chaud** : le prochain cycle relit `criteria.md`, pas de rebuild |
+| `./config` → `/app/config` | `criteria.md`, `elements.yaml` | édition **à chaud** : le prochain cycle relit `criteria.md`, pas de rebuild |
 | `./logs` → `/app/logs` | journaux | accessibles depuis l'hôte |
 
 ### Exploitation

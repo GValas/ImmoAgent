@@ -1,33 +1,30 @@
 """
 agents/vision.py — Agent Vision (CLIP local)
-Évalue la correspondance stylistique des photos d'annonces
-avec les références visuelles définies dans config/style_references/.
+
+Filtre les biens par PRÉSENCE D'ÉLÉMENTS indésirables dans leurs photos
+(piscine hors-sol, gazon artificiel, absence d'arbres…), définis dans
+config/elements.yaml. Détecte aussi la présence d'une piscine (informatif).
 
 Fonctionnement :
-1. Au démarrage : charge CLIP en local (ViT-B/32, ~600 MB, téléchargé une fois)
-2. Encode toutes les photos de référence → vecteurs (fait une seule fois par session)
-3. Pour chaque bien : télécharge ses photos, encode, calcule similarité cosinus vs références
-4. Score = moyenne des top-3 similarités, normalisée 0–100
-5. Filtrage selon seuils définis dans criteria.md
+1. Au démarrage : charge CLIP en local (ViT-B/32, ~340 MB, téléchargé une fois)
+2. Pour chaque bien : télécharge ses photos, encode (CLIP image)
+3. Pour chaque élément : classification binaire CONTRASTIVE (présent vs absent),
+   MAX sur les photos → écarte (mode exclusion) ou alerte (mode alerte)
 
-Aucune donnée ne quitte ta machine. Gratuit, illimité en photos de référence.
+Aucune donnée ne quitte ta machine. Gratuit, illimité.
 
-Seuils configurables dans criteria.md (section ## Style visuel) :
-  style_seuil_exclusion: 30   # score style < X → rejeté
-  style_seuil_warning:   55   # score style < X → alerte
-  style_seuil_ban:       70   # score ban > X   → rejeté (ressemble trop à un bien banni)
-
-Dossiers d'images :
-  config/style_references/   images de ce que tu VEUX   (maisons de caractère, longères…)
-  config/style_ban/          images de ce que tu NE VEUX PAS (pavillons, béton, toit plat…)
+Éléments indésirables : config/elements.yaml
+  détecteur CLIP zero-shot contrastif, par élément, avec seuil et mode
+  (exclusion | alerte). Prompts en anglais (CLIP est entraîné en anglais).
+  Calibrer un élément : python agents/vision.py --calibrer <nom_element>
 """
 
 import asyncio
-import re
 from pathlib import Path
 from typing import Optional
 import numpy as np
 import httpx
+import yaml
 from PIL import Image
 import io
 
@@ -35,23 +32,15 @@ import io
 _clip_model = None
 _clip_preprocess = None
 _clip_device = None
-_ref_embeddings = None      # np.ndarray (N, 512) — calculé une fois
-_ref_labels = None          # list[str] — noms de fichiers
-_ban_embeddings = None      # np.ndarray (B, 512) — images à bannir
-_ban_labels = None          # list[str] — noms de fichiers ban
 _pool_text_embeddings = None  # np.ndarray (P, 512) — requêtes texte piscine
+_elements_cfg = None          # list[dict] — éléments chargés depuis elements.yaml
+_element_text_emb = {}        # nom_element -> np.ndarray (npos+nneg, 512), cache session
 
 
-STYLE_DIR = Path(__file__).parent.parent / "config" / "style_references"
-BAN_DIR   = Path(__file__).parent.parent / "config" / "style_ban"
-CRITERIA_MD = Path(__file__).parent.parent / "config" / "criteria.md"
+ELEMENTS_YAML = Path(__file__).parent.parent / "config" / "elements.yaml"
 
-DEFAULT_SEUIL_EXCLUSION = 30
-DEFAULT_SEUIL_WARNING = 55
-DEFAULT_SEUIL_BAN = 70
-MAX_PHOTOS_PAR_BIEN = 5     # photos utilisées pour le scoring de style
-MAX_PHOTOS_PISCINE = 15    # photos téléchargées pour la détection piscine (souvent en fin de galerie)
-TOP_K_SIMILARITIES = 3      # on moyenne les top-K scores (robustesse)
+MAX_PHOTOS_PAR_BIEN = 5     # photos utilisées (legacy : galerie courte)
+MAX_PHOTOS_PISCINE = 15    # photos téléchargées par bien (détection sur toute la galerie)
 
 # Détection piscine via CLIP text-image matching
 POOL_PROMPTS = [
@@ -194,108 +183,101 @@ def detect_piscine_in_photos(photos: list) -> bool:
 
 
 # ──────────────────────────────────────────────
-# CHARGEMENT DES RÉFÉRENCES
+# DÉTECTEUR D'ÉLÉMENTS INDÉSIRABLES (CLIP zero-shot contrastif)
 # ──────────────────────────────────────────────
 
-def load_reference_embeddings() -> tuple[np.ndarray, list[str]]:
+def load_elements() -> list[dict]:
+    """Charge config/elements.yaml (liste d'éléments actifs). Cache session.
+
+    Chaque élément : {nom, positifs[], negatifs[], seuil, mode, actif}.
+    Retourne [] si le fichier est absent/vide/illisible (détecteur désactivé).
     """
-    Charge et encode toutes les images de style_references/.
-    Résultat mis en cache global — calculé une seule fois par session.
-    """
-    global _ref_embeddings, _ref_labels
-    if _ref_embeddings is not None:
-        return _ref_embeddings, _ref_labels
-
-    _init_clip()
-
-    supported = {".jpg", ".jpeg", ".png", ".webp"}
-    paths = [p for p in sorted(STYLE_DIR.iterdir()) if p.suffix.lower() in supported]
-
-    if not paths:
-        print("[Vision] ⚠️  Aucune image de référence trouvée dans style_references/")
-        _ref_embeddings = np.empty((0, 512))
-        _ref_labels = []
-        return _ref_embeddings, _ref_labels
-
-    print(f"[Vision] Encodage de {len(paths)} image(s) de référence...")
-    embeddings, labels = [], []
-    for path in paths:
-        try:
-            img = Image.open(path).convert("RGB")
-            emb = _encode_image(img)
-            embeddings.append(emb)
-            labels.append(path.name)
-        except Exception as e:
-            print(f"[Vision]   ⚠️  Ignoré {path.name} : {e}")
-
-    _ref_embeddings = np.stack(embeddings) if embeddings else np.empty((0, 512))
-    _ref_labels = labels
-    print(f"[Vision] {len(labels)} référence(s) encodée(s) ✓")
-    return _ref_embeddings, _ref_labels
-
-
-def load_ban_embeddings() -> tuple[np.ndarray, list[str]]:
-    """
-    Charge et encode toutes les images de style_ban/.
-    Résultat mis en cache global — calculé une seule fois par session.
-    Si le dossier n'existe pas ou est vide, retourne un tableau vide (ban désactivé).
-    """
-    global _ban_embeddings, _ban_labels
-    if _ban_embeddings is not None:
-        return _ban_embeddings, _ban_labels
-
-    _init_clip()
-
-    if not BAN_DIR.exists():
-        _ban_embeddings = np.empty((0, 512))
-        _ban_labels = []
-        return _ban_embeddings, _ban_labels
-
-    supported = {".jpg", ".jpeg", ".png", ".webp"}
-    paths = [p for p in sorted(BAN_DIR.iterdir()) if p.suffix.lower() in supported]
-
-    if not paths:
-        print("[Vision] ℹ️  Dossier style_ban/ vide — filtre ban désactivé")
-        _ban_embeddings = np.empty((0, 512))
-        _ban_labels = []
-        return _ban_embeddings, _ban_labels
-
-    print(f"[Vision] Encodage de {len(paths)} image(s) ban...")
-    embeddings, labels = [], []
-    for path in paths:
-        try:
-            img = Image.open(path).convert("RGB")
-            emb = _encode_image(img)
-            embeddings.append(emb)
-            labels.append(path.name)
-        except Exception as e:
-            print(f"[Vision]   ⚠️  Ignoré ban/{path.name} : {e}")
-
-    _ban_embeddings = np.stack(embeddings) if embeddings else np.empty((0, 512))
-    _ban_labels = labels
-    print(f"[Vision] {len(labels)} image(s) ban encodée(s) ✓")
-    return _ban_embeddings, _ban_labels
-
-
-# ──────────────────────────────────────────────
-# SEUILS DEPUIS criteria.md
-# ──────────────────────────────────────────────
-
-def load_style_seuils() -> tuple[int, int, int]:
-    """Parse style_seuil_exclusion, style_seuil_warning et style_seuil_ban depuis criteria.md."""
+    global _elements_cfg
+    if _elements_cfg is not None:
+        return _elements_cfg
+    _elements_cfg = []
+    if not ELEMENTS_YAML.exists():
+        return _elements_cfg
     try:
-        content = CRITERIA_MD.read_text(encoding="utf-8")
-        excl = _parse_val(content, "style_seuil_exclusion", DEFAULT_SEUIL_EXCLUSION)
-        warn = _parse_val(content, "style_seuil_warning",   DEFAULT_SEUIL_WARNING)
-        ban  = _parse_val(content, "style_seuil_ban",       DEFAULT_SEUIL_BAN)
-        return excl, warn, ban
-    except Exception:
-        return DEFAULT_SEUIL_EXCLUSION, DEFAULT_SEUIL_WARNING, DEFAULT_SEUIL_BAN
+        data = yaml.safe_load(ELEMENTS_YAML.read_text(encoding="utf-8")) or {}
+        for el in data.get("elements", []):
+            if not el.get("actif", True):
+                continue
+            if not el.get("positifs") or not el.get("negatifs"):
+                print(f"[Vision]   ⚠️  Élément '{el.get('nom')}' ignoré : positifs/negatifs manquants")
+                continue
+            _elements_cfg.append({
+                "nom":      el.get("nom", "?"),
+                "positifs": list(el["positifs"]),
+                "negatifs": list(el["negatifs"]),
+                "seuil":    float(el.get("seuil", 0.6)),
+                "mode":     el.get("mode", "exclusion"),
+            })
+    except Exception as e:
+        print(f"[Vision]   ⚠️  elements.yaml illisible ({e}) — détecteur désactivé")
+        _elements_cfg = []
+    return _elements_cfg
 
 
-def _parse_val(text: str, key: str, default: int) -> int:
-    m = re.search(rf"{key}\s*:\s*(\d+)", text)
-    return int(m.group(1)) if m else default
+def _get_element_text_emb(el: dict) -> np.ndarray:
+    """Encode (positifs + negatifs) d'un élément → (npos+nneg, 512), caché par nom."""
+    nom = el["nom"]
+    if nom in _element_text_emb:
+        return _element_text_emb[nom]
+    import torch
+    import clip
+    prompts = el["positifs"] + el["negatifs"]
+    tokens = clip.tokenize(prompts).to(_clip_device)
+    with torch.no_grad():
+        embs = _clip_model.encode_text(tokens)
+        embs = embs / embs.norm(dim=-1, keepdim=True)
+    _element_text_emb[nom] = embs.cpu().numpy()
+    return _element_text_emb[nom]
+
+
+def _element_confidence(img_emb: np.ndarray, el: dict) -> float:
+    """Probabilité (0–1, softmax contrastif) que la photo contienne l'élément."""
+    T = _get_element_text_emb(el)
+    npos = len(el["positifs"])
+    logits = (T @ img_emb) * 100.0          # logit_scale CLIP ≈ 100
+    logits -= logits.max()
+    exp = np.exp(logits)
+    probs = exp / exp.sum()
+    return float(probs[:npos].sum())
+
+
+def detect_elements(photos: list) -> list[dict]:
+    """Détecte les éléments indésirables (elements.yaml) dans les photos d'un bien.
+
+    Pour chaque élément actif, score = MAX de la confiance sur toutes les photos
+    (une seule photo suffit à le présenter). Retourne la liste des éléments dont
+    le score >= seuil : [{nom, score, photo_idx, mode}], trié par score décroissant.
+    """
+    elements = load_elements()
+    if not elements or not photos:
+        return []
+    img_embs = []
+    for p in photos:
+        try:
+            img_embs.append(_encode_image(p))
+        except Exception:
+            pass
+    if not img_embs:
+        return []
+    detected = []
+    for el in elements:
+        best_s, best_i = -1.0, -1
+        for i, emb in enumerate(img_embs):
+            s = _element_confidence(emb, el)
+            if s > best_s:
+                best_s, best_i = s, i
+        if best_s >= el["seuil"]:
+            detected.append({
+                "nom": el["nom"], "score": round(best_s, 2),
+                "photo_idx": best_i, "mode": el["mode"],
+            })
+    detected.sort(key=lambda d: d["score"], reverse=True)
+    return detected
 
 
 # ──────────────────────────────────────────────
@@ -330,128 +312,38 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b))
 
 
-def score_photos_vs_refs(
-    bien_photos: list[Image.Image],
-    ref_embeddings: np.ndarray,
-) -> tuple[float, list[float]]:
-    """
-    Score de similarité stylistique entre les photos d'un bien et les références.
-
-    Stratégie :
-    - Pour chaque photo du bien, calcule sa similarité max avec les références
-    - Le score du bien = moyenne des similarités des meilleures photos (top-K)
-    - Normalisé : similarité cosinus CLIP typiquement entre 0.2–0.95
-
-    Retourne (score_0_100, liste_scores_par_photo).
-    """
-    if len(ref_embeddings) == 0 or not bien_photos:
-        return 50.0, []
-
-    photo_scores = []
-    for img in bien_photos:
-        try:
-            emb = _encode_image(img)
-            # Similarité avec chaque référence → prend le max (meilleur match)
-            sims = [cosine_similarity(emb, ref) for ref in ref_embeddings]
-            photo_scores.append(max(sims))
-        except Exception:
-            pass
-
-    if not photo_scores:
-        return 50.0, []
-
-    # Moyenne des top-K meilleurs scores (ignore les photos hors-sujet, ex: plan)
-    top_k = sorted(photo_scores, reverse=True)[:TOP_K_SIMILARITIES]
-    raw_score = float(np.mean(top_k))
-
-    # Normalisation : CLIP cosine sim est typiquement entre 0.15 (rien à voir)
-    # et 0.90 (quasi-identique). On mappe [0.20, 0.75] → [0, 100]
-    normalized = (raw_score - 0.20) / (0.75 - 0.20) * 100
-    score = max(0.0, min(100.0, normalized))
-
-    return round(score, 1), [round(s * 100, 1) for s in photo_scores]
-
-
-def score_photos_vs_ban(
-    bien_photos: list[Image.Image],
-    ban_embeddings: np.ndarray,
-) -> float:
-    """
-    Score de similarité entre les photos d'un bien et les images ban.
-    Retourne le score 0–100 (plus c'est élevé, plus ça ressemble à ce qu'on NE veut PAS).
-    Utilise le max des top-K pour être conservateur (une seule photo très similaire suffit).
-    """
-    if len(ban_embeddings) == 0 or not bien_photos:
-        return 0.0
-
-    photo_scores = []
-    for img in bien_photos:
-        try:
-            emb = _encode_image(img)
-            sims = [cosine_similarity(emb, ref) for ref in ban_embeddings]
-            photo_scores.append(max(sims))
-        except Exception:
-            pass
-
-    if not photo_scores:
-        return 0.0
-
-    # On prend le max global : une seule photo "ban" suffit à exclure
-    raw_score = max(photo_scores)
-    normalized = (raw_score - 0.20) / (0.75 - 0.20) * 100
-    return round(max(0.0, min(100.0, normalized)), 1)
-
-
-def verdict(score: float, seuil_excl: int, seuil_warn: int) -> str:
-    if score >= seuil_warn:
-        return "match"
-    elif score >= seuil_excl:
-        return "partiel"
-    else:
-        return "exclu"
-
-
 # ──────────────────────────────────────────────
 # ÉVALUATION D'UN BIEN
 # ──────────────────────────────────────────────
 
 async def evaluate_bien(
     bien: dict,
-    ref_embeddings: np.ndarray,
-    ref_labels: list[str],
-    ban_embeddings: np.ndarray,
-    seuil_excl: int,
-    seuil_warn: int,
-    seuil_ban: int,
     session: httpx.AsyncClient,
 ) -> dict:
-    """Évalue visuellement un bien, enrichit le dict et le retourne."""
+    """Évalue les photos d'un bien (éléments indésirables + piscine), enrichit le dict."""
     photos_all = await fetch_bien_photos(bien, session, MAX_PHOTOS_PISCINE)
-    photos_style = photos_all[:MAX_PHOTOS_PAR_BIEN]
 
-    # Score positif (similarité aux références souhaitées)
-    score, per_photo = score_photos_vs_refs(photos_style, ref_embeddings)
+    # Éléments indésirables (elements.yaml) détectés dans les photos
+    elements = detect_elements(photos_all)
+    excluants = [e for e in elements if e["mode"] == "exclusion"]
 
-    # Score ban (similarité aux références indésirables)
-    score_ban = score_photos_vs_ban(photos_style, ban_embeddings)
-
-    bien["score_visuel"] = score
-    bien["score_ban"] = score_ban
-    bien["banni"] = (len(ban_embeddings) > 0) and (score_ban >= seuil_ban)
-    bien["verdict_visuel"] = verdict(score, seuil_excl, seuil_warn)
+    bien["elements_detectes"] = elements
+    bien["banni"] = bool(excluants)
     bien["nb_photos_analysees"] = len(photos_all)
-    bien["scores_par_photo"] = per_photo
     bien["piscine_visuelle"] = detect_piscine_in_photos(photos_all)
 
     if not photos_all:
-        bien["resume_visuel"] = "Aucune photo disponible — score non calculé"
-        bien["score_visuel"] = None
+        bien["resume_visuel"] = "Aucune photo disponible"
     else:
         pool_tag = " | piscine détectée" if bien["piscine_visuelle"] else ""
-        ban_tag  = f" | ⛔ banni (score ban {score_ban:.0f}/100)" if bien["banni"] else ""
+        if excluants:
+            elem_tag = " | ⛔ " + ", ".join(f"{e['nom']} ({e['score']})" for e in excluants)
+        elif elements:
+            elem_tag = " | ⚠️ " + ", ".join(f"{e['nom']} ({e['score']})" for e in elements)
+        else:
+            elem_tag = ""
         bien["resume_visuel"] = (
-            f"{len(photos_all)} photo(s) analysée(s) en local — "
-            f"similarité style : {score:.0f}/100{pool_tag}{ban_tag}"
+            f"{len(photos_all)} photo(s) analysée(s) en local{pool_tag}{elem_tag}"
         )
 
     return bien
@@ -463,45 +355,28 @@ async def evaluate_bien(
 
 async def run(biens: list[dict], concurrency: int = 8) -> list[dict]:
     """
-    Filtre et score visuellement une liste de biens via CLIP local.
-    Retourne la liste filtrée, triée par score_visuel décroissant.
-    Biens sans photos : conservés avec score_visuel=None, non exclus.
-    Biens dont le score_ban >= seuil_ban : rejetés (hard-exclude).
+    Filtre les biens par présence d'éléments indésirables (config/elements.yaml).
+    Biens sans photos : conservés (non évalués). Biens contenant un élément en
+    mode exclusion : rejetés. Éléments en mode alerte : annotés, conservés.
     """
-    seuil_excl, seuil_warn, seuil_ban = load_style_seuils()
-
     try:
-        ref_embeddings, ref_labels = load_reference_embeddings()
+        _init_clip()
     except ImportError as e:
         print(f"[Vision] ⚠️  {e} — filtre visuel désactivé")
         return biens
 
-    if len(ref_embeddings) == 0:
-        print("[Vision] Aucune référence — filtre visuel désactivé")
+    elements = load_elements()
+    if not elements:
+        print("[Vision] Aucun élément dans elements.yaml — filtre visuel désactivé")
         return biens
 
-    # Chargement des images ban (optionnel — silence si dossier absent)
-    try:
-        ban_embeddings, ban_labels = load_ban_embeddings()
-    except Exception:
-        ban_embeddings = np.empty((0, 512))
-        ban_labels = []
-
-    ban_info = f" | {len(ban_labels)} ban" if ban_labels else ""
-    print(f"[Vision] Scoring de {len(biens)} biens "
-          f"({len(ref_labels)} références{ban_info} | "
-          f"seuil excl={seuil_excl} warn={seuil_warn} ban={seuil_ban})")
+    print(f"[Vision] Analyse de {len(biens)} biens ({len(elements)} élément(s) surveillé(s))")
 
     semaphore = asyncio.Semaphore(concurrency)
 
     async def eval_with_sem(bien, session):
         async with semaphore:
-            return await evaluate_bien(
-                bien, ref_embeddings, ref_labels,
-                ban_embeddings,
-                seuil_excl, seuil_warn, seuil_ban,
-                session,
-            )
+            return await evaluate_bien(bien, session)
 
     async with httpx.AsyncClient(
         headers={"User-Agent": "Mozilla/5.0 (compatible; immo-agent/1.0)"},
@@ -510,45 +385,118 @@ async def run(biens: list[dict], concurrency: int = 8) -> list[dict]:
         results = await asyncio.gather(*[eval_with_sem(b, session) for b in biens])
 
     # Filtrage + alertes
-    kept, excluded_style, excluded_ban = [], [], []
+    kept, excluded_elem = [], []
     for b in results:
-        # Hard-exclude : ressemble trop aux images ban
+        # Hard-exclude : un élément indésirable (mode exclusion) est présent
         if b.get("banni"):
-            excluded_ban.append(b)
+            excluded_elem.append(b)
             continue
-        score = b.get("score_visuel")
-        # Hard-exclude : score style insuffisant
-        if score is not None and score < seuil_excl:
-            excluded_style.append(b)
-            continue
-        # Alerte : score partiel
-        if score is not None and score < seuil_warn:
-            b.setdefault("alerte", []).append(
-                f"🎨 Style partiel (score visuel {score:.0f}/100)"
-            )
+        # Alerte : élément indésirable en mode alerte (non excluant)
+        for e in b.get("elements_detectes", []):
+            if e["mode"] != "exclusion":
+                b.setdefault("alerte", []).append(f"⚠️ {e['nom']} ({e['score']})")
         kept.append(b)
 
-    # Tri : biens avec score d'abord (desc), puis sans photo à la fin
-    kept.sort(key=lambda b: b.get("score_visuel") or -1, reverse=True)
-
-    ban_msg = f" | Bannis (style indésirable) : {len(excluded_ban)}" if excluded_ban else ""
-    print(f"[Vision] ✓ Conservés : {len(kept)} | Exclus (style) : {len(excluded_style)}{ban_msg}")
+    elem_msg = f" | Écartés (élément indésirable) : {len(excluded_elem)}" if excluded_elem else ""
+    print(f"[Vision] ✓ Conservés : {len(kept)}{elem_msg}")
     return kept
+
+
+async def rescore_elements(biens: list[dict], concurrency: int = 8) -> int:
+    """Garde-fou rétroactif : (re)détecte les éléments indésirables sur les entrées
+    LEGACY du suivi (jamais évaluées contre elements.yaml, clé `elements_detectes`
+    absente). Mute `elements_detectes` et `banni` en place.
+
+    Sert au suivi cumulatif : un élément ajouté à elements.yaml APRÈS qu'un bien y
+    est entré n'a jamais été confronté à ce bien (`filter_new` empêche son
+    re-scoring). Coût borné : seules les entrées jamais évaluées sont re-téléchargées ;
+    une fois `elements_detectes` posé, elles ne le sont plus.
+    Retourne le nombre de biens nouvellement marqués pour exclusion.
+    """
+    if not load_elements():
+        return 0
+    targets = [b for b in biens if "elements_detectes" not in b and b.get("photos")]
+    if not targets:
+        return 0
+    try:
+        _init_clip()
+    except ImportError:
+        return 0
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(b: dict, session: httpx.AsyncClient):
+        async with sem:
+            photos = await fetch_bien_photos(b, session, MAX_PHOTOS_PISCINE)
+            if not photos:
+                return  # pas de photo récupérable → on laisse elements_detectes absent
+            elements = detect_elements(photos)
+            b["elements_detectes"] = elements
+            b["banni"] = any(e["mode"] == "exclusion" for e in elements)
+
+    async with httpx.AsyncClient(
+        headers={"User-Agent": "Mozilla/5.0 (compatible; immo-agent/1.0)"},
+        timeout=15,
+    ) as session:
+        await asyncio.gather(*[one(b, session) for b in targets])
+
+    return sum(1 for b in targets if b.get("banni"))
+
+
+async def _calibrer(nom: str, biens: list[dict]):
+    """Affiche le score d'un élément sur chaque bien (toutes photos confondues),
+    trié décroissant, pour choisir le seuil. Le bien n'est PAS filtré ici."""
+    # On lit l'élément même s'il est actif:false (calibration avant activation).
+    data = yaml.safe_load(ELEMENTS_YAML.read_text(encoding="utf-8")) or {}
+    el = next((e for e in data.get("elements", []) if e.get("nom") == nom), None)
+    if not el:
+        print(f"Élément '{nom}' introuvable dans {ELEMENTS_YAML.name}")
+        return
+    el = {"nom": nom, "positifs": el["positifs"], "negatifs": el["negatifs"],
+          "seuil": float(el.get("seuil", 0.6)), "mode": el.get("mode", "exclusion")}
+    _init_clip()
+    rows = []
+    async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0"}, timeout=15) as s:
+        sem = asyncio.Semaphore(8)
+        async def one(b):
+            async with sem:
+                photos = await fetch_bien_photos(b, s, MAX_PHOTOS_PISCINE)
+                if not photos:
+                    return
+                embs = []
+                for p in photos:
+                    try: embs.append(_encode_image(p))
+                    except Exception: pass
+                if not embs:
+                    return
+                best_i = max(range(len(embs)), key=lambda i: _element_confidence(embs[i], el))
+                rows.append((_element_confidence(embs[best_i], el), best_i, len(photos), b))
+        await asyncio.gather(*[one(b) for b in biens])
+    rows.sort(key=lambda r: -r[0])
+    print(f"\nCalibration '{nom}' (seuil actuel {el['seuil']}) — score | photo#/n | bien")
+    for sc, idx, n, b in rows:
+        flag = "  ◄ AU-DESSUS DU SEUIL" if sc >= el["seuil"] else ""
+        print(f"  {sc:5.2f} | #{idx}/{n} | {(b.get('ville') or '?')[:16]:16} {(b.get('url') or '')[:55]}{flag}")
 
 
 if __name__ == "__main__":
     import json, sys
 
-    raw_files = sorted(Path("data/raw").glob("*.json"))
+    raw_files = sorted(Path("data/raw").glob("biens_raw_*.json"))
     if not raw_files:
         print("Aucun fichier raw. Lance d'abord hunter.py")
         sys.exit(1)
-
     biens = json.loads(raw_files[-1].read_text(encoding="utf-8"))
+
+    if len(sys.argv) >= 3 and sys.argv[1] == "--calibrer":
+        print(f"Calibration sur {len(biens)} biens depuis {raw_files[-1].name}")
+        asyncio.run(_calibrer(sys.argv[2], biens))
+        sys.exit(0)
+
     print(f"Test CLIP sur {len(biens)} biens depuis {raw_files[-1]}")
     result = asyncio.run(run(biens))
     print(f"\nRésultat : {len(result)} biens conservés")
     for b in result[:10]:
-        score = b.get("score_visuel")
-        score_str = f"{score:.0f}/100" if score is not None else "N/A"
-        print(f"  {score_str:8s} [{b.get('verdict_visuel', '?'):8s}] {b.get('titre', '')[:55]}")
+        els = b.get("elements_detectes") or []
+        tag = " ⚠️ " + ", ".join(f"{e['nom']}({e['score']})" for e in els) if els else ""
+        print(f"  {b.get('titre', '')[:60]}{tag}")

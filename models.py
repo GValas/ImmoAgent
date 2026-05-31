@@ -70,12 +70,10 @@ class Bien:
     photos: list[str] = field(default_factory=list)
     agence: Optional[str] = None
 
-    # Scoring visuel (rempli par Agent Vision dans Hunter)
-    score_visuel: Optional[float] = None              # 0–100
-    verdict_visuel: Optional[str] = None              # match | partiel | exclu
+    # Analyse visuelle (remplie par Agent Vision dans Hunter)
     resume_visuel: Optional[str] = None               # phrase de synthèse
-    points_positifs_visuel: list[str] = field(default_factory=list)
-    points_negatifs_visuel: list[str] = field(default_factory=list)
+    elements_detectes: list = field(default_factory=list)  # éléments indésirables détectés
+    banni: bool = False                               # un élément en mode exclusion détecté
     nb_photos_analysees: int = 0
 
     # Scoring final (rempli par Agent Analyst)

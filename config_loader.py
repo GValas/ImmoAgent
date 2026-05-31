@@ -10,7 +10,7 @@ CONFIG_DIR = Path(__file__).parent / "config"
 
 POIDS_KEYS = [
     "poids_prix", "poids_surface", "poids_terrain",
-    "poids_localisation", "poids_etat", "poids_dpe", "poids_style"
+    "poids_localisation", "poids_etat", "poids_dpe"
 ]
 
 DEFAULTS = {
@@ -38,7 +38,6 @@ DEFAULTS = {
     "poids_localisation":  20,
     "poids_etat":          10,
     "poids_dpe":           10,
-    "poids_style":         0,
 }
 
 

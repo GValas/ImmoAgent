@@ -1,10 +1,37 @@
-﻿# Critères de recherche immobilière
-# Ce fichier est la source unique de vérité — tout ce que tu modifies est ici.
-# Critères classés par importance décroissante.
+# Critères de recherche immobilière
+#
+# SOURCE UNIQUE DE VÉRITÉ — tout ce que tu configures est ici.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# Deux phases dans le pipeline, deux familles de critères :
+#
+#   1. CRITÈRES DE SCRAPING  → filtrage sur les caractéristiques STRUCTURÉES
+#      (type, surface, prix, pièces, terrain, DPE). Soit envoyés dans la requête
+#      au site, soit appliqués juste après sur les champs déjà parsés. Aucune
+#      interprétation : un nombre, une catégorie, on garde ou on jette.
+#
+#   2. CRITÈRES D'ANALYSE    → demandent d'INTERPRÉTER l'annonce :
+#        • le TEXTE   (mots-clés rédhibitoires, équipements mentionnés)
+#        • le VISUEL  (CLIP sur les photos : éléments indésirables)
+#        • la GÉO     (gare/bus à proximité, cadastre, satellite)
+#      + la PONDÉRATION du score final.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# Comment ce fichier est lu (config_loader.py) :
+#   • le 1ᵉʳ bloc de code (entre triple accents graves) = liste des départements ;
+#   • dans TOUS les blocs de code, chaque ligne "clé: valeur" devient un réglage.
+#   Donc : ne pas déplacer le bloc Départements de la 1ʳᵉ place, et ne mettre que
+#   des "clé: valeur" (ou des commentaires #) dans les blocs de config.
+# ─────────────────────────────────────────────────────────────────────────────
 
----
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  ZONE DE RECHERCHE                                                         ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
 
 ## Départements
+
+# Codes INSEE des départements ciblés (doit rester le 1ᵉʳ bloc du fichier).
 
 ```
 72  # Sarthe
@@ -18,12 +45,21 @@
 58  # Nièvre
 41  # Loir-et-Cher
 53  # Mayenne
-
 ```
 
----
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  PHASE 1 — CRITÈRES DE SCRAPING (caractéristiques structurées)             ║
+# ║  Filtrent sur des champs précis de l'annonce, sans interprétation.         ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
 
 ## Critères du bien
+
+# `types`, `surface_*`, `pieces_min`, `terrain_min`, `prix_*` sont passés en
+# paramètres de requête aux scrapers quand le site le permet. Les bornes
+# `surface_min`, `prix_min/max`, `pieces_max` et `dpe_exclus` sont en plus
+# re-vérifiées après scraping (filtre dur dans hunter.filter_biens).
+# NB : un bien sans prix / surface / DPE renseigné n'est PAS exclu par ces tests.
 
 ```
 types:        ["maison", "propriete", "manoir", "longere"]
@@ -37,96 +73,114 @@ prix_max:     600000    # €
 dpe_exclus:   ["E", "F", "G"]    # A B C D acceptés
 ```
 
----
 
-## Pondérations du scoring (total = 100)
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  PHASE 2 — CRITÈRES D'ANALYSE (interprétation de l'annonce)                ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
 
-```
-poids_prix:          5   # dans la fourchette 350-550k
-poids_surface:       15   # >= 150m²
-poids_terrain:       10   # >= 4000m² arboré — critère fort
-poids_localisation:  35   # accès train Paris < 4h, commerces proches
-poids_etat:          10   # bon état, sans travaux
-poids_dpe:            5   # A/B/C/D
-poids_style:         10   # style ancien/rustique/campagnard (CLIP)
-```
+## Analyse du TEXTE (description + titre)
 
----
-
-## Filtres d'exclusion
+# Lecture du texte de l'annonce (pas un champ structuré).
+#   mots_cles_negatifs : si l'un apparaît dans titre/description → bien exclu.
+#   equipements_requis : exigés ; pour « piscine », validé par le texte
+#                        (mention propre au bien) OU par la détection visuelle CLIP.
 
 ```
 mots_cles_negatifs: ["viager", "enchères", "occupé", "indivision", "inondable", "zone inondable"]
 equipements_requis: ["piscine"]
+```
+
+
+## Analyse VISUELLE (CLIP sur les photos) — Exclusions
+
+# Filtrage par EXCLUSION : on décrit en français des éléments indésirables ;
+# si CLIP en repère un dans une photo du bien, le bien est écarté (`exclusion`)
+# ou simplement annoté (`alerte`). Pas de scoring de style positif.
+# Format : `description française | mode`   (mode = exclusion | alerte)
+
+```
+piscine hors-sol (bassin posé au sol, à parois/habillage bois) | alerte
+gazon artificiel / pelouse synthétique                         | alerte
+# aucun arbre sur le terrain                                   | désactivé (non fiable en CLIP, cf. note)
+```
+
+> 🌳 *« aucun arbre »* est **désactivé** : détecter une *absence* d'arbres marche mal
+> en CLIP (déclenche sur les vues de champs, cartes de localisation, plans… même quand
+> le bien a des arbres). À juger plutôt à l'œil via le lien satellite de l'Excel.
+
+> ⚙️ **Comment ça s'applique** : cette liste est ta source en français. Les prompts
+> réellement soumis à CLIP vivent dans `config/elements.yaml` (en anglais — CLIP est
+> entraîné en anglais, le français inverse la détection). Après avoir édité la liste
+> ci-dessus, demande à **Claude Code** : « *synchronise les exclusions visuelles* ».
+> Il traduit chaque ligne, choisit les prompts négatifs (confondants) et le seuil,
+> puis met à jour `elements.yaml`. Un élément non calibré reste en `alerte`
+> (non destructif) jusqu'à validation (`python agents/vision.py --calibrer <nom>`).
+
+
+## Analyse GÉO — Gare & bus (proximité)
+
+# Calculée après scraping : distance entre le bien (coords ou centre-commune
+# géocodé) et la gare voyageurs / l'arrêt de bus le plus proche.
+#   gare_obligatoire : si true, exclut les biens sans gare dans le rayon.
+#   bus_*            : informatif seulement (jamais éliminatoire).
+
+```
 gare_obligatoire: true     # éliminer les biens sans gare SNCF voyageurs à proximité
-gare_rayon_km: 15          # rayon max (km) entre le bien et la gare la plus proche
-bus_actif: true            # annoter l'arrêt de bus le plus proche (informatif, NON éliminatoire)
-bus_rayon_km: 2            # rayon court (km) — un arrêt de bus utile est proche du bien
+gare_rayon_km:    15       # rayon max (km) bien ↔ gare la plus proche
+bus_actif:        true     # annoter l'arrêt de bus le plus proche (NON éliminatoire)
+bus_rayon_km:     2        # rayon court (km) — un arrêt utile est proche du bien
 ```
 
----
 
-## Critères qualitatifs (utilisés par Claude Code pour l'analyse)
+## Analyse GÉO — Géolocalisation (cadastre, satellite, piscine ortho)
 
-# Accessibilité 
-# - Moins de 4h de Paris 11e en train sans voiture
-# - Proche de tous commerces (boulangerie, médecin, supermarché)
-# - En zone non inondable
-# - Idéalement proche d'un fleuve ou d'une rivière
+# Pré-localise le bien (coords approx. de l'annonce × cadastre IGN) et ajoute à
+# l'Excel : lien satellite Google, lien ortho+cadastre Geoportail, parcelle
+# probable, et — si geoloc_piscine_ortho — détection piscine sur l'orthophoto IGN.
 
+```
+geoloc_actif:           true   # pré-localisation cadastrale (liens satellite + parcelles)
+geoloc_piscine_ortho:   true   # détecter la piscine sur l'orthophoto IGN (plus lent)
+geoloc_terrain_tol_pct: 25     # écart toléré contenance cadastrale vs terrain annoncé (%)
+```
+
+
+## Critères qualitatifs (libres — lus par Claude Code, hors pipeline auto)
+
+# Non parsés : repères pour l'analyse manuelle / les questions à Claude Code.
+#
+# Accessibilité
+#   - Moins de 4h de Paris 11e en train sans voiture
+#   - Proche de tous commerces (boulangerie, médecin, supermarché)
+#   - Zone non inondable ; idéalement proche d'un fleuve ou d'une rivière
 # Équipement impératif
-# - Piscine : au moins 4x9m — critère éliminatoire si absente
-
+#   - Piscine : au moins 4×9 m — éliminatoire si absente
 # Confort souhaité
-# - Bon état général, sans travaux à prévoir
-
----
-
-## Style visuel
-
-Style architectural recherché : ancien, rustique, campagnard, moderne
+#   - Bon état général, sans travaux à prévoir
 
 
-- **Architecture** : longère, maison de maître, manoir, ferme rénovée
-- **Matériaux** : briques apparentes, pierre de taille, colombages, bois
-- **Extérieur** : grand terrain arboré (4000m² min), piscine, calme, vue sur parc ou nature
-- **Ambiance** : campagne française authentique, pas de lotissement, pas de style contemporain
-- **Intérieur** : volumes généreux, cheminées, poutres, parquet ancien
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  SCORING — Pondération du classement final                                 ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
 
-### Styles à exclure
+## Pondérations du scoring
 
-- Maison de lotissement (années 70–2000, plain-pied sans caractère)
-- Architecture moderne (béton, toit plat, baies vitrées industrielles)
-- Pavillon de banlieue ou périurbain
-
-### Références visuelles
-- Les photos de ce que tu VEUX sont dans config/style_references/
-- Les photos de ce que tu NE VEUX PAS sont dans config/style_ban/
-
-### Seuils de filtrage CLIP
+# Poids relatifs des dimensions du score (0–100). Renormalisés automatiquement
+# si la somme ≠ 100. (Le style visuel n'entre plus dans le score.)
 
 ```
-style_seuil_exclusion: 30   # score style < X → rejeté
-style_seuil_warning:   50   # score style < X → alerte
-style_seuil_ban:       99   # score ban > X   → rejeté (ressemble trop à une image ban)
+poids_prix:          5    # position dans la fourchette de prix
+poids_surface:       15   # >= surface_min
+poids_terrain:       10   # >= terrain_min — critère fort
+poids_localisation:  35   # gare/commerces/accès Paris
+poids_etat:          10   # bon état, sans travaux
+poids_dpe:           5    # A/B/C/D
 ```
 
----
 
-## Géolocalisation
-
-```
-geoloc_actif: true              # pré-localisation cadastrale (liens satellite + parcelles)
-geoloc_piscine_ortho: true      # détecter la piscine sur l'orthophoto IGN (plus lent)
-geoloc_terrain_tol_pct: 25      # écart toléré entre contenance cadastrale et terrain annoncé (%)
-```
-
-# Repère le bien sur image satellite à partir des coordonnées approximatives de
-# l'annonce (Bien'ici) croisées avec le cadastre (parcelles ~ surface terrain).
-# Ajoute dans l'Excel : lien satellite Google, lien ortho+cadastre Geoportail,
-# parcelle probable, et — si geoloc_piscine_ortho — détection piscine sur l'ortho.
-
----
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  SCHEDULER (pipeline continu) — laissé tel quel                            ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
 
 ## Scheduler
 
@@ -135,5 +189,5 @@ hunter_interval_hours:    1     # scrape toutes les 6h
 discovery_interval_days:  1
 builder_interval_days:    30
 score_seuil_interet:      50
-max_biens_suivi:          50
+max_biens_suivi:          100
 ```

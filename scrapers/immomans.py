@@ -186,12 +186,14 @@ def _parse_prod(ref: str, p: dict) -> dict | None:
 
         titre = _localized(p.get("title")) or ""
 
-        # Exclusion explicite par titre (sécurité)
-        if re.search(r"\bappartement\b|\bstudio\b|\bterrain\b|\bimmeuble\b|\bgarage\b|\bparking\b",
-                     titre, re.IGNORECASE):
-            return None
-        # Si prod_type non-house et titre ne contient aucun mot maison/propriété → exclure
+        # Pour les types ambigus (prod_type absent / hors liste maison), on s'appuie
+        # sur le titre : il doit ressembler à une maison/propriété ET ne pas être un
+        # appartement/studio/immeuble. (prod_type=house est déjà autoritatif → pas de
+        # filtre titre, sinon "garage/terrain/jardin" en amenities feraient des faux
+        # négatifs sur de vraies maisons.)
         if prod_type not in _KEEP_PROD_TYPES:
+            if re.search(r"\bappartement\b|\bstudio\b|\bimmeuble\b", titre, re.IGNORECASE):
+                return None
             if not re.search(r"maison|propri[ée]t[ée]|demeure|manoir|ch[âa]teau|longère|longere|"
                              r"moulin|ferme|villa", titre, re.IGNORECASE):
                 return None
@@ -234,17 +236,10 @@ def _parse_prod(ref: str, p: dict) -> dict | None:
             if ch:
                 chambres = ch
 
-        # URL détail : /vente/{prod_type-fr}/{slug}  — on reconstruit via geo + slug
+        # URL détail : /vente/{slug}  (forme canonique, vérifiée HTTP 200 ; le slug
+        # contient déjà ville+cp et est unique par bien).
         slug = _localized(p.get("url")) or ""
-        geo = p.get("geo") or ""           # "ville/cp"
-        type_seg = {"house": "maison", "appt": "appartement", "build": "immeuble",
-                    "land": "terrain"}.get(prod_type, "maison")
-        if slug and geo:
-            url = f"{BASE_URL}/{type_seg}/{geo}/{slug}"
-        elif slug:
-            url = f"{BASE_URL}/{type_seg}/{slug}"
-        else:
-            url = f"{BASE_URL}/vente"
+        url = f"{BASE_URL}/vente/{slug}" if slug else f"{BASE_URL}/vente"
 
         description = _strip_html(_localized(p.get("details")) or "")
 
