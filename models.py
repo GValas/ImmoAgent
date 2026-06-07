@@ -37,9 +37,6 @@ class Bien:
     cadastre_url: Optional[str] = None
     parcelles_candidates: list = field(default_factory=list)
     parcelle_match: Optional[str] = None     # "Section Numéro — N m²"
-    piscine_ortho: Optional[bool] = None     # piscine détectée sur l'orthophoto IGN
-    piscine_ortho_score: Optional[float] = None
-    piscine_ortho_url: Optional[str] = None  # lien satellite centré sur la piscine détectée
 
     # Gare SNCF voyageurs la plus proche (rempli par scrapers/gares.py)
     gare: Optional[bool] = None
@@ -120,5 +117,4 @@ class CriteresRecherche:
     bus_actif: bool = True
     bus_rayon_km: float = 2.0
     geoloc_actif: bool = True
-    geoloc_piscine_ortho: bool = False
     geoloc_terrain_tol_pct: float = 25.0

@@ -162,7 +162,7 @@ async def annotate_biens(biens: list[dict], rayon_km: float = 10.0) -> list[dict
 
     async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=30) as client:
         # Géocodage parallèle (limité) des communes sans coordonnées
-        sem = asyncio.Semaphore(8)
+        sem = asyncio.Semaphore(16)   # géocodage commune (geo.api.gouv.fr tolère)
 
         async def coords_for(b: dict) -> tuple[float, float] | None:
             lat, lon = b.get("latitude"), b.get("longitude")

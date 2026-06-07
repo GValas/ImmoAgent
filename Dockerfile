@@ -1,6 +1,6 @@
 # ============================================================
 # immo-agent — image de prod pour le scheduler (boucle continue)
-# Dérivée de .devcontainer/post-create.sh
+# Stack Python partagée avec le devcontainer via scripts/install-stack.sh
 # ============================================================
 FROM python:3.12-slim
 
@@ -17,23 +17,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Dépendances Python (couche cachée tant que requirements.txt ne change pas) ---
-COPY requirements.txt .
-# torch CUDA (cu124) EN PREMIER : les wheels embarquent le runtime CUDA (cudart,
-# cuDNN, cuBLAS) — pas besoin d'image de base CUDA, mais l'hôte doit fournir le
-# driver NVIDIA + nvidia-container-toolkit et le conteneur doit recevoir --gpus all.
-# Pour repasser en CPU : remplacer cu124 par cpu.
-RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 \
- && pip install -r requirements.txt \
- && pip install git+https://github.com/openai/CLIP.git
-
-# --- Playwright Chromium + libs système (apt) ---
-RUN playwright install --with-deps chromium
+# --- Stack Python + Playwright (couche cachée tant que requirements.txt et le
+#     script ne changent pas). scripts/install-stack.sh est MUTUALISÉ avec le
+#     devcontainer (.devcontainer/Dockerfile) → source unique de vérité.
+#     cu124 (GPU) par défaut ; repli CPU : passer l'URL whl/cpu en argument. ---
+COPY requirements.txt scripts/install-stack.sh ./
+RUN bash install-stack.sh && rm -f install-stack.sh
 
 # --- Pré-cache du modèle CLIP ViT-B/32 (~340 Mo) pour un démarrage 100% offline ---
 RUN python -c "import clip; clip.load('ViT-B/32', device='cpu')"
 
 # --- Code applicatif (en dernier : invalide le moins de couches au rebuild) ---
+# CACHEBUST : run_prod.sh passe un timestamp → cette couche (et donc le code) est
+# TOUJOURS reconstruite, alors que les couches lourdes ci-dessus (torch, chromium,
+# CLIP) restent en cache tant que requirements.txt ne change pas. Garantit du code
+# à jour sans rebuild complet.
+ARG CACHEBUST=0
 COPY . .
 
 # Répertoires runtime au cas où ils ne seraient pas montés

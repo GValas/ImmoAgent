@@ -30,7 +30,6 @@ DEFAULTS = {
     "bus_actif":           True,    # annoter l'arrêt de bus le plus proche (informatif)
     "bus_rayon_km":        2,       # rayon court — un arrêt de bus utile est proche
     "geoloc_actif":          True,   # pré-localisation cadastrale (liens + parcelles)
-    "geoloc_piscine_ortho":  False,  # détection piscine sur ortho IGN (lourd)
     "geoloc_terrain_tol_pct": 25,    # tolérance écart contenance vs terrain annoncé (%)
     "photos_min":            0,      # nb minimal de photos exigé (0 = pas de filtre)
     "poids_prix":          25,
@@ -93,7 +92,6 @@ def load_criteria() -> CriteresRecherche:
         bus_actif=bool(get("bus_actif")),
         bus_rayon_km=float(get("bus_rayon_km")),
         geoloc_actif=bool(get("geoloc_actif")),
-        geoloc_piscine_ortho=bool(get("geoloc_piscine_ortho")),
         geoloc_terrain_tol_pct=float(get("geoloc_terrain_tol_pct")),
     )
 

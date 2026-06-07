@@ -36,6 +36,32 @@ except Exception:  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #
+# Coupe-circuit par domaine : après N échecs 429/503 sur un même domaine, on
+# cesse de le solliciter pour le reste de la passe (évite le spam de logs et la
+# surcharge qui aggrave le rate-limit). reset_breaker() à appeler au début de
+# chaque passe d'enrichissement (hunter le fait).
+# --------------------------------------------------------------------------- #
+_DOMAIN_FAILS: dict[str, int] = {}
+_BREAKER_LIMIT = 4
+
+
+def reset_breaker() -> None:
+    _DOMAIN_FAILS.clear()
+
+
+def _is_rate_limit(e: Exception) -> bool:
+    return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (429, 503)
+
+
+def _note_fail(dom: str) -> bool:
+    """Incrémente le compteur d'échecs du domaine ; True si on vient d'atteindre la
+    limite (à logger une seule fois)."""
+    n = _DOMAIN_FAILS.get(dom, 0) + 1
+    _DOMAIN_FAILS[dom] = n
+    return n == _BREAKER_LIMIT
+
+
+# --------------------------------------------------------------------------- #
 # Filtres communs
 # --------------------------------------------------------------------------- #
 
@@ -44,11 +70,16 @@ _BLACKLIST_FRAGMENTS = (
     "logo", "logos", "/logo", "picto", "pictos", "avatar", "icon", "/icons",
     "sprite", "placeholder", "novisu", "no-visu", "no_photo", "nophoto",
     "default", "blank", "1px", "spacer", "transparent", "loader", "loading",
-    "/static/", "/_static_/", "/assets/img/", "diagrammeenergie", "/dpe.",
-    "/dpe/", "diagnostic", "watermark", "facebook", "twitter", "instagram",
+    "/static/", "/_static_/", "/assets/img", "/assets/imgs", "diagrammeenergie",
+    "/dpe.", "/dpe/", "diagnostic", "watermark", "facebook", "twitter", "instagram",
     "youtube", "linkedin", "flag-", "/flags/", "profile-picture", "agence-logo",
     "mandataires", "bandeau", "header", "footer", "carte", "/map", "google",
     "/share/", "media-logo", "/logo-",
+    # Chrome de site / images non-annonce qui gonflaient le compte (cf. era) :
+    "estimation", "homepage", "home-page", "/agency/", "agency/photos",
+    "/agence/", "/equipe", "/team-", "/contact", "/banniere",
+    "/little/",   # vignette era (/medias/annonces/little/…) ; NB: ne PAS bannir
+                  # "mini" générique → green-acres sert ses photos sous /miniPhotos/
 )
 
 # Extensions d'image acceptées (certaines sources servent sans extension : voir
@@ -230,6 +261,137 @@ def _dedup_by_stem(urls: list[str]) -> list[str]:
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Extraction DPE (best-effort) — réutilise le HTML/JSON déjà récupéré, AUCUNE
+# requête supplémentaire. Renseigne bien['dpe'] = "A".."G" si absent.
+#
+# Pièges :
+#   - Ne JAMAIS prendre le GES (gaz à effet de serre) à la place du DPE.
+#     green-acres affiche deux diagrammes `class="letter X active"` : le 1er est
+#     le DPE (énergie), le 2nd est le GES (précédé de `ges-line` / `ges`).
+#   - Ignorer les DPE "vierge"/"NS"/"non soumis"/"en cours".
+#   - Une lettre seule (A-G) ne suffit pas à confirmer un DPE → on exige toujours
+#     un contexte (mot-clé énergie, classe, etiquette, dpe…) dans les patterns
+#     texte, pour ne pas capturer une lettre au hasard.
+# --------------------------------------------------------------------------- #
+
+# Marqueurs indiquant qu'on n'a PAS de classe DPE exploitable.
+_DPE_VOID_RE = re.compile(
+    r"vierge|non\s*soumis|non\s*concern|en\s*cours|non\s*communiqu|\bNS\b|\bND\b|"
+    r"non\s*renseign|non\s*disponible|inconnu|absen",
+    re.IGNORECASE,
+)
+
+# JSON-LD / attributs data / API : "energyClass":"D", "classeEnergie":"D"...
+# (on EXCLUT volontairement les variantes GES : *GreenhouseGas*, *ges*, *emission*).
+_DPE_JSON_RE = re.compile(
+    r'"(?:energy[_-]?class|energyclass|energyrating|energy[_-]?rating|dpe(?:[_-]?letter)?'
+    r'|classe[_-]?energ\w*|classe[_-]?dpe|etiquette[_-]?energ\w*|consommation[_-]?classe'
+    r'|diagnostic[_-]?energ\w*|epc[_-]?rating|epc)"\s*:\s*"?\s*([A-G])\b',
+    re.IGNORECASE,
+)
+
+# green-acres : <div class="letter F active"> (1er = DPE, 2nd = GES).
+_DPE_LETTER_ACTIVE_RE = re.compile(
+    r'class="letter\s+([A-G])\s+active"', re.IGNORECASE,
+)
+
+# Texte SSR : "DPE : F", "Classe énergie : F", "étiquette énergie F"...
+_DPE_TEXT_RES = (
+    re.compile(r'\bDPE\b[^A-Za-z0-9]{0,12}([A-G])\b'),
+    re.compile(r'classe\s*(?:é|e)nerg\w*[^A-Za-z0-9]{0,12}([A-G])\b', re.IGNORECASE),
+    re.compile(r'(?:é|e)tiquette\s*(?:é|e)nerg\w*[^A-Za-z0-9]{0,12}([A-G])\b', re.IGNORECASE),
+    re.compile(r'performance\s*(?:é|e)nerg\w*[^A-Za-z0-9]{0,12}([A-G])\b', re.IGNORECASE),
+)
+
+
+def _ctx_is_void(txt: str, pos: int, span: int = 60) -> bool:
+    """True si le voisinage (±span) du match contient un marqueur 'pas de DPE'."""
+    return bool(_DPE_VOID_RE.search(txt[max(0, pos - span):pos + span]))
+
+
+def extract_dpe(txt: str) -> str | None:
+    """Extrait la classe DPE (A-G) depuis le HTML/JSON détail. None si introuvable.
+
+    Best-effort : ne lève jamais. Cascade :
+      1) green-acres `letter X active` (1er = DPE ; on saute le bloc GES),
+      2) JSON-LD / data / API (energyClass, classeEnergie, consommationClasse…),
+      3) texte SSR (DPE : X, classe énergie X, étiquette énergie X…).
+    """
+    if not txt:
+        return None
+    try:
+        # 1) green-acres : prendre le 1er `letter X active` qui n'est PAS dans le
+        # diagramme GES (le bloc GES est précédé de "ges-line"/"ges").
+        for m in _DPE_LETTER_ACTIVE_RE.finditer(txt):
+            before = txt[max(0, m.start() - 220):m.start()].lower()
+            # Si un marqueur GES apparaît APRÈS le dernier marqueur DPE dans le
+            # contexte amont, ce diagramme est le GES → on le saute.
+            ges_pos = before.rfind("ges")
+            dpe_pos = max(before.rfind("dpe"), before.rfind("energ"), before.rfind("énerg"))
+            if ges_pos != -1 and ges_pos > dpe_pos:
+                continue
+            letter = m.group(1).upper()
+            if "A" <= letter <= "G":
+                return letter
+
+        # 2) JSON / data attributes (exclut déjà les variantes GES par construction).
+        for m in _DPE_JSON_RE.finditer(txt):
+            if _ctx_is_void(txt, m.start()):
+                continue
+            # Garde-fou : si "ges"/"greenhouse"/"emission" est collé juste avant la
+            # clé capturée, on ignore (faux positif GES).
+            key_ctx = txt[max(0, m.start() - 25):m.start()].lower()
+            if "ges" in key_ctx or "greenhouse" in key_ctx or "emission" in key_ctx:
+                continue
+            return m.group(1).upper()
+
+        # 3) Texte SSR.
+        for rx in _DPE_TEXT_RES:
+            for m in rx.finditer(txt):
+                if _ctx_is_void(txt, m.start()):
+                    continue
+                # Évite de prendre une mention GES ("émission GES : D").
+                key_ctx = txt[max(0, m.start() - 12):m.start()].lower()
+                if "ges" in key_ctx:
+                    continue
+                return m.group(1).upper()
+    except Exception:
+        return None
+    return None
+
+
+def _maybe_set_dpe(bien: dict, txt: str) -> None:
+    """Renseigne bien['dpe'] depuis le HTML/JSON si absent. Ne lève jamais."""
+    try:
+        if bien.get("dpe"):
+            return
+        letter = extract_dpe(txt)
+        if letter:
+            bien["dpe"] = letter
+    except Exception:
+        pass
+
+
+def _dpe_from_notaires(data: dict) -> str | None:
+    """DPE depuis l'API notaires : bien.maison.consommationClasse (≠ emissionGesClasse)."""
+    try:
+        bien = (data or {}).get("bien") or {}
+        for sub in ("maison", "appartement", "terrain", "immeuble"):
+            node = bien.get(sub)
+            if isinstance(node, dict):
+                cls = node.get("consommationClasse")
+                if isinstance(cls, str) and len(cls) == 1 and "A" <= cls.upper() <= "G":
+                    return cls.upper()
+        # repli : champ à la racine du bien
+        cls = bien.get("consommationClasse")
+        if isinstance(cls, str) and len(cls) == 1 and "A" <= cls.upper() <= "G":
+            return cls.upper()
+    except Exception:
+        pass
+    return None
+
+
 async def _get(session: httpx.AsyncClient, url: str, **kw):
     """GET avec retry/backoff sur 429/503 (sites publics rate-limités, ex. century21)."""
     import asyncio
@@ -279,6 +441,11 @@ async def _g_notaires(bien: dict, session: httpx.AsyncClient) -> list[str]:
         "Accept": "application/json",
         "Referer": "https://www.immobilier.notaires.fr/",
     })
+    # DPE depuis l'API (réutilise le même fetch) — bien.maison.consommationClasse.
+    if not bien.get("dpe"):
+        cls = _dpe_from_notaires(data)
+        if cls:
+            bien["dpe"] = cls
     mm = (((data or {}).get("vente") or {}).get("multimedias")) or []
     out = []
     for m in mm:
@@ -292,47 +459,31 @@ async def _g_notaires(bien: dict, session: httpx.AsyncClient) -> list[str]:
     return out
 
 
+_IAD_DETAIL_API = "https://www.iadfrance.fr/api/properties"
+
+
 async def _g_iad(bien: dict, session: httpx.AsyncClient) -> list[str]:
-    """iad — LIMITATION : la page détail est une coquille SSR sans les vraies photos.
-
-    iadfrance.fr charge la galerie côté JS (l'API détail exige la référence interne
-    du bien, pas le slug d'URL). Le SSR ne contient qu'une image placeholder
-    (product-1988031-*), identique pour toutes les annonces → inexploitable.
-    Ce fetcher ne renverra donc en pratique rien d'utile ; fetch_gallery retombera
-    sur bien['photos'] (la photo de liste). Pour la galerie iad, il faudrait soit
-    conserver `item['photos']` au moment du scrape liste (iad.py), soit Playwright.
-
-    On tente quand même l'extraction au cas où iad servirait un jour les vraies
-    photos en SSR (width=300/600/900... par photo → on garde la plus large).
+    """iad — page détail en JS, mais l'API DÉTAIL renvoie le DPE en JSON :
+    GET /api/properties/{ref}?locale=fr → epcGes.epc.class (≠ epcGes.ges).
+    Nécessite la ref interne `id_annonce` (stockée par iad.py depuis l'API liste).
+    Les photos viennent déjà de l'API liste (iad.py) ; ici on récupère surtout le DPE.
     """
-    txt = await _get_text(session, bien["url"])
-    # Les photos 2..N sont dans un îlot JSON Next.js avec slashes échappés (/)
-    # et l'hôte iadfrance.com → on déséchappe avant extraction.
-    txt = txt.replace("\\u002F", "/").replace("\\u002f", "/")
-    raw = re.findall(
-        r"https?://images\.iadfrance\.(?:fr|com)/photos/realestate/[^\"'\\ ]+?\.(?:jpe?g|png|webp)[^\"'\\ ]*",
-        txt,
-    )
-    best: dict[str, tuple[int, str]] = {}
-    for u in raw:
-        u = _clean(u)
-        # Clé de dédup : nom de fichier (product-{id}-{n}.jpg), indépendant de
-        # l'hôte (.fr/.com) et de la query (?ts=...&width=...).
-        base = u.split("?")[0].rsplit("/", 1)[-1]
-        w = 0
-        qs = parse_qs(urlparse(u).query)
-        if "width" in qs:
-            try:
-                w = int(qs["width"][0])
-            except (ValueError, IndexError):
-                w = 0
-        if base not in best or w > best[base][0]:
-            best[base] = (w, u)
-    # Tri par numéro de photo pour conserver l'ordre de la galerie.
-    def _photo_idx(item):
-        m = re.search(r"-(\d+)\.(?:jpe?g|png|webp)", item[0])
-        return int(m.group(1)) if m else 0
-    return [v[1] for _, v in sorted(best.items(), key=_photo_idx)]
+    existing = bien.get("photos") or []
+    ref = bien.get("id_annonce")
+    if not ref:
+        return existing
+    try:
+        data = await _get_json(session, f"{_IAD_DETAIL_API}/{ref}?locale=fr")
+    except Exception:
+        return existing
+    try:
+        if not bien.get("dpe"):
+            cls = ((data.get("epcGes") or {}).get("epc") or {}).get("class")
+            if isinstance(cls, str) and len(cls) == 1 and "A" <= cls.upper() <= "G":
+                bien["dpe"] = cls.upper()
+    except Exception:
+        pass
+    return existing
 
 
 async def _g_century21(bien: dict, session: httpx.AsyncClient) -> list[str]:
@@ -343,6 +494,7 @@ async def _g_century21(bien: dict, session: httpx.AsyncClient) -> list[str]:
     on garde la taille 8.
     """
     txt = await _get_text(session, bien["url"])
+    _maybe_set_dpe(bien, txt)
     paths = re.findall(r"/imagesBien/[A-Za-z0-9_/.\-]+\.(?:jpe?g|png|webp)", txt)
     by_guid: dict[str, tuple[int, str]] = {}
     for p in paths:
@@ -360,6 +512,7 @@ async def _g_century21(bien: dict, session: httpx.AsyncClient) -> list[str]:
 async def _g_proprietes_privees(bien: dict, session: httpx.AsyncClient) -> list[str]:
     """proprietes_privees — photos séquentielles PROPRIETES-PRIVEES-{ref}-N.jpg."""
     txt = await _get_text(session, bien["url"])
+    _maybe_set_dpe(bien, txt)
     raw = re.findall(
         r"https://images\.proprietes-privees\.com/annonce/[^\"'\\ ]+?\.(?:jpe?g|png|webp)",
         txt,
@@ -373,6 +526,7 @@ async def _g_lesiteimmo(bien: dict, session: httpx.AsyncClient) -> list[str]:
     On restreint à l'id du bien pour éviter les photos d'autres annonces de la page.
     """
     txt = await _get_text(session, bien["url"])
+    _maybe_set_dpe(bien, txt)
     aid = bien.get("id_annonce") or ""
     if not aid:
         m = re.search(r"/(\d{5,})(?:[/?#].*)?$", bien.get("url", ""))
@@ -389,6 +543,7 @@ async def _g_lesiteimmo(bien: dict, session: httpx.AsyncClient) -> list[str]:
 async def _g_foncia(bien: dict, session: httpx.AsyncClient) -> list[str]:
     """foncia — photos cloudfront, mêmes hash en lg/md/sm → on garde lg."""
     txt = await _get_text(session, bien["url"])
+    _maybe_set_dpe(bien, txt)
     raw = re.findall(
         r"https://d7b3sch6x3cpd\.cloudfront\.net/annonces/[A-Za-z0-9/]+/(?:lg|md|sm)\.(?:jpe?g|png|webp)",
         txt,
@@ -410,6 +565,7 @@ async def _g_drhouse(bien: dict, session: httpx.AsyncClient) -> list[str]:
     (les images bandeau/mandataires sont des bannières d'agent → filtrées.)
     """
     txt = await _get_text(session, bien["url"])
+    _maybe_set_dpe(bien, txt)
     raw = re.findall(
         r"https://images\.drhouse-immo\.com/minisite/detail/[A-Za-z0-9/.\-]+?\.(?:webp|jpe?g|png)",
         txt,
@@ -420,6 +576,7 @@ async def _g_drhouse(bien: dict, session: httpx.AsyncClient) -> list[str]:
 async def _g_fnaim(bien: dict, session: httpx.AsyncClient) -> list[str]:
     """fnaim — photos sur imagesv2.fnaim.fr/images1/img/... (logos/ filtrés)."""
     txt = await _get_text(session, bien["url"])
+    _maybe_set_dpe(bien, txt)
     raw = re.findall(
         r"https://imagesv2\.fnaim\.fr/images\d*/img/[^\"'\\ ]+?\.(?:jpe?g|png|webp)",
         txt,
@@ -435,6 +592,7 @@ async def _g_paruvendu(bien: dict, session: httpx.AsyncClient) -> list[str]:
     (placeholder novisu) → on retourne alors l'existant.
     """
     txt = await _get_text(session, bien["url"])
+    _maybe_set_dpe(bien, txt)
     raw = re.findall(r"https://[a-z0-9.\-]*paruvendu\.fr/media_ext/[^\"'\\ )]+", txt)
     big, small = [], []
     for u in raw:
@@ -486,6 +644,10 @@ async def fetch_gallery(bien: dict, session: httpx.AsyncClient) -> list[str]:
     if not url or not url.startswith("http"):
         return existing
 
+    dom = urlparse(url).netloc
+    if _DOMAIN_FAILS.get(dom, 0) >= _BREAKER_LIMIT:
+        return existing   # domaine abandonné pour cette passe (rate-limité) — silencieux
+
     source = (bien.get("source") or "").strip()
     fetcher = _DISPATCH.get(source)
 
@@ -495,10 +657,15 @@ async def fetch_gallery(bien: dict, session: httpx.AsyncClient) -> list[str]:
             found = await fetcher(bien, session)
             result = _better_of(existing, found, bien)
             if len(result) > len(existing):
+                _DOMAIN_FAILS.pop(dom, None)   # succès → reset
                 return result
             # Le fetcher dédié n'a rien donné de mieux → on tente le générique,
             # sauf pour les sources JS-only (générique = chrome/placeholder).
         except Exception as e:
+            if _is_rate_limit(e):
+                if _note_fail(dom):
+                    print(f"[Gallery] {dom} rate-limité (429) — abandonné pour ce cycle")
+                return existing   # ne PAS tenter le générique (re-429 inutile)
             print(f"[Gallery] {source} fetcher KO ({url[:60]}): {e}")
 
     if source in _JS_ONLY:
@@ -508,9 +675,14 @@ async def fetch_gallery(bien: dict, session: httpx.AsyncClient) -> list[str]:
     try:
         txt = await _get_text(session, url)
         base = url
+        _maybe_set_dpe(bien, txt)
         found = _extract_generic(txt, base)
         return _better_of(existing, found, bien)
     except Exception as e:
+        if _is_rate_limit(e):
+            if _note_fail(dom):
+                print(f"[Gallery] {dom} rate-limité (429) — abandonné pour ce cycle")
+            return existing
         print(f"[Gallery] generic KO {source} ({url[:60]}): {e}")
         return existing
 
@@ -548,9 +720,10 @@ if __name__ == "__main__":
         "foncia",
         # sources passant par le fallback générique :
         "era", "greenacres", "cimm", "meilleursbiens", "noovimo", "nicole_joubert",
-        "laforet", "arthurimmo", "webimmo123", "clefrance",
+        "laforet", "arthurimmo", "webimmo123", "clefrance", "megagence",
+        "optimhome", "citya", "squarehabitat", "french_property",
     ]
-    PER_SOURCE = 3
+    PER_SOURCE = 6
 
     async def _test():
         files = sorted(glob.glob(os.path.join(RAW, "biens_prevision_*.json")))
@@ -568,28 +741,48 @@ if __name__ == "__main__":
                 buckets[s].append(b)
 
         rows = []
+        dpe_rows = []
         async with httpx.AsyncClient(headers=_HEADERS, timeout=30) as session:
             for s in TARGET:
                 biens = buckets.get(s, [])
                 if not biens:
                     rows.append((s, "—", "—", "pas d'échantillon dans le dernier run"))
+                    dpe_rows.append((s, "—", "—", 0, "pas d'échantillon"))
                     continue
                 liste_n, galerie_n = [], []
                 detail = []
+                dpe_before = dpe_after = 0
+                letters = []
                 for b in biens:
                     n_before = len(b.get("photos") or [])
+                    had_dpe = bool(b.get("dpe"))
+                    if had_dpe:
+                        dpe_before += 1
+                    b.pop("dpe", None)  # on simule l'absence pour mesurer le gain réel
                     photos = await fetch_gallery(b, session)
                     n_after = len(photos)
+                    if b.get("dpe"):
+                        dpe_after += 1
+                        letters.append(b["dpe"])
                     liste_n.append(n_before)
                     galerie_n.append(n_after)
                     detail.append(f"{n_before}->{n_after}")
                 med_l = int(statistics.median(liste_n))
                 med_g = int(statistics.median(galerie_n))
                 rows.append((s, med_l, med_g, " | ".join(detail)))
+                dpe_rows.append((s, dpe_before, dpe_after, len(biens),
+                                 "".join(sorted(letters)) or "—"))
 
         print(f"{'source':22} {'med_liste':>9} {'med_galerie':>11}   détail (liste->galerie)")
         print("-" * 90)
         for s, ml, mg, det in rows:
             print(f"{s:22} {str(ml):>9} {str(mg):>11}   {det}")
+
+        print()
+        print("COUVERTURE DPE (orig_avait -> capté / échantillon, ignorant le DPE liste préexistant)")
+        print(f"{'source':22} {'avant':>5} {'après':>5} {'/n':>4}   lettres")
+        print("-" * 70)
+        for s, db, da, n, lts in dpe_rows:
+            print(f"{s:22} {str(db):>5} {str(da):>5} {str(n):>4}   {lts}")
 
     asyncio.run(_test())

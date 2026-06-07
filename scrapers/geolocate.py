@@ -4,18 +4,15 @@ scrapers/geolocate.py — Pré-localisation cadastrale (open data IGN, sans clé
 Aide à retrouver l'emplacement précis d'un bien à partir de :
   1. coordonnées approximatives fournies par l'annonce (Bien'ici expose blurInfo :
      un centre + un rayon de floutage ~125 m) ;
-  2. la surface du terrain annoncée, croisée avec le cadastre (parcelles + contenance) ;
-  3. (optionnel, lourd) la détection de piscine sur l'orthophoto IGN.
+  2. la surface du terrain annoncée, croisée avec le cadastre (parcelles + contenance).
 
 Sources, toutes gratuites et sans authentification :
   - apicarto cadastre IGN : https://apicarto.ign.fr/api/cadastre/parcelle
         → parcelles intersectant une géométrie, avec `contenance` (m²)
-  - orthophoto IGN (WMS)  : https://data.geopf.fr/wms-r/wms (ORTHOIMAGERY.ORTHOPHOTOS)
   - géocodage commune     : geo.api.gouv.fr (repli si le bien n'a pas de coordonnées)
 
 Important : on n'automatise PAS le scraping des tuiles Google Maps (hors-CGU pour de
-la vision auto). Les liens Google/Geoportail produits sont destinés au clic humain ;
-toute détection automatique se fait sur l'orthophoto IGN (licence ouverte).
+la vision auto). Les liens Google/Geoportail produits sont destinés au clic humain.
 
 Interface standard : async def search(criteres: dict) -> list[dict]
   → Retourne toujours [] (ce n'est pas une source d'annonces actives)
@@ -24,7 +21,7 @@ Interface utilitaire :
   maps_links(lat, lon) -> dict
       → liens cliquables (Google satellite, Geoportail ortho+cadastre, cadastre.gouv)
   async annotate_biens(biens, criteres) -> list[dict]
-      → enrichit chaque bien (in place) avec liens + parcelles candidates + piscine ortho
+      → enrichit chaque bien (in place) avec liens + parcelles candidates
 """
 import asyncio
 import json
@@ -39,8 +36,6 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 APICARTO_PARCELLE = "https://apicarto.ign.fr/api/cadastre/parcelle"
-IGN_WMS = "https://data.geopf.fr/wms-r/wms"
-ORTHO_LAYER = "ORTHOIMAGERY.ORTHOPHOTOS"
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
@@ -198,230 +193,6 @@ async def candidate_parcels(
         parcels.sort(key=lambda p: p["dist_m"])
 
     return parcels[:MAX_CANDIDATES]
-
-
-# ──────────────────────────────────────────────
-# Orthophoto IGN + détection piscine (heuristique couleur)
-# ──────────────────────────────────────────────
-
-async def _fetch_ortho(client: httpx.AsyncClient, lat: float, lon: float,
-                       size_m: float = 250.0, px: int = 768) -> bytes | None:
-    """Télécharge un carré d'orthophoto IGN (JPEG) de côté size_m centré sur le point."""
-    d = (size_m / 2) / 111320.0
-    dlon = d / max(math.cos(math.radians(lat)), 1e-6)
-    params = {
-        "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetMap",
-        "LAYERS": ORTHO_LAYER, "STYLES": "", "CRS": "EPSG:4326",
-        "BBOX": f"{lat-d},{lon-dlon},{lat+d},{lon+dlon}",  # WMS 1.3.0 EPSG:4326 → lat,lon
-        "WIDTH": str(px), "HEIGHT": str(px), "FORMAT": "image/jpeg",
-    }
-    try:
-        r = await client.get(IGN_WMS, params=params)
-        if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
-            return r.content
-    except Exception as e:
-        print(f"[Geoloc] ortho échec ({lat:.4f},{lon:.4f}): {e}")
-    return None
-
-
-# Seuils d'un blob "piscine", exprimés en m² (donc indépendants de la résolution).
-# Un bassin privé fait typiquement ~10–120 m² ; on élargit pour les petits/grands.
-_POOL_AREA_M2_MIN = 8.0
-_POOL_AREA_M2_MAX = 350.0
-_POOL_FILL_MIN = 0.45    # compacité : un bassin remplit bien sa boîte englobante
-_POOL_ASPECT_MAX = 6.0   # rejette les traînées très allongées (ombres, bordures)
-_CLIP_POOL_THRESHOLD = 0.45   # CLIP seul suffit à confirmer au-delà de ce seuil
-_CLIP_SOFT = 0.28             # CLIP modéré + blob franc → piscine (combiné)
-_SUBSAMPLE = 2           # sous-échantillonnage du masque pour la rapidité
-_ORTHO_PX = 768          # résolution de l'ortho téléchargée
-_MAX_BLOBS_CLIP = 5      # nb max de blobs confirmés par CLIP par crop
-_MAX_PARCELS_SCAN = 4    # nb max de parcelles candidates scannées par bien
-
-
-def _pool_color_mask(hsv):
-    """Masque booléen des pixels turquoise/bleu piscine (HSV PIL 0–255)."""
-    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    return (h >= 105) & (h <= 178) & (s >= 60) & (v >= 70)
-
-
-def _connected_blobs(mask):
-    """Composantes connexes (4-voisinage) d'un masque booléen 2D.
-    Retourne [{area, bbox=(minr,minc,maxr,maxc)}], sans dépendance scipy."""
-    rows, cols = mask.shape
-    seen = [[False] * cols for _ in range(rows)]
-    m = mask.tolist()
-    blobs = []
-    for i in range(rows):
-        mi, si = m[i], seen[i]
-        for j in range(cols):
-            if not mi[j] or si[j]:
-                continue
-            stack = [(i, j)]
-            si[j] = True
-            area = 0
-            minr = maxr = i
-            minc = maxc = j
-            while stack:
-                r, c = stack.pop()
-                area += 1
-                if r < minr: minr = r
-                if r > maxr: maxr = r
-                if c < minc: minc = c
-                if c > maxc: maxc = c
-                for nr, nc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):
-                    if 0 <= nr < rows and 0 <= nc < cols and m[nr][nc] and not seen[nr][nc]:
-                        seen[nr][nc] = True
-                        stack.append((nr, nc))
-            blobs.append({"area": area, "bbox": (minr, minc, maxr, maxc)})
-    return blobs
-
-
-def _find_pool_blobs(rgb, size_m: float) -> list[dict]:
-    """
-    Localise les amas turquoise compacts plausibles (taille en m², compacité,
-    allongement) sur une orthophoto carrée RGB couvrant `size_m` mètres de côté.
-    Retourne [{area_m2, cx, cy, bbox_full, fill}] en pixels pleine résolution,
-    triés par surface décroissante.
-    """
-    import numpy as np
-    hsv = np.asarray(rgb.convert("HSV"))[::_SUBSAMPLE, ::_SUBSAMPLE]
-    mask = _pool_color_mask(hsv)
-    rows, cols = mask.shape
-    if rows == 0 or cols == 0:
-        return []
-    m_per_px = size_m / cols          # taille d'un pixel sous-échantillonné, en m
-    px_area_m2 = m_per_px * m_per_px
-
-    out = []
-    for b in _connected_blobs(mask):
-        area_m2 = b["area"] * px_area_m2
-        if not (_POOL_AREA_M2_MIN <= area_m2 <= _POOL_AREA_M2_MAX):
-            continue
-        minr, minc, maxr, maxc = b["bbox"]
-        bh, bw = maxr - minr + 1, maxc - minc + 1
-        fill = b["area"] / (bh * bw)
-        aspect = max(bh, bw) / max(1, min(bh, bw))
-        if fill < _POOL_FILL_MIN or aspect > _POOL_ASPECT_MAX:
-            continue
-        # Couleur moyenne des pixels turquoise du blob (discrimine l'eau vive d'un
-        # toit ardoise bleu-gris : l'eau est très saturée et claire).
-        region_mask = mask[minr:maxr + 1, minc:maxc + 1]
-        sel = hsv[minr:maxr + 1, minc:maxc + 1][region_mask]
-        mean_h, mean_s, mean_v = (float(sel[:, 0].mean()), float(sel[:, 1].mean()),
-                                  float(sel[:, 2].mean())) if len(sel) else (0.0, 0.0, 0.0)
-        s = _SUBSAMPLE
-        out.append({
-            "area_m2": round(area_m2, 1),
-            "fill": round(fill, 2),
-            "aspect": round(aspect, 2),
-            "mean_h": round(mean_h), "mean_s": round(mean_s), "mean_v": round(mean_v),
-            "cx": ((minc + maxc) / 2) * s,
-            "cy": ((minr + maxr) / 2) * s,
-            "bbox_full": (minc * s, minr * s, (maxc + 1) * s, (maxr + 1) * s),
-        })
-    out.sort(key=lambda b: -b["area_m2"])
-    return out
-
-
-def _blob_is_strong(blob) -> bool:
-    """
-    Un blob compact à la couleur franche d'eau de piscine — cyan, très saturé et
-    clair — est en soi un fort indice (écarte les toits ardoise bleu-gris, ternes).
-    """
-    return (12.0 <= blob["area_m2"] <= 160.0
-            and blob["fill"] >= 0.45 and blob["aspect"] <= 3.5
-            and 108 <= blob["mean_h"] <= 150
-            and blob["mean_s"] >= 115 and blob["mean_v"] >= 140)
-
-
-def _pool_decision(rgb, blob) -> float:
-    """
-    Score de confiance final (0–1) qu'un blob soit une piscine, combinant la
-    classification CLIP et la couleur du blob :
-      - eau franche (cyan vif et clair) → renforce (CLIP seul rate des piscines) ;
-      - bleu terne/sombre type toit ardoise → atténue (sauf CLIP très sûr) ;
-      - sinon → score CLIP brut.
-    """
-    conf = _confirm_pool(rgb, blob)
-    if conf < 0:                                   # CLIP indisponible → couleur/forme seule
-        return 0.6 if _blob_is_strong(blob) else 0.0
-    if _blob_is_strong(blob):                      # cyan vif et compact → forte présomption
-        return max(conf, 0.6)
-    # NB : la couleur seule ne sépare pas piscine et toit ardoise (une piscine profonde
-    # ou ombragée est sombre et peu saturée). On s'en remet à CLIP ; le score gradué
-    # affiché dans l'Excel + le lien satellite permettent la vérification à l'œil.
-    return conf
-
-
-def _confirm_pool(rgb, blob) -> float:
-    """Confiance CLIP (0–1) que le blob soit une piscine, sur un recadrage centré
-    autour du blob (avec marge pour le contexte). Retourne -1 si CLIP indisponible."""
-    x0, y0, x1, y1 = blob["bbox_full"]
-    pad = max(20, (x1 - x0) // 2)   # marge ∝ taille du blob → contexte pour CLIP
-    crop = rgb.crop((max(0, x0 - pad), max(0, y0 - pad),
-                     min(rgb.width, x1 + pad), min(rgb.height, y1 + pad)))
-    try:
-        from agents.vision import clip_pool_confidence
-        return clip_pool_confidence(crop)
-    except Exception:
-        return -1.0
-
-
-def detect_pool(img_bytes: bytes, size_m: float = 80.0) -> tuple[bool, float]:
-    """
-    Détecte une piscine sur une orthophoto carrée (detect-then-classify) : localise
-    l'amas turquoise compact le plus probant puis décide via CLIP + forme du blob.
-    Conservé pour un usage sur crop unique ; `annotate_biens` scanne les parcelles.
-    """
-    try:
-        import io
-        from PIL import Image
-        rgb = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    except Exception:
-        return False, 0.0
-    best = 0.0
-    for blob in _find_pool_blobs(rgb, size_m)[:_MAX_BLOBS_CLIP]:
-        best = max(best, _pool_decision(rgb, blob))
-    return best >= _CLIP_POOL_THRESHOLD, round(best, 3)
-
-
-async def scan_parcel_for_pool(client: httpx.AsyncClient, parcel: dict) -> dict | None:
-    """
-    Scanne une orthophoto haute résolution dimensionnée à la parcelle (couvre tout
-    le terrain, pas seulement le centroïde) et y cherche une piscine.
-    Retourne {lat, lon, score, area_m2} de la meilleure piscine, ou None.
-    """
-    lat, lon = parcel["lat"], parcel["lon"]
-    # Crop ajusté à l'emprise de la parcelle (+ marge), borné pour rester lisible.
-    size_m = max(50.0, min((parcel.get("span_m") or 60.0) * 1.4 + 25.0, 200.0))
-    img = await _fetch_ortho(client, lat, lon, size_m, _ORTHO_PX)
-    if not img:
-        return None
-    try:
-        import io
-        from PIL import Image
-        rgb = Image.open(io.BytesIO(img)).convert("RGB")
-    except Exception:
-        return None
-
-    m_per_px = size_m / rgb.width
-    cos_lat = max(math.cos(math.radians(lat)), 1e-6)
-    best = None
-    for blob in _find_pool_blobs(rgb, size_m)[:_MAX_BLOBS_CLIP]:
-        score = _pool_decision(rgb, blob)
-        if score < _CLIP_POOL_THRESHOLD:
-            continue
-        dx_m = (blob["cx"] - rgb.width / 2) * m_per_px
-        dy_m = (blob["cy"] - rgb.height / 2) * m_per_px
-        cand = {
-            "lat": round(lat - dy_m / 111320.0, 6),
-            "lon": round(lon + dx_m / (111320.0 * cos_lat), 6),
-            "score": round(score, 3),
-            "area_m2": blob["area_m2"],
-        }
-        if best is None or cand["score"] > best["score"]:
-            best = cand
-    return best
 
 
 # ──────────────────────────────────────────────
@@ -608,11 +379,8 @@ async def annotate_biens(biens: list[dict], criteres=None) -> list[dict]:
       - geo_precis (bool)            : coords issues de l'annonce (vs centre commune)
       - parcelles_candidates (list)  : parcelles compatibles avec surface_terrain
       - parcelle_match (str)         : meilleure parcelle "Section Numéro — N m²"
-      - piscine_ortho (bool|None)    : piscine détectée sur l'ortho (si activé)
-      - piscine_ortho_score (float)
     """
     tol = float(getattr(criteres, "geoloc_terrain_tol_pct", DEFAULT_TERRAIN_TOL_PCT)) if criteres else DEFAULT_TERRAIN_TOL_PCT
-    detect = bool(getattr(criteres, "geoloc_piscine_ortho", False)) if criteres else False
     sem = asyncio.Semaphore(6)
 
     async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=40) as client:
@@ -640,34 +408,10 @@ async def annotate_biens(biens: list[dict], criteres=None) -> list[dict]:
                 top = parcels[0]
                 b["parcelle_match"] = f"{top['section']} {top['numero']} — {top['contenance']} m²"
 
-            # Détection piscine : scan haute résolution de chaque parcelle candidate
-            # (couvre tout le terrain). La parcelle où une piscine est trouvée devient
-            # la localisation la plus probable — c'est ta technique, automatisée.
-            if detect and parcels:
-                best_pool, best_parcel = None, None
-                for p in parcels[:_MAX_PARCELS_SCAN]:
-                    async with sem:
-                        pool = await scan_parcel_for_pool(client, p)
-                    p["piscine"] = bool(pool)
-                    if pool:
-                        p["piscine_score"] = pool["score"]
-                        if best_pool is None or pool["score"] > best_pool["score"]:
-                            best_pool, best_parcel = pool, p
-                b["piscine_ortho"] = best_pool is not None
-                b["piscine_ortho_score"] = best_pool["score"] if best_pool else 0.0
-                if best_pool:
-                    b["piscine_ortho_url"] = maps_links(best_pool["lat"], best_pool["lon"])["google_satellite"]
-                    # La parcelle contenant la piscine devient le meilleur candidat.
-                    parcels.sort(key=lambda p: (not p.get("piscine"), p.get("ecart_pct") or 1e9))
-                    b["parcelles_candidates"] = parcels
-                    b["parcelle_match"] = (f"{best_parcel['section']} {best_parcel['numero']} "
-                                           f"— {best_parcel['contenance']} m²")
-
         await asyncio.gather(*(enrich(b) for b in biens))
 
     n_loc = sum(1 for b in biens if b.get("parcelle_match"))
-    print(f"[Geoloc] {n_loc}/{len(biens)} biens avec parcelle probable"
-          + (" (détection piscine ortho activée)" if detect else ""))
+    print(f"[Geoloc] {n_loc}/{len(biens)} biens avec parcelle probable")
     return biens
 
 
@@ -690,7 +434,6 @@ if __name__ == "__main__":
 
     class _C:
         geoloc_terrain_tol_pct = 30.0
-        geoloc_piscine_ortho = True
 
     out = asyncio.run(annotate_biens(demo, _C()))
     for b in out:
@@ -698,8 +441,6 @@ if __name__ == "__main__":
         print("  satellite :", b.get("maps_satellite_url"))
         print("  geoportail:", b.get("geoportail_url"))
         print("  parcelle  :", b.get("parcelle_match"))
-        print("  piscine   :", b.get("piscine_ortho"), b.get("piscine_ortho_score"))
         for p in b.get("parcelles_candidates", []):
             print(f"    - {p['section']} {p['numero']}  {p['contenance']} m²  "
-                  f"écart={p['ecart_pct']}%  dist={p['dist_m']}m  "
-                  f"piscine={p.get('piscine')} ({p.get('piscine_score')})")
+                  f"écart={p['ecart_pct']}%  dist={p['dist_m']}m")

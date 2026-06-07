@@ -70,7 +70,7 @@ pieces_max:   13        # au-delà = trop grand / immeuble de rapport
 terrain_min:  4000      # m² — terrain arboré impératif
 prix_min:     300000    # €
 prix_max:     600000    # €
-dpe_exclus:   ["E", "F", "G"]    # A B C D acceptés
+dpe_exclus:   ["F", "G"]    # A B C D E acceptés
 photos_min:   3         # exclure les annonces avec moins de N photos (info trop pauvre)
 ```
 
@@ -87,7 +87,7 @@ photos_min:   3         # exclure les annonces avec moins de N photos (info trop
 #                        (mention propre au bien) OU par la détection visuelle CLIP.
 
 ```
-mots_cles_negatifs: ["viager", "enchères", "occupé", "indivision", "inondable", "zone inondable", "toit plat", "toit-terrasse", "toit terrasse", "toiture terrasse", "toiture-terrasse", "toiture plate"]
+mots_cles_negatifs: ["viager", "enchères", "occupé", "indivision", "inondable", "zone inondable", "toit plat", "toit-terrasse", "toit terrasse", "toiture terrasse", "toiture-terrasse", "toiture plate", "piscine intérieure", "piscine interieure", "piscine en sous-sol"]
 equipements_requis: ["piscine"]
 ```
 
@@ -104,7 +104,8 @@ equipements_requis: ["piscine"]
 # Format : `description française | mode`   (mode = exclusion | alerte)
 
 ```
-piscine hors-sol (bassin posé au sol, à parois/habillage bois) | alerte
+piscine hors-sol (bassin posé au sol, parois/habillage bois)    | exclusion
+# piscine intérieure                                            | désactivé (CLIP sur-filtre 66% → exclusion par TEXTE, cf. mots_cles_negatifs)
 # gazon artificiel / pelouse trop parfaite                      | désactivé (non fiable en CLIP, cf. note)
 # aucun arbre sur le terrain                                    | désactivé (non fiable en CLIP, cf. note)
 ```
@@ -132,21 +133,19 @@ piscine hors-sol (bassin posé au sol, à parois/habillage bois) | alerte
 
 ```
 gare_obligatoire: true     # éliminer les biens sans gare SNCF voyageurs à proximité
-gare_rayon_km:    15       # rayon max (km) bien ↔ gare la plus proche
-bus_actif:        true     # annoter l'arrêt de bus le plus proche (NON éliminatoire)
+gare_rayon_km:    20       # rayon max (km) bien ↔ gare la plus proche
+bus_actif:        false    # annoter l'arrêt de bus le plus proche (NON éliminatoire) — désactivé : Overpass OSM trop lent (séquentiel, ~30 min/cycle)
 bus_rayon_km:     2        # rayon court (km) — un arrêt utile est proche du bien
 ```
 
 
-## Analyse GÉO — Géolocalisation (cadastre, satellite, piscine ortho)
+## Analyse GÉO — Géolocalisation (cadastre, satellite)
 
 # Pré-localise le bien (coords approx. de l'annonce × cadastre IGN) et ajoute à
-# l'Excel : lien satellite Google, lien ortho+cadastre Geoportail, parcelle
-# probable, et — si geoloc_piscine_ortho — détection piscine sur l'orthophoto IGN.
+# l'Excel : lien satellite Google, lien ortho+cadastre Geoportail, parcelle probable.
 
 ```
 geoloc_actif:           true   # pré-localisation cadastrale (liens satellite + parcelles)
-geoloc_piscine_ortho:   true   # détecter la piscine sur l'orthophoto IGN (plus lent)
 geoloc_terrain_tol_pct: 25     # écart toléré contenance cadastrale vs terrain annoncé (%)
 ```
 
@@ -163,6 +162,10 @@ geoloc_terrain_tol_pct: 25     # écart toléré contenance cadastrale vs terrai
 #   - Piscine : au moins 4×9 m — éliminatoire si absente
 # Confort souhaité
 #   - Bon état général, sans travaux à prévoir
+# Style recherché
+#   - Champêtre, caractère, authentique
+#   - Matériaux : pierres apparentes, pierre de taille, colombages, briques anciennes
+#   - PAS de contemporain / lotissement / moderne
 
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -180,7 +183,7 @@ poids_surface:       15   # >= surface_min
 poids_terrain:       10   # >= terrain_min — critère fort
 poids_localisation:  35   # gare/commerces/accès Paris
 poids_etat:          10   # bon état, sans travaux
-poids_dpe:           5    # A/B/C/D
+poids_dpe:           5    # A/B/C/D/E
 ```
 
 

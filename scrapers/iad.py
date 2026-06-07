@@ -83,6 +83,7 @@ def _item_to_bien(item: dict, dept: str) -> dict | None:
         "url": url,
         "photo_url": photos[0] if photos else None,
         "photos": photos,                 # galerie complète (l'API liste la renvoie)
+        "id_annonce": item.get("propertyListingRef"),  # pour l'API détail (DPE via gallery)
         "source": "iad",
         "date_ajout": "",
     }

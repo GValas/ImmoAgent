@@ -247,7 +247,7 @@ def export_excel(biens: list[dict], resume: str) -> Path:
         "Surface", "Terrain", "Pièces", "DPE",
         "Prix (€)", "Prix/m²", "Prix/m² marché",
         "Résumé vision", "Alertes", "Piscine hors-sol", "Éléments détectés",
-        "Parcelle probable", "Piscine ortho", "Satellite", "Ortho+cadastre", "URL"
+        "Parcelle probable", "Satellite", "Ortho+cadastre", "URL"
     ]
     header_fill = PatternFill("solid", fgColor="2C3E50")
     header_font = Font(color="FFFFFF", bold=True)
@@ -272,7 +272,6 @@ def export_excel(biens: list[dict], resume: str) -> Path:
         headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
         headers.index("URL") + 1: "Voir l'annonce",
     }
-    piscine_col = headers.index("Piscine ortho") + 1
     score_col = headers.index("Score") + 1
     price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché", "Terrain")}
 
@@ -281,17 +280,6 @@ def export_excel(biens: list[dict], resume: str) -> Path:
         score_fill = (score_fills["high"] if score >= 70
                       else score_fills["medium"] if score >= 45 else score_fills["low"])
         zebra = zebra_fill if row % 2 == 0 else None   # 1 ligne sur 2
-
-        piscine = b.get("piscine_ortho")
-        p_score = b.get("piscine_ortho_score") or 0.0
-        if piscine is None:
-            piscine_str = ""                       # détection non activée
-        elif not piscine:
-            piscine_str = "non"
-        elif p_score >= 0.6:
-            piscine_str = f"🏊 probable ({p_score:.2f})"
-        else:
-            piscine_str = f"🏊? possible ({p_score:.2f})"
 
         values = [
             score,
@@ -321,12 +309,10 @@ def export_excel(biens: list[dict], resume: str) -> Path:
                 if e["nom"] != "piscine_hors_sol"
             ),
             b.get("parcelle_match", ""),
-            piscine_str,
             b.get("maps_satellite_url", ""),
             b.get("geoportail_url", ""),
             b.get("url", ""),
         ]
-        piscine_url = b.get("piscine_ortho_url")
         for col, val in enumerate(values, 1):
             if isinstance(val, (list, dict)):
                 val = str(val) if val else ""
@@ -343,14 +329,10 @@ def export_excel(biens: list[dict], resume: str) -> Path:
                 cell.hyperlink = str(val)
                 cell.value = link_labels[col]
                 cell.style = "Hyperlink"  # style natif Excel → change de couleur après clic
-            # Si une piscine est localisée, "🏊 oui" pointe vers la vue satellite de la piscine
-            elif col == piscine_col and piscine == True and piscine_url:  # noqa: E712
-                cell.hyperlink = str(piscine_url)
-                cell.style = "Hyperlink"
 
     # Largeurs colonnes
     widths = [8, 12, 40, 20, 6, 18, 24, 22, 9, 9, 8, 6, 12, 10, 14, 45, 40,
-              14, 26, 20, 12, 14, 16, 16]
+              14, 26, 20, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 

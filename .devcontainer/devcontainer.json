@@ -1,24 +1,34 @@
 {
   "name": "immo-agent",
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
 
-  "features": {
-    "ghcr.io/devcontainers/features/git:1": {}
+  // Construit depuis .devcontainer/Dockerfile (torch CPU, requirements, CLIP,
+  // Playwright, Claude Code CLI, pré-cache CLIP — tout au build, plus de
+  // post-create.sh). context = racine du repo pour que COPY requirements.txt
+  // fonctionne. git est installé par le Dockerfile (plus besoin de la feature).
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
   },
 
-  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  // GPU comme la prod (torch cu124). Nécessite le driver NVIDIA + le
+  // nvidia-container-toolkit sur l'hôte (WSL2 : pilote NVIDIA Windows suffit).
+  // Sans GPU : retirer cette ligne — torch cu124 retombe en CPU à l'exécution.
+  "runArgs": ["--gpus", "all"],
+  "hostRequirements": { "gpu": "optional" },
+
+  // Sanity check : vérifie que la chaîne d'outils est bien dans l'image.
+  "postCreateCommand": "python -c 'import torch, clip' && playwright --version && claude --version && echo 'immo-agent devcontainer prêt.'",
 
   "containerEnv": {
     "PYTHONUNBUFFERED": "1",
-    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
-    "PLAYWRIGHT_BROWSERS_PATH": "/home/vscode/.cache/ms-playwright"
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1"
   },
 
-  "mounts": [
-    "source=immo-agent-clip-cache,target=/home/vscode/.cache/clip,type=volume",
-    "source=immo-agent-torch-cache,target=/home/vscode/.cache/torch,type=volume",
-    "source=immo-agent-pw-cache,target=/home/vscode/.cache/ms-playwright,type=volume"
-  ],
+  // Le CLI Claude Code est dans ~/.local/bin (Dockerfile) — l'ajouter au PATH
+  // pour que la tâche "Claude Code" (.vscode/tasks.json) le trouve.
+  "remoteEnv": {
+    "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}"
+  },
 
   "remoteUser": "vscode",
 
@@ -50,8 +60,12 @@
         "visualstudioexptteam.vscodeintellicode"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-        "python.terminal.activateEnvironment": true,
+        // Le terminal "Claude Code" (tasks.json) s'ouvre dans le Panel. On place
+        // le Panel à droite pour le sortir de la zone basse (Problems, Output…).
+        "workbench.panel.defaultLocation": "right",
+        // Deps installées system-wide dans l'image (pas de venv en conteneur).
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.terminal.activateEnvironment": false,
         "[python]": {
           "editor.formatOnSave": false
         },

@@ -113,60 +113,6 @@ def _get_pool_text_embeddings() -> np.ndarray:
     return _pool_text_embeddings
 
 
-# Détection piscine sur orthophoto (vue aérienne) — classification CLIP contrastive.
-# Utilisé par scrapers/geolocate.py pour confirmer un amas turquoise repéré sur l'ortho.
-AERIAL_POOL_PROMPTS = [
-    "an aerial satellite view of a backyard swimming pool",
-    "a rectangular swimming pool seen from directly above",
-]
-AERIAL_NEG_PROMPTS = [
-    "an aerial satellite view of a rooftop",
-    "an aerial satellite view of a green garden with grass",
-    "an aerial satellite view of trees and vegetation",
-    "an aerial satellite view of a road, driveway or parking lot",
-    "an aerial satellite view of a blue tarpaulin, trampoline or car",
-]
-_aerial_pool_text_emb = None  # np.ndarray (pos+neg, 512)
-
-
-def clip_pool_confidence(pil_image: Image.Image) -> float:
-    """
-    Probabilité (0–1) qu'un crop d'orthophoto représente une piscine, par
-    classification zero-shot CLIP contrastive (softmax sur prompts piscine vs
-    prompts négatifs : toit, jardin, route, bâche…).
-
-    Retourne -1.0 si CLIP est indisponible (le détecteur appelant retombe alors
-    sur la seule heuristique couleur).
-    """
-    global _aerial_pool_text_emb
-    try:
-        _init_clip()
-    except ImportError:
-        return -1.0
-
-    if _aerial_pool_text_emb is None:
-        import torch
-        import clip
-        prompts = AERIAL_POOL_PROMPTS + AERIAL_NEG_PROMPTS
-        tokens = clip.tokenize(prompts).to(_clip_device)
-        with torch.no_grad():
-            embs = _clip_model.encode_text(tokens)
-            embs = embs / embs.norm(dim=-1, keepdim=True)
-        _aerial_pool_text_emb = embs.cpu().numpy()
-
-    try:
-        emb = _encode_image(pil_image.convert("RGB"))
-    except Exception:
-        return -1.0
-
-    sims = _aerial_pool_text_emb @ emb            # cosinus (vecteurs normalisés)
-    logits = sims * 100.0                          # logit_scale CLIP ≈ 100
-    logits -= logits.max()
-    exp = np.exp(logits)
-    probs = exp / exp.sum()
-    return float(probs[:len(AERIAL_POOL_PROMPTS)].sum())
-
-
 def detect_piscine_in_photos(photos: list) -> bool:
     """Retourne True si au moins une photo ressemble à une piscine (CLIP text-image)."""
     if not photos or _clip_model is None:
@@ -353,7 +299,7 @@ async def evaluate_bien(
 # PIPELINE PRINCIPAL
 # ──────────────────────────────────────────────
 
-async def run(biens: list[dict], concurrency: int = 8) -> list[dict]:
+async def run(biens: list[dict], concurrency: int = 16) -> list[dict]:
     """
     Filtre les biens par présence d'éléments indésirables (config/elements.yaml).
     Biens sans photos : conservés (non évalués). Biens contenant un élément en
@@ -364,6 +310,12 @@ async def run(biens: list[dict], concurrency: int = 8) -> list[dict]:
     except ImportError as e:
         print(f"[Vision] ⚠️  {e} — filtre visuel désactivé")
         return biens
+
+    # Recharge elements.yaml à chaque cycle (hot, comme criteria.md) : le scheduler
+    # tourne en boucle longue, sinon le cache figerait la config au 1ᵉʳ cycle.
+    global _elements_cfg, _element_text_emb
+    _elements_cfg = None
+    _element_text_emb = {}
 
     elements = load_elements()
     if not elements:
@@ -381,6 +333,7 @@ async def run(biens: list[dict], concurrency: int = 8) -> list[dict]:
     async with httpx.AsyncClient(
         headers={"User-Agent": "Mozilla/5.0 (compatible; immo-agent/1.0)"},
         timeout=15,
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=24),
     ) as session:
         results = await asyncio.gather(*[eval_with_sem(b, session) for b in biens])
 

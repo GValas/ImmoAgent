@@ -449,13 +449,15 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     import httpx as _httpx
     from collections import defaultdict as _dd
     from urllib.parse import urlparse as _up
-    from scrapers.gallery import fetch_gallery
+    from scrapers.gallery import fetch_gallery, reset_breaker
+    reset_breaker()   # coupe-circuit par domaine, neuf à chaque passe
     async with _httpx.AsyncClient(
         headers={"User-Agent": "Mozilla/5.0 (compatible; immo-agent/1.0)"},
         follow_redirects=True, timeout=20,
     ) as _gc:
-        _sem = asyncio.Semaphore(16)               # plafond global
-        _dom_sem = _dd(lambda: asyncio.Semaphore(2))  # max 2 requêtes simultanées / domaine
+        _sem = asyncio.Semaphore(24)               # plafond global
+        _dom_sem = _dd(lambda: asyncio.Semaphore(3))  # max 3 requêtes simultanées / domaine
+        # (le coupe-circuit 429 de gallery.py protège les sites sensibles)
         async def _enrich(b):                       # évite le 429 (ex. century21)
             dom = _up(str(b.get("url") or "")).netloc
             async with _sem, _dom_sem[dom]:
@@ -471,6 +473,18 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     _med = int(_st.median(_counts)) if _counts else 0
     print(f"[Hunter] Galerie enrichie : médiane {_med} photos/bien "
           f"({sum(1 for c in _counts if c >= 3)}/{len(filtered)} ont ≥3 photos)")
+    _ndpe = sum(1 for b in filtered if b.get("dpe"))
+    print(f"[Hunter] DPE capté (post-détail) : {_ndpe}/{len(filtered)} biens")
+
+    # Re-filtre DPE : le DPE n'est dispo qu'APRÈS la page détail (gallery l'extrait).
+    # On ré-applique dpe_exclus ici → les passoires F/G captées tardivement sont écartées.
+    _dpe_excl = [str(d).upper() for d in getattr(criteres, "dpe_exclus", [])]
+    if _dpe_excl:
+        before = len(filtered)
+        filtered = [b for b in filtered
+                    if not (b.get("dpe") and str(b.get("dpe")).upper() in _dpe_excl)]
+        if before - len(filtered):
+            print(f"[Hunter] Re-filtre DPE ({'/'.join(_dpe_excl)}) : {before - len(filtered)} bien(s) écarté(s)")
 
     # photos_min : exclure les annonces trop pauvres (APRÈS enrichissement galerie)
     pmin = getattr(criteres, "photos_min", 0)
@@ -508,7 +522,7 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
         filtered = await bus_annotate(filtered, criteres.bus_rayon_km)
 
     # Pré-localisation cadastrale (liens satellite + parcelles candidates par surface
-    # terrain, et optionnellement détection piscine sur orthophoto IGN).
+    # terrain).
     if getattr(criteres, "geoloc_actif", True):
         from scrapers.geolocate import annotate_biens as geo_annotate
         filtered = await geo_annotate(filtered, criteres)

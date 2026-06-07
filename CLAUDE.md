@@ -239,27 +239,13 @@ ci-dessous.
     vers le bien conservé (Bien'ici aggrège IAD/SAFTI/ERA… → coords sinon perdues).
   - croise avec le **cadastre IGN** (`apicarto.ign.fr`, gratuit) : ne garde que les
     parcelles dont la `contenance` ≈ `surface_terrain` annoncée (±`geoloc_terrain_tol_pct`)
-  - option `geoloc_piscine_ortho` : pour chaque parcelle candidate, télécharge une
-    **orthophoto IGN** haute résolution (WMS, gratuit) dimensionnée à la parcelle, puis
-    *detect-then-classify* : localise les amas turquoise compacts (composantes connexes
-    filtrées par taille en m², compacité, allongement, couleur) et **confirme par CLIP**
-    (`clip_pool_confidence` dans `agents/vision.py`, classif. zero-shot contrastive).
-    La parcelle contenant une piscine devient la localisation la plus probable.
-- Ajoute dans l'Excel : `Parcelle probable`, `Piscine ortho` (score gradué + lien
-  satellite centré sur la piscine), liens `Satellite` (Google) et `Ortho+cadastre`
+- Ajoute dans l'Excel : `Parcelle probable`, liens `Satellite` (Google) et `Ortho+cadastre`
   (Geoportail, idéal pour la vérification visuelle manuelle)
 - Lancé par `hunter.py` après le filtre gare, si `geoloc_actif` (criteria.md)
 - **Limites** :
   - Parcelles candidates uniquement si coords précises (Bien'ici `blurInfo`) ; le repli
     centre-commune ne donne qu'un lien satellite.
-  - La détection piscine marche bien en **rural/grand terrain** (peu de parcelles, gros
-    bassins) ; elle échoue en **urbain dense** (parcelle ambiguë par la seule surface)
-    ou si le `blurInfo` est grossier (rayon ~1 km) ou les coords erronées.
-  - Le score est **gradué** (≥0.6 « probable », 0.45–0.6 « possible ») — c'est une
-    *piste à vérifier à l'œil* via le lien satellite, pas un verdict. La couleur seule
-    ne sépare pas piscine et toit ardoise (une piscine sombre/ombragée est peu saturée).
-- **CGU** : on ne scrape pas les tuiles Google (liens pour le clic humain seulement) ;
-  toute détection auto se fait sur l'orthophoto IGN (licence ouverte).
+- **CGU** : on ne scrape pas les tuiles Google (liens pour le clic humain seulement).
 
 ### Anti-bot & blacklist
 - **Cloudflare** (LeBonCoin, PAP, Logic-Immo, OuestFrance-Immo, MeilleursAgents) — infranchissable sans proxy rotatif ou cookie de session réel

@@ -334,7 +334,7 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
         "Ville", "Dép", "Département", "Gare", "Bus", "Surface", "Terrain", "Pièces", "DPE",
         "Prix (€)", "Prix/m²", "Prix/m² marché", "Résumé vision", "Alertes",
         "Piscine hors-sol", "Éléments détectés",
-        "Parcelle probable", "Piscine ortho", "Satellite", "Ortho+cadastre", "URL"
+        "Parcelle probable", "Satellite", "Ortho+cadastre", "URL"
     ]
     hfill = PatternFill("solid", fgColor="2C3E50")
     hfont = Font(color="FFFFFF", bold=True)
@@ -357,7 +357,6 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
         headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
         headers.index("URL") + 1: "Voir l'annonce",
     }
-    piscine_col = headers.index("Piscine ortho") + 1
     score_col = headers.index("Score") + 1
     price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché", "Terrain")}
 
@@ -365,17 +364,6 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
         score = b.get("score_total", 0)
         score_fill = fills["high"] if score >= 75 else fills["medium"]
         zebra = zebra_fill if row % 2 == 0 else None
-
-        piscine = b.get("piscine_ortho")
-        p_score = b.get("piscine_ortho_score") or 0.0
-        if piscine is None:
-            piscine_str = ""                       # détection non activée
-        elif not piscine:
-            piscine_str = "non"
-        elif p_score >= 0.6:
-            piscine_str = f"🏊 probable ({p_score:.2f})"
-        else:
-            piscine_str = f"🏊? possible ({p_score:.2f})"
 
         vals  = [
             score,
@@ -406,12 +394,10 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
                 if e["nom"] != "piscine_hors_sol"
             ),
             b.get("parcelle_match", ""),
-            piscine_str,
             b.get("maps_satellite_url", ""),
             b.get("geoportail_url", ""),
             b.get("url", ""),
         ]
-        piscine_url = b.get("piscine_ortho_url")
         for col, v in enumerate(vals, 1):
             if isinstance(v, (list, dict)):
                 v = str(v) if v else ""
@@ -427,13 +413,9 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
                 c.hyperlink = str(v)
                 c.value = link_labels[col]
                 c.style = "Hyperlink"
-            # Piscine localisée → le libellé pointe vers la vue satellite de la piscine
-            elif col == piscine_col and piscine is True and piscine_url:
-                c.hyperlink = str(piscine_url)
-                c.style = "Hyperlink"
 
     widths = [8, 12, 12, 40, 18, 6, 18, 24, 22, 9, 9, 8, 6, 12, 10, 14, 45, 35,
-              14, 26, 20, 12, 14, 16, 16]
+              14, 26, 20, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 

@@ -34,7 +34,7 @@ elements:
       kit octogonal sur terrasse). À distinguer d'une piscine creusée entourée de
       bois, qui elle est désirable et ne doit PAS déclencher.
     actif: true
-    mode: alerte          # conservé dans le fichier (colonne dédiée « Piscine hors-sol »), n'exclut pas
+    mode: exclusion       # ⚠️ exclut le bien → il n'apparaît PLUS dans le suivi ni dans la colonne « Piscine hors-sol »
     seuil: 0.78          # calibré sur galeries completes : 355119=0.80 ; creusees<=0.74
     positifs:
       - "a photo of an above-ground swimming pool with wooden sides"
@@ -44,6 +44,27 @@ elements:
       - "a backyard with no pool"
       - "an interior room of a house"
       - "a wooden terrace or balcony"
+
+  # ── DÉSACTIVÉ : sur-déclenche (66% des biens !). Le MAX sur galerie confond les
+  #    photos d'INTÉRIEUR NORMALES (toute maison en a) avec « piscine dans une pièce ».
+  #    La séparation paraissait nette sur des candidats isolés, mais le taux de faux
+  #    positifs sur la population est rédhibitoire. Pour exclure les piscines
+  #    intérieures, passer plutôt par le TEXTE (mots_cles_negatifs : "piscine intérieure").
+  - nom: piscine_interieure
+    description: >
+      Piscine intérieure DANS une pièce / cave. NON FIABLE en CLIP (confond avec les
+      photos d'intérieur normales) — voir mots_cles_negatifs côté texte.
+    actif: false
+    mode: exclusion
+    seuil: 0.65
+    positifs:
+      - "an indoor swimming pool inside a house room with solid opaque walls and a solid ceiling"
+      - "a swimming pool in a basement or cellar with stone or concrete walls, dimly lit"
+    negatifs:
+      - "a swimming pool under a transparent glass veranda or conservatory with a glass roof, bright daylight"
+      - "a swimming pool under a curved translucent pool enclosure"
+      - "an outdoor swimming pool in a garden under the open sky"
+      - "an interior room of a house without any pool"
 
   # ── Éléments en ALERTE (non calibrés) : non destructif, à calibrer avant de
   #    passer en mode: exclusion — voir « ## Style visuel » de criteria.md ─────
