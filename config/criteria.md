@@ -121,7 +121,7 @@ piscine hors-sol (bassin posé au sol, parois/habillage bois)    | exclusion
 > ci-dessus, demande à **Claude Code** : « *synchronise les exclusions visuelles* ».
 > Il traduit chaque ligne, choisit les prompts négatifs (confondants) et le seuil,
 > puis met à jour `elements.yaml`. Un élément non calibré reste en `alerte`
-> (non destructif) jusqu'à validation (`python agents/vision.py --calibrer <nom>`).
+> (non destructif) jusqu'à validation (`python workers/vision.py --calibrer <nom>`).
 
 
 ## Analyse GÉO — Gare & bus (proximité)

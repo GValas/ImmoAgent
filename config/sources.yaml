@@ -1,6 +1,6 @@
 # ============================================================
 # SOURCES IMMOBILIÈRES
-# Géré dynamiquement par Agent Discovery — éditable manuellement
+# Géré dynamiquement par Worker Discovery — éditable manuellement
 # ============================================================
 
 sources:
@@ -356,7 +356,7 @@ sources:
 # ============================================================
 
 
-  # ── Sources ajoutées 2026-05-30 (workflow multi-agents, filtre dept vérifié) ──
+  # ── Sources ajoutées 2026-05-30 (workflow multi-workers, filtre dept vérifié) ──
   - id: terresetdemeuresdefrance
     nom: "Terres et Demeures de France (caractère)"
     url_base: "https://www.terresetdemeuresdefrance.com"

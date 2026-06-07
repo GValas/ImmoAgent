@@ -1,5 +1,5 @@
 """
-models.py — Modèles de données partagés entre tous les agents
+models.py — Modèles de données partagés entre tous les workers
 """
 from dataclasses import dataclass, field
 from typing import Optional
@@ -67,13 +67,13 @@ class Bien:
     photos: list[str] = field(default_factory=list)
     agence: Optional[str] = None
 
-    # Analyse visuelle (remplie par Agent Vision dans Hunter)
+    # Analyse visuelle (remplie par Worker Vision dans Hunter)
     resume_visuel: Optional[str] = None               # phrase de synthèse
     elements_detectes: list = field(default_factory=list)  # éléments indésirables détectés
     banni: bool = False                               # un élément en mode exclusion détecté
     nb_photos_analysees: int = 0
 
-    # Scoring final (rempli par Agent Analyst)
+    # Scoring final (rempli par Worker Analyst)
     score_total: Optional[float] = None
     score_detail: dict = field(default_factory=dict)
     alerte: list[str] = field(default_factory=list)   # anomalies détectées

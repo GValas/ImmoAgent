@@ -1,15 +1,15 @@
 # Immo-Agent 🏠
 
-Système multi-agents Claude pour la recherche automatisée de biens immobiliers.
+Système multi-workers Claude pour la recherche automatisée de biens immobiliers.
 
 ## Architecture
 
 ```
-orchestrator.py          ← point d'entrée unique
-├── agents/discovery.py  ← Agent 1 : identifie les sources via web_search
-├── agents/builder.py    ← Agent 2 : génère les scrapers Python
-├── agents/hunter.py     ← Agent 3 : lance les scrapers en parallèle
-└── agents/analyst.py    ← Agent 4 : score, enrichit DVF, export Excel
+orchestrator.py           ← point d'entrée unique
+├── workers/discovery.py  ← Worker 1 : identifie les sources via web_search
+├── workers/builder.py    ← Worker 2 : génère les scrapers Python
+├── workers/hunter.py     ← Worker 3 : lance les scrapers en parallèle
+└── workers/analyst.py    ← Worker 4 : score, enrichit DVF, export Excel
 ```
 
 ## Installation
@@ -51,11 +51,11 @@ python orchestrator.py --skip-discovery --skip-build
 # Re-scorer le dernier jeu de données sans re-scraper
 python orchestrator.py --only-analyse
 
-# Agents individuels
-python agents/discovery.py
-python agents/builder.py
-python agents/hunter.py
-python agents/analyst.py
+# Workers individuels
+python workers/discovery.py
+python workers/builder.py
+python workers/hunter.py
+python workers/analyst.py
 ```
 
 ## Déploiement en production (Docker + GPU)

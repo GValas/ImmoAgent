@@ -1,6 +1,6 @@
 """
 orchestrator.py — Chef d'orchestre
-Séquence les 4 agents et gère le pipeline complet.
+Séquence les 4 workers et gère le pipeline complet.
 
 Usage :
   python orchestrator.py                   # pipeline complet
@@ -17,10 +17,10 @@ from datetime import datetime
 from pathlib import Path
 
 from config_loader import load_criteria, load_sources
-from agents import discovery, builder, hunter, analyst
-from agents import vision as vision_agent
+from workers import discovery, builder, hunter, analyst
+from workers import vision as vision_worker
 
-# ── Timestamps automatiques sur tous les prints [Agent] ──────────────────
+# ── Timestamps automatiques sur tous les prints [Worker] ──────────────────
 _orig_print = _builtins.print
 
 
@@ -66,8 +66,8 @@ async def run_pipeline(
         print(f"⏭  Re-filtre CLIP sur {src.name} ({len(biens_prevision)} biens pré-vision)")
 
         # Re-run Vision avec les nouveaux seuils
-        print(f"\n🎨 [3/4] Agent Vision — re-scoring CLIP...")
-        biens_filtres = await vision_agent.run(biens_prevision)
+        print(f"\n🎨 [3/4] Worker Vision — re-scoring CLIP...")
+        biens_filtres = await vision_worker.run(biens_prevision)
         print(f"[Hunter] Après filtre visuel : {len(biens_filtres)} annonces")
 
         # Re-run filtre piscine
@@ -80,7 +80,7 @@ async def run_pipeline(
         raw_path.write_text(json.dumps(biens_filtres, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         print(f"[Hunter] Sauvegardé → {raw_path}")
 
-        print(f"\n📊 [4/4] Agent Analyst — scoring et agrégation...")
+        print(f"\n📊 [4/4] Worker Analyst — scoring et agrégation...")
         output = await analyst.run(biens_filtres, criteres)
         _print_done(start, output)
         return
@@ -96,34 +96,34 @@ async def run_pipeline(
         _print_done(start, output)
         return
 
-    # ── Agent 1 : Discovery ──
+    # ── Worker 1 : Discovery ──
     if skip_discovery:
         print("⏭  Discovery skippé — chargement depuis sources.yaml")
         sources = load_sources()
     else:
-        print("🔍 [1/4] Agent Discovery — identification des sources...")
+        print("🔍 [1/4] Worker Discovery — identification des sources...")
         sources = await discovery.run(criteres)
         if not sources:
             print("❌ Aucune source trouvée. Arrêt.")
             return
 
-    # ── Agent 2 : Builder ──
+    # ── Worker 2 : Builder ──
     if skip_build:
         print("⏭  Builder skippé — scrapers existants utilisés")
     else:
-        print(f"\n🔧 [2/4] Agent Builder — génération de {len(sources)} scrapers...")
+        print(f"\n🔧 [2/4] Worker Builder — génération de {len(sources)} scrapers...")
         await builder.run(sources, criteres)
 
-    # ── Agent 3 : Hunter ──
-    print(f"\n🏹 [3/4] Agent Hunter — lancement des recherches...")
+    # ── Worker 3 : Hunter ──
+    print(f"\n🏹 [3/4] Worker Hunter — lancement des recherches...")
     biens_bruts = await hunter.run(sources, criteres)
 
     if not biens_bruts:
         print("❌ Aucun bien récupéré. Vérifie les scrapers.")
         return
 
-    # ── Agent 4 : Analyst ──
-    print(f"\n📊 [4/4] Agent Analyst — scoring et agrégation...")
+    # ── Worker 4 : Analyst ──
+    print(f"\n📊 [4/4] Worker Analyst — scoring et agrégation...")
     output = await analyst.run(biens_bruts, criteres)
 
     _print_done(start, output)

@@ -1,5 +1,5 @@
 """
-agents/discovery.py — Agent 1 : Discovery
+workers/discovery.py — Worker 1 : Discovery
 Charge les sources depuis sources.yaml.
 
 Sans appel API — la gestion des sources se fait de deux façons :

@@ -7,7 +7,7 @@ l'architecture, les conventions, et comment intervenir efficacement.
 
 ## Vue d'ensemble
 
-**immo-agent** est un système multi-agents de recherche immobilière automatisée.
+**immo-agent** est un système multi-workers de recherche immobilière automatisée.
 Il scrape des sites d'annonces français, filtre visuellement les biens via CLIP,
 les score selon des critères pondérés, et produit un fichier Excel de suivi.
 
@@ -24,12 +24,12 @@ scheduler.py          Pipeline continu (boucle infinie, fréquences configurable
 config_loader.py      Parse criteria.md → CriteresRecherche (source unique de vérité)
 models.py             Dataclasses : Bien, CriteresRecherche
 
-agents/
-  discovery.py        Agent 1 — charge sources.yaml, filtre par département
-  builder.py          Agent 2 — vérifie scrapers disponibles, liste les manquants
-  hunter.py           Agent 3 — scrape en parallèle, déduplique, filtre
-  vision.py           Agent 4 — scoring visuel CLIP local (pas d'API externe)
-  analyst.py          Agent 5 — scoring pondéré, DVF, résumé local, export Excel
+workers/
+  discovery.py        Worker 1 — charge sources.yaml, filtre par département
+  builder.py          Worker 2 — vérifie scrapers disponibles, liste les manquants
+  hunter.py           Worker 3 — scrape en parallèle, déduplique, filtre
+  vision.py           Worker 4 — scoring visuel CLIP local (pas d'API externe)
+  analyst.py          Worker 5 — scoring pondéré, DVF, résumé local, export Excel
 
 scrapers/             25 scrapers actifs + 4 inactifs (voir liste ci-dessous)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
@@ -156,7 +156,7 @@ anglais ; le français inverse la détection — vérifié), choisit les prompts
 **négatifs** (confondants proches) et le **seuil**, puis met à jour
 `config/elements.yaml` (le fichier réellement lu au runtime). Un élément non
 calibré reste en `mode: alerte` (non destructif) jusqu'à validation via
-`python agents/vision.py --calibrer <nom>`. Voir aussi `### Détecteur d'éléments`
+`python workers/vision.py --calibrer <nom>`. Voir aussi `### Détecteur d'éléments`
 ci-dessous.
 
 ---
@@ -166,10 +166,10 @@ ci-dessous.
 - Tout le code est **async/await** (asyncio) — ne pas introduire de code synchrone bloquant
 - Les scrapers exposent tous `async def search(criteres: dict) -> list[dict]`
 - Le modèle `Bien` (models.py) est la référence pour les clés de dict retournées
-- Les agents communiquent via `list[dict]` (pas d'instances Bien) pour flexibilité
-- Logging via `print(f"[NomAgent] message")` — pas de logger configuré
+- Les workers communiquent via `list[dict]` (pas d'instances Bien) pour flexibilité
+- Logging via `print(f"[NomWorker] message")` — pas de logger configuré
 - Tester un scraper individuellement : `python scrapers/xxx.py`
-- Tester les agents individuellement : `python agents/xxx.py`
+- Tester les workers individuellement : `python workers/xxx.py`
 - **Pas de fichiers probe_*.py / debug_*.py / test_*.py** à la racine — tout doit finir soit dans un scraper, soit dans la blacklist sources.yaml
 
 ---
@@ -192,7 +192,7 @@ ci-dessous.
   les photos du bien. `description` est en français, documentaire (ignorée du moteur).
 - **Prompts en anglais obligatoires** (CLIP est EN ; le FR inverse la détection).
 - Précision = qualité des `negatifs` (confondants) + seuil **calibré par élément** :
-  `python agents/vision.py --calibrer <nom>`. CLIP ne sépare pas finement des features
+  `python workers/vision.py --calibrer <nom>`. CLIP ne sépare pas finement des features
   proches (ex. piscine hors-sol vs creusée+bois) → seuils prudents, démarrer en `alerte`.
 - `vision.rescore_elements` (appelé par `scheduler.update_suivi`) ré-évalue
   rétroactivement les entrées legacy du suivi quand un élément est ajouté.
@@ -283,12 +283,12 @@ python scrapers/bienici.py
 python scrapers/greenacres.py
 # etc.
 
-# Agents individuels (debug)
-python agents/discovery.py
-python agents/builder.py
-python agents/hunter.py
-python agents/vision.py
-python agents/analyst.py
+# Workers individuels (debug)
+python workers/discovery.py
+python workers/builder.py
+python workers/hunter.py
+python workers/vision.py
+python workers/analyst.py
 ```
 
 ---

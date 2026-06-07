@@ -1,5 +1,5 @@
 """
-agents/builder.py — Agent 2 : Builder
+workers/builder.py — Worker 2 : Builder
 Vérifie quels scrapers existent et signale ceux qui manquent.
 
 Sans appel API — les scrapers sont écrits par Claude Code directement

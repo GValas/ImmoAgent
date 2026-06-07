@@ -18,7 +18,7 @@
 # La description française est là pour la lisibilité ; les prompts pour la machine.
 #
 # CALIBRER un élément (avant de l'activer en mode exclusion) :
-#   python agents/vision.py --calibrer <nom_element>
+#   python workers/vision.py --calibrer <nom_element>
 # affiche le score de l'élément sur les biens du dernier run → choisis le seuil
 # qui sépare présents/absents, en vérifiant les photos à l'œil.
 #

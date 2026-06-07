@@ -1,5 +1,5 @@
 """
-agents/analyst.py — Agent 4 : Analyst
+workers/analyst.py — Worker 4 : Analyst
 Score chaque bien, enrichit avec données DVF réelles, agrège dans un Excel final.
 """
 import json

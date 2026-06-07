@@ -1,6 +1,6 @@
 """
 scheduler.py — Pipeline continu immo-agent
-Tourne indéfiniment, déclenche chaque agent selon sa fréquence propre.
+Tourne indéfiniment, déclenche chaque worker selon sa fréquence propre.
 
 Fréquences (configurables dans criteria.md) :
   Hunter + Analyst   → toutes les N heures  (nouvelles annonces)
@@ -26,7 +26,7 @@ import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# ── Timestamps automatiques sur tous les prints [Agent] ──────────────────
+# ── Timestamps automatiques sur tous les prints [Worker] ──────────────────
 _orig_print = _builtins.print
 
 
@@ -42,7 +42,7 @@ _builtins.print = _ts_print
 # ─────────────────────────────────────────────────────────────────────────
 
 from config_loader import load_criteria, load_sources
-from agents import discovery, builder, hunter, analyst, vision
+from workers import discovery, builder, hunter, analyst, vision
 
 DATA_DIR   = Path("data")
 RAW_DIR    = DATA_DIR / "raw"
@@ -87,7 +87,7 @@ def load_scheduler_config() -> dict:
 
 
 # ──────────────────────────────────────────────
-# STATE — dernière exécution de chaque agent
+# STATE — dernière exécution de chaque worker
 # ──────────────────────────────────────────────
 
 def load_state() -> dict:
@@ -327,7 +327,7 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
     ws = wb.active
     ws.title = "Suivi actif"
 
-    # Aligné sur l'export resultats_*.xlsx (agents/analyst.py) + colonne
+    # Aligné sur l'export resultats_*.xlsx (workers/analyst.py) + colonne
     # suivi-spécifique « Ajouté le ». Inclut géoloc et liens satellite/cadastre.
     headers = [
         "Score", "Ajouté le", "Source", "Titre",
@@ -472,7 +472,7 @@ async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> dict:
             if new_biens:
                 print(f"[Scheduler] {_ts()} Analyst sur {len(new_biens)} nouveaux biens...")
                 scored = []
-                from agents.analyst import score_bien, fetch_prix_marche_dvf
+                from workers.analyst import score_bien, fetch_prix_marche_dvf
                 prix_marche = await fetch_prix_marche_dvf(criteres.departements)
                 criteres_dict = {
                     "surface_min":   criteres.surface_min,

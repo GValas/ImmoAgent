@@ -1,5 +1,5 @@
 """
-agents/hunter.py — Agent 3 : Hunter
+workers/hunter.py — Worker 3 : Hunter
 Lance tous les scrapers en parallèle, déduplique les résultats,
 et sauvegarde les biens bruts en JSON dans data/raw/.
 """
@@ -16,7 +16,7 @@ import httpx
 from PIL import Image
 
 from models import Bien, CriteresRecherche
-from agents import vision as vision_agent
+from workers import vision as vision_worker
 
 SCRAPERS_DIR = Path(__file__).parent.parent / "scrapers"
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
@@ -500,7 +500,7 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     print(f"[Hunter] Pré-vision sauvegardé → {prevision_path}")
 
     # Filtre visuel (style CLIP + détection piscine)
-    filtered = await vision_agent.run(filtered)
+    filtered = await vision_worker.run(filtered)
     print(f"[Hunter] Après filtre visuel : {len(filtered)} annonces")
 
     # Exclusion dure équipements requis (piscine texte + CLIP)

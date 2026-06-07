@@ -1,5 +1,5 @@
 """
-agents/vision.py — Agent Vision (CLIP local)
+workers/vision.py — Worker Vision (CLIP local)
 
 Filtre les biens par PRÉSENCE D'ÉLÉMENTS indésirables dans leurs photos
 (piscine hors-sol, gazon artificiel, absence d'arbres…), définis dans
@@ -16,7 +16,7 @@ Aucune donnée ne quitte ta machine. Gratuit, illimité.
 Éléments indésirables : config/elements.yaml
   détecteur CLIP zero-shot contrastif, par élément, avec seuil et mode
   (exclusion | alerte). Prompts en anglais (CLIP est entraîné en anglais).
-  Calibrer un élément : python agents/vision.py --calibrer <nom_element>
+  Calibrer un élément : python workers/vision.py --calibrer <nom_element>
 """
 
 import asyncio
