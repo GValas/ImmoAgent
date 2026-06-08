@@ -989,6 +989,28 @@ sources:
       (JSON-LD RealEstateListing + texte), concurrence 6. Exclut bureaux/commerces/terrains.
       Couverture cible : 72 et 53 uniquement (autres slugs depts = 0 stock).
 
+  # ── Nouveau scraper 2026-06-08 (workflow scraper-scout — filtre dept vérifié, 0 fuite) ──
+  - id: immo_entre_particuliers
+    nom: Immo entre Particuliers (P2P sans frais d'agence)
+    url_base: https://www.immo-entre-particuliers.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Portail P2P (annonces de particuliers, sans agence) SSR httpx (Apache, pas de
+      Cloudflare/JS). À NE PAS confondre avec entreparticuliers.com (déjà couvert).
+      Filtre dept CÔTÉ SERVEUR via SOUS-DOMAINE {dept-slug}.immo-entre-particuliers.com
+      /annonces/vente/maison (le slug dept dans le CHEMIN du domaine www est IGNORÉ
+      serveur -> ne pas l'utiliser). Pagination : pattern réel lu dynamiquement dans le
+      lien rel=next de la page 1 : /annonces/{region-slug}-{dept-slug}/vente/maison/{N}
+      (15 cartes/page ; depts ≤15 annonces = 1 seule page). Cartes div.row.product :
+      h3 a (titre+url /annonce-{dept}-{ville}/{id}-...), p.product-location "Ville CP"
+      (CP COMPLET -> post-filtre strict code_postal[:2]==dept), p.product-price,
+      <p> specs (m²/pièces/chambres/m² terrain), img[data-src]. DPE non exposé (P2P) ->
+      dpe=None ; description non sur la carte. 0 fuite vérifiée sur les 11 depts.
+      Après critères (prix 300-600k, surface≥150) : 54 maisons (45:18, 72:9, 49:7, 89:5,
+      36:3, 58:3, 41:4, 18:2, 28:1, 37:1, 53:1). dernier_test 2026-06-08.
+
   # ── Scrapers écrits mais inexploitables — viticoles hors-périmètre (actif:false) ──
   - id: ampelio
     nom: Ampelio
