@@ -1,23 +1,23 @@
 {
   "name": "immo-agent",
 
-  // Construit depuis .devcontainer/Dockerfile (torch CPU, requirements, CLIP,
-  // Playwright, Claude Code CLI, pré-cache CLIP — tout au build, plus de
-  // post-create.sh). context = racine du repo pour que COPY requirements.txt
+  // Construit depuis .devcontainer/Dockerfile (torch cu126, requirements,
+  // Playwright, Claude Code CLI, pré-cache du modèle NLP — tout au build, plus
+  // de post-create.sh). context = racine du repo pour que COPY requirements.txt
   // fonctionne. git est installé par le Dockerfile (plus besoin de la feature).
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".."
   },
 
-  // GPU comme la prod (torch cu124). Nécessite le driver NVIDIA + le
+  // GPU comme la prod (torch cu126). Nécessite le driver NVIDIA + le
   // nvidia-container-toolkit sur l'hôte (WSL2 : pilote NVIDIA Windows suffit).
-  // Sans GPU : retirer cette ligne — torch cu124 retombe en CPU à l'exécution.
+  // Sans GPU : retirer cette ligne — torch cu126 retombe en CPU à l'exécution.
   "runArgs": ["--gpus", "all"],
   "hostRequirements": { "gpu": "optional" },
 
   // Sanity check : vérifie que la chaîne d'outils est bien dans l'image.
-  "postCreateCommand": "python -c 'import torch, clip' && playwright --version && claude --version && echo 'immo-agent devcontainer prêt.'",
+  "postCreateCommand": "python -c 'import torch, sentence_transformers' && playwright --version && claude --version && echo 'immo-agent devcontainer prêt.'",
 
   "containerEnv": {
     "PYTHONUNBUFFERED": "1",

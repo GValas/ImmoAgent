@@ -299,6 +299,51 @@ async def update_suivi(new_biens: list[dict], cfg: dict):
     print(f"[Scheduler] Suivi actif : {len(deduped)} biens")
 
 
+def refilter_suivi():
+    """Ré-applique le filtrage A POSTERIORI au suivi cumulatif EXISTANT, sans
+    re-scraper, puis régénère data/output/suivi_actif.xlsx.
+
+    Répercute un changement de criteria.md (ex. nouveau mot interdit) sur le suivi
+    déjà constitué : garde-fou département + filtre structurel (prix/surface/
+    pièces/DPE) + mots-clés (obligatoires/interdits) + photos_min, sur les données
+    DÉJÀ scrapées et enrichies. Ne fait AUCUNE requête réseau (pas de liveness)."""
+    cfg = load_scheduler_config()
+    criteres = load_criteria()
+    suivi_json = DATA_DIR / "suivi_actif.json"
+    if not suivi_json.exists():
+        print(f"[Scheduler] {suivi_json} introuvable — rien à re-filtrer.")
+        return
+
+    biens = json.loads(suivi_json.read_text(encoding="utf-8"))
+    before = len(biens)
+
+    # Garde-fou département (offline)
+    target = {str(d).strip().zfill(2) for d in criteres.departements}
+    if target:
+        def _dept_ok(b: dict) -> bool:
+            cp = str(b.get("code_postal") or "").strip()
+            if len(cp) >= 2 and cp[:2].isdigit():
+                return cp[:2] in target
+            return str(b.get("departement") or "").strip().zfill(2) in target
+        biens = [b for b in biens if _dept_ok(b)]
+
+    # Mêmes filtres a posteriori que le Hunter, sur données déjà enrichies.
+    biens = hunter.filter_biens(biens, criteres)
+    biens = hunter.filter_mots_cles(biens, criteres)
+    pmin = getattr(criteres, "photos_min", 0)
+    if pmin:
+        biens = [b for b in biens if len(b.get("photos") or []) >= pmin]
+
+    # Tri par match qualitatif décroissant + plafond max_biens_suivi.
+    biens.sort(key=lambda x: x.get("match_qualitatif") or 0, reverse=True)
+    biens = biens[:cfg["max_biens_suivi"]]
+
+    suivi_json.write_text(
+        json.dumps(biens, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    _write_suivi_excel(biens)
+    print(f"[Scheduler] Re-filtrage suivi : {len(biens)}/{before} biens conservés → {SUIVI_FILE}")
+
+
 def _write_suivi_excel(biens: list[dict]):
     try:
         import openpyxl
@@ -526,9 +571,14 @@ async def run_once():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="Un seul cycle puis stop")
+    parser.add_argument("--refilter", action="store_true",
+                        help="Ré-applique le filtrage a posteriori au suivi cumulatif "
+                             "existant et régénère suivi_actif.xlsx, sans re-scraper")
     args = parser.parse_args()
 
-    if args.once:
+    if args.refilter:
+        refilter_suivi()
+    elif args.once:
         asyncio.run(run_once())
     else:
         asyncio.run(run_forever())

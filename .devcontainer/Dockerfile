@@ -3,7 +3,7 @@
 # Tout est installé à la construction de l'image, plutôt que via
 # un post-create.sh : environnement reproductible et démarrage rapide.
 #
-# GPU comme la prod : torch cu124 (le devcontainer doit recevoir --gpus all,
+# GPU comme la prod : torch cu126 (le devcontainer doit recevoir --gpus all,
 # cf. devcontainer.json). La stack Python + Playwright est MUTUALISÉE avec le
 # Dockerfile de prod via scripts/install-stack.sh (source unique de vérité).
 # Spécifique au dev : user vscode + Claude Code CLI (pas de CMD : VS Code pilote).
@@ -27,18 +27,19 @@ RUN rm -f /etc/apt/sources.list.d/yarn.list \
 
 # --- Stack Python + Playwright system-wide (script mutualisé avec la prod).
 #     Pas de venv : le bind-mount du workspace masquerait un .venv construit ici.
-#     cu124 (GPU) par défaut, comme la prod. Exécuté en root (playwright --with-deps). ---
+#     cu126 (GPU) par défaut, comme la prod. Exécuté en root (playwright --with-deps). ---
 COPY requirements.txt scripts/install-stack.sh /tmp/install/
 RUN cd /tmp/install && bash install-stack.sh && rm -rf /tmp/install
 
 # --- Outils par-utilisateur : Claude Code CLI (binaire natif, pas de Node) dans
 #     ~/.local/bin de vscode, déjà mis dans le PATH via devcontainer.json.
-#     Le pré-cache CLIP se fait aussi en tant que vscode pour atterrir dans
-#     /home/vscode/.cache/clip (là où le runtime le cherche). ---
+#     Le pré-cache du modèle se fait en tant que vscode pour atterrir dans
+#     /home/vscode/.cache/huggingface (là où le runtime le cherche). ---
 USER ${USERNAME}
 ENV HOME=/home/${USERNAME}
 ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
-# --- Pré-cache du modèle CLIP ViT-B/32 (~340 Mo) → premier run 100% offline ---
-RUN python -c "import clip; clip.load('ViT-B/32', device='cpu')"
+# --- Pré-cache du modèle d'embeddings NLP (~120 Mo) → premier run 100% offline ---
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"

@@ -12,7 +12,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# --- Dépendances système (git pour CLIP depuis GitHub, tzdata pour l'heure FR) ---
+# --- Dépendances système (curl/git utilitaires, tzdata pour l'heure FR) ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
@@ -20,18 +20,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- Stack Python + Playwright (couche cachée tant que requirements.txt et le
 #     script ne changent pas). scripts/install-stack.sh est MUTUALISÉ avec le
 #     devcontainer (.devcontainer/Dockerfile) → source unique de vérité.
-#     cu124 (GPU) par défaut ; repli CPU : passer l'URL whl/cpu en argument. ---
+#     cu126 (GPU) par défaut ; repli CPU : passer l'URL whl/cpu en argument. ---
 COPY requirements.txt scripts/install-stack.sh ./
 RUN bash install-stack.sh && rm -f install-stack.sh
 
-# --- Pré-cache du modèle CLIP ViT-B/32 (~340 Mo) pour un démarrage 100% offline ---
-RUN python -c "import clip; clip.load('ViT-B/32', device='cpu')"
+# --- Pré-cache du modèle d'embeddings NLP (~120 Mo) pour un démarrage offline.
+#     Le téléchargement se fait sur CPU au build ; le RUNTIME choisit GPU/CPU via
+#     IMMO_FORCE_GPU (cf. workers/qualitative.py). ---
+RUN python -c "from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 
 # --- Code applicatif (en dernier : invalide le moins de couches au rebuild) ---
 # CACHEBUST : run_prod.sh passe un timestamp → cette couche (et donc le code) est
 # TOUJOURS reconstruite, alors que les couches lourdes ci-dessus (torch, chromium,
-# CLIP) restent en cache tant que requirements.txt ne change pas. Garantit du code
-# à jour sans rebuild complet.
+# modèle NLP) restent en cache tant que requirements.txt ne change pas. Garantit du
+# code à jour sans rebuild complet.
 ARG CACHEBUST=0
 COPY . .
 

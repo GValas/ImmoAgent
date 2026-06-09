@@ -69,8 +69,8 @@ photos_min:  3          # exclure les annonces avec moins de N photos
 ## Filtre mots-clés
 
 ```
-mots_obligatoires: ["piscine"]        # ex: ["piscine", "pierre"] — tous exigés (ET)
-mots_interdits:    ["viager"]        # ex: ["lotissement", "viager", "plain-pied"]
+mots_obligatoires: ["piscine"]        
+mots_interdits:    ["viager", "hors-sol", "hors sol"]      
 ```
 
 

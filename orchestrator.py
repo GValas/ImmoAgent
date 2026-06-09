@@ -6,7 +6,7 @@ Usage :
   python orchestrator.py                   # pipeline complet
   python orchestrator.py --skip-discovery  # réutilise sources.yaml existant
   python orchestrator.py --skip-build      # scrapers déjà générés
-  python orchestrator.py --only-analyse    # réanalyse le dernier fichier raw
+  python orchestrator.py --only-analyse    # re-filtre (a posteriori) + ré-analyse le dernier raw
 """
 import asyncio
 import argparse
@@ -60,6 +60,22 @@ async def run_pipeline(
             return
         biens_bruts = json.loads(raw_files[-1].read_text(encoding="utf-8"))
         print(f"⏭  Re-analyse de {raw_files[-1].name} ({len(biens_bruts)} biens)")
+
+        # Ré-applique le filtrage A POSTERIORI (sur données déjà scrapées+enrichies)
+        # avec les critères COURANTS : structurel (prix/surface/pièces/DPE),
+        # mots-clés (obligatoires/interdits) et photos_min. Permet de répercuter un
+        # changement de criteria.md sur suivi_actif SANS re-scraper le web.
+        before = len(biens_bruts)
+        biens_bruts = hunter.filter_biens(biens_bruts, criteres)
+        biens_bruts = hunter.filter_mots_cles(biens_bruts, criteres)
+        pmin = getattr(criteres, "photos_min", 0)
+        if pmin:
+            biens_bruts = [b for b in biens_bruts if len(b.get("photos") or []) >= pmin]
+        print(f"⏪ Re-filtrage a posteriori : {len(biens_bruts)}/{before} biens conservés")
+
+        if not biens_bruts:
+            print("❌ Plus aucun bien après re-filtrage.")
+            return
         output = await analyst.run(biens_bruts, criteres)
         _print_done(start, output)
         return
@@ -110,7 +126,8 @@ if __name__ == "__main__":
     parser.add_argument("--skip-discovery", action="store_true")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--only-analyse", action="store_true",
-                        help="Ré-enrichit le dernier raw sans re-scraper ni re-filtrer")
+                        help="Ré-applique le filtrage a posteriori (structurel + mots-clés "
+                             "+ photos_min) au dernier raw et régénère suivi_actif, sans re-scraper")
     args = parser.parse_args()
 
     asyncio.run(run_pipeline(

@@ -18,5 +18,5 @@ logs/
 .devcontainer/
 .claude/
 *.log
-# Note : config/ (criteria.md + style_references/) est VOLONTAIREMENT gardé
+# Note : config/ (criteria.md + sources.yaml) est VOLONTAIREMENT gardé
 # dans l'image pour qu'elle soit lançable même sans bind-mount.

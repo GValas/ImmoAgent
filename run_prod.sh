@@ -38,7 +38,7 @@ mkdir -p data/raw data/output logs
 
 # --- Build ---
 if [ "$DO_BUILD" -eq 1 ]; then
-  echo "==> Construction de l'image $IMAGE (torch + Chromium + CLIP, peut prendre plusieurs minutes)"
+  echo "==> Construction de l'image $IMAGE (torch + Chromium + modèle NLP, peut prendre plusieurs minutes)"
   # CACHEBUST = timestamp → force la reconstruction de la couche code (COPY . .) à
   # chaque build : le code est TOUJOURS frais, les couches lourdes restent cachées.
   docker build --build-arg CACHEBUST="$(date +%s)" -t "$IMAGE" .

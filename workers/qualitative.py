@@ -15,6 +15,7 @@ avertissement — le pipeline continue sans cette dimension, rien n'est élimin�
 
 Modèle : paraphrase-multilingual-MiniLM-L12-v2 (~120 Mo, CPU OK, FR inclus).
 """
+import os
 import re
 
 _MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -23,13 +24,32 @@ _load_failed = False
 
 
 def _pick_device() -> str:
-    """GPU CUDA si disponible, sinon CPU (dégradation gracieuse)."""
+    """Choisit le device des embeddings, en tenant compte de `IMMO_FORCE_GPU`.
+
+    `IMMO_FORCE_GPU` (posé par run_prod.sh selon le mode du conteneur) :
+      • "0"     → CPU forcé (mode --cpu) ;
+      • "1"     → GPU exigé : si CUDA est indisponible, on AVERTIT bruyamment
+                  (le conteneur a probablement été lancé sans `--gpus all`, ou
+                  nvidia-container-toolkit manque sur l'hôte, ou torch est en
+                  version CPU) puis repli CPU — l'annotation n'est pas éliminatoire ;
+      • absent  → auto : GPU si disponible, sinon CPU.
+    """
+    force = os.environ.get("IMMO_FORCE_GPU")
     try:
         import torch
-        if torch.cuda.is_available():
-            return "cuda"
+        cuda = torch.cuda.is_available()
     except Exception:
-        pass
+        cuda = False
+
+    if force == "0":
+        return "cpu"
+    if cuda:
+        return "cuda"
+    if force == "1":
+        print("[Qualitatif] ⚠️  IMMO_FORCE_GPU=1 mais CUDA indisponible "
+              "(torch.cuda.is_available()=False) → repli CPU (plus lent). "
+              "Vérifier : conteneur lancé avec `--gpus all`, nvidia-container-toolkit "
+              "installé sur l'hôte, et torch en build CUDA (cu124).")
     return "cpu"
 
 
