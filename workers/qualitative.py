@@ -22,15 +22,35 @@ _model = None
 _load_failed = False
 
 
+def _pick_device() -> str:
+    """GPU CUDA si disponible, sinon CPU (dégradation gracieuse)."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
 def _get_model():
-    """Charge le modèle une seule fois (singleton paresseux)."""
+    """Charge le modèle une seule fois (singleton paresseux), sur GPU si possible."""
     global _model, _load_failed
     if _model is not None or _load_failed:
         return _model
     try:
         from sentence_transformers import SentenceTransformer
-        print(f"[Qualitatif] Chargement du modèle {_MODEL_NAME.split('/')[-1]}…")
-        _model = SentenceTransformer(_MODEL_NAME)
+        device = _pick_device()
+        print(f"[Qualitatif] Chargement du modèle {_MODEL_NAME.split('/')[-1]} "
+              f"sur {device.upper()}…")
+        # device explicite : on n'utilise le CPU que si aucun GPU CUDA n'est dispo.
+        _model = SentenceTransformer(_MODEL_NAME, device=device)
+        try:
+            import torch
+            if device == "cuda":
+                print(f"[Qualitatif] GPU : {torch.cuda.get_device_name(0)}")
+        except Exception:
+            pass
     except Exception as e:
         _load_failed = True
         print(f"[Qualitatif] Modèle indisponible ({type(e).__name__}: {e}) "

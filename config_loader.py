@@ -20,6 +20,8 @@ DEFAULTS = {
     "dpe_exclus":          ["G"],
     "description_qualitative": "",   # texte libre matché sémantiquement à l'annonce
     "photos_min":            0,      # nb minimal de photos exigé (0 = pas de filtre)
+    "mots_obligatoires":     [],     # mots qui doivent TOUS figurer dans le texte (ET)
+    "mots_interdits":        [],     # mots dont la présence exclut le bien
 }
 
 
@@ -62,7 +64,20 @@ def load_criteria() -> CriteresRecherche:
         dpe_exclus=get("dpe_exclus"),
         description_qualitative=str(get("description_qualitative") or ""),
         photos_min=int(get("photos_min")),
+        mots_obligatoires=_coerce_mots(get("mots_obligatoires")),
+        mots_interdits=_coerce_mots(get("mots_interdits")),
     )
+
+
+def _coerce_mots(raw) -> list[str]:
+    """Normalise une valeur `mots_*` en liste de chaînes non vides.
+
+    Accepte une liste YAML ou une chaîne unique ; ignore les entrées vides."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [str(m).strip() for m in raw if str(m).strip()]
 
 
 def _parse_departements(block: str) -> list[str]:

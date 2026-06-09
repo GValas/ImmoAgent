@@ -34,9 +34,11 @@ models.py             Dataclasses : Bien, CriteresRecherche
 workers/
   discovery.py        Worker 1 — charge sources.yaml, filtre par département
   builder.py          Worker 2 — vérifie scrapers disponibles, liste les manquants
-  hunter.py           Worker 3 — scrape en parallèle, déduplique, filtre (critères structurés)
+  hunter.py           Worker 3 — scrape parallèle, déduplique, filtre structurel,
+                      enrichit page détail (photos/DPE/description), filtre mots-clés,
+                      annote gare/bus/géoloc
   analyst.py          Worker 4 — enrichit (DVF, alertes), résumé local, export Excel
-  qualitative.py      Util analyst — match NLP description_qualitative ↔ annonce (embeddings)
+  qualitative.py      Util analyst — match NLP description_qualitative ↔ annonce (embeddings, GPU si dispo)
 
 scrapers/             25 scrapers actifs + 4 inactifs (voir liste ci-dessous)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
@@ -116,8 +118,13 @@ Organisé en familles de critères. Chaque bloc de code ``` est un **fragment YA
 (clé: valeur, listes et chaînes multi-lignes, commentaires `#`) ; les dictionnaires
 de tous les blocs sont fusionnés. Les départements sont la clé `departements: [..]`
 (repli sur les nombres nus du 1ᵉʳ bloc si absente).
-- **Phase 1 — Scraping** (champs structurés) : `## Critères du bien`
-  (departements, types, surface, pièces, terrain, prix, dpe_exclus, photos_min)
+- **Phase 1 — Scraping** (champs structurés, filtre dur **au requêtage**) :
+  `## Critères du bien` (departements, types, surface, pièces, terrain, prix,
+  dpe_exclus, photos_min)
+- **Filtre mots-clés** (filtre dur sur le TEXTE, **après** le 1er filtrage) :
+  `## Filtre mots-clés` → `mots_obligatoires` (tous exigés, logique ET) et
+  `mots_interdits` (un seul présent ⇒ exclu). Appliqué sur titre + description
+  **complète** (récupérée en page détail), insensible casse/accents, sous-chaîne.
 - **Phase 2 — Analyse** (interprétation) :
   - `## Description qualitative` (texte libre matché à l'annonce via NLP — tri)
   - `## Analyse GÉO` (automatique, non configurable : annotation gare + liens satellite/ortho)
@@ -169,9 +176,13 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
 
 ### Match qualitatif NLP (ajouté le 2026-06-09)
 - `workers/qualitative.py` compare la `description_qualitative` (criteria.md, texte
-  libre FR) au titre + description de chaque annonce par **embeddings de phrases**
-  (`sentence-transformers`, modèle `paraphrase-multilingual-MiniLM-L12-v2`, ~120 Mo
-  téléchargé au 1er run). **Réintroduit `torch`** (retiré pour CLIP) — assumé.
+  libre FR) au titre + **description complète** de chaque annonce (enrichie en page
+  détail par `gallery.py`) par **embeddings de phrases** (`sentence-transformers`,
+  modèle `paraphrase-multilingual-MiniLM-L12-v2`, ~120 Mo téléchargé au 1er run).
+  **Réintroduit `torch`** (retiré pour CLIP) — assumé.
+- **GPU** : le modèle est chargé sur **CUDA si disponible** (device explicite via
+  `_pick_device()`, log « … sur CUDA » + nom du GPU), repli **CPU** sinon. Vérifié
+  sur RTX 4070 Ti (torch `cu126`). `python workers/qualitative.py` affiche le device.
 - **NON éliminatoire** : annote `match_qualitatif` (0–100) et `match_extrait`
   (phrase la plus proche) ; l'analyst **trie** les résultats par `match_qualitatif`
   décroissant + colonnes Excel « Match qual. » / « Extrait qual. ». Désactivé si
@@ -180,6 +191,33 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
   avec avertissement — le pipeline continue sans cette annotation (rien n'est éliminé).
 - Les similarités sémantiques se tassent vers 30–60 ; c'est l'**ordre relatif** qui
   compte.
+
+### Filtre mots-clés obligatoires / interdits (ajouté le 2026-06-09)
+- Deux listes dans `criteria.md` (`## Filtre mots-clés`) : `mots_obligatoires`
+  (logique **ET** — tous exigés) et `mots_interdits` (un seul présent ⇒ exclu).
+- **Filtre dur éliminatoire**, mais distinct des critères structurés : il s'applique
+  sur le **TEXTE** (titre + description **complète**), donc **après** le 1er filtrage,
+  dans `hunter.filter_mots_cles` appelé une fois la page détail enrichie (la vue liste
+  ne donne souvent qu'un titre/extrait). Insensible casse/accents, sous-chaîne.
+- Listes vides ⇒ filtre désactivé. `filter_biens` ne fait plus que le structurel.
+
+### Enrichissement page détail (`scrapers/gallery.py`)
+- Sur les **seuls survivants** du 1er filtrage, `fetch_gallery` visite la page/API
+  détail et enrichit, **sans requête supplémentaire** au-delà de ce fetch :
+  **photos** (galerie complète), **DPE** (`extract_dpe`, ignore le GES) et désormais
+  la **description complète** (`_maybe_set_description` : JSON-LD `description` +
+  `og:description` ; `_maybe_set_description_from_json` pour les API type notaires).
+  N'écrase la description liste que si la nouvelle est **strictement plus longue**.
+- Cette description enrichie alimente le **filtre mots-clés** et le **match
+  qualitatif NLP**, qui opèrent ainsi sur l'annonce entière.
+- Ne lève jamais (best-effort) ; coupe-circuit 429/503 par domaine.
+
+### Annotation arrêt de bus (`scrapers/bus.py`)
+- Annotation **informative, non éliminatoire** (comme la gare) : remplit
+  `bus_proche` / `bus_nom` / `bus_distance_km` (colonne Excel « Bus »).
+- Lancée par `hunter.py` sur les survivants, après le re-filtre/enrichissement et
+  avant la géoloc (`BUS_RAYON_KM = 2.0`). Source : Overpass OSM (coupe-circuit si
+  injoignable). Toujours active, plus de toggle dans `criteria.md`.
 
 ### Filtre visuel (CLIP) — RETIRÉ le 2026-06-09
 - Le worker `workers/vision.py`, la dépendance CLIP/torch et la colonne Excel
@@ -231,7 +269,8 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
     vers le bien conservé (Bien'ici aggrège IAD/SAFTI/ERA… → coords sinon perdues).
 - Ajoute dans l'Excel les liens `Satellite` (Google) et `Ortho+cadastre`
   (Geoportail, idéal pour la vérification visuelle manuelle), et un flag `geo_precis`.
-- Lancé par `hunter.py` après l'annotation gare (toujours actif, plus de toggle)
+- Lancé par `hunter.py` en dernier (après les annotations gare et bus) — toujours
+  actif, plus de toggle
 - **CGU** : on ne scrape pas les tuiles Google (liens pour le clic humain seulement).
 - > Le matching cadastral « parcelle probable » (apicarto IGN) a été **retiré le
   > 2026-06-09** ; ne restent que les liens. Voir l'historique git pour le rétablir.

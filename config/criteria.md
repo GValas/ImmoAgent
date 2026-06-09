@@ -51,6 +51,29 @@ photos_min:  3          # exclure les annonces avec moins de N photos
 ```
 
 
+# ── FILTRE MOTS-CLÉS (filtre dur sur le TEXTE de l'annonce) ───────────────────
+#
+# Deux listes ÉLIMINATOIRES, appliquées au titre + description COMPLÈTE de
+# l'annonce. Contrairement aux critères structurés ci-dessus (qui filtrent au
+# requêtage du site), ce filtre s'applique APRÈS le 1er filtrage, sur l'annonce
+# entière une fois sa page détail récupérée (description complète) — tout comme
+# la description qualitative (Phase 2).
+# Insensible à la casse et aux accents ; correspondance par sous-chaîne (donc
+# « pierre » matche aussi « pierres »). À distinguer de la description qualitative,
+# qui n'élimine pas mais trie.
+#   • mots_obligatoires : TOUS doivent être présents (logique ET) — un seul
+#     manquant ⇒ le bien est écarté.
+#   • mots_interdits    : si un seul est présent ⇒ le bien est écarté.
+# Laisser une liste vide ([]) la désactive.
+
+## Filtre mots-clés
+
+```
+mots_obligatoires: ["piscine"]        # ex: ["piscine", "pierre"] — tous exigés (ET)
+mots_interdits:    ["viager"]        # ex: ["lotissement", "viager", "plain-pied"]
+```
+
+
 # ── PHASE 2 — DESCRIPTION QUALITATIVE (NLP, non éliminatoire) ─────────────────
 #
 # Texte libre comparé SÉMANTIQUEMENT (embeddings) au titre + description de chaque

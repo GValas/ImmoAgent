@@ -373,6 +373,126 @@ def _maybe_set_dpe(bien: dict, txt: str) -> None:
         pass
 
 
+# --------------------------------------------------------------------------- #
+# Extraction DESCRIPTION (best-effort) — réutilise le HTML/JSON déjà récupéré,
+# AUCUNE requête supplémentaire. La vue liste ne capte souvent qu'un titre ou un
+# extrait tronqué ; le texte complet de l'annonce vit sur la page détail. On le
+# récupère pour alimenter le filtre mots-clés (hunter) et le match qualitatif NLP
+# (analyst), qui s'appliquent sur l'annonce COMPLÈTE après le 1er filtrage.
+#
+# Source : JSON-LD `description` (souvent le texte complet) puis meta
+# og:description / description (souvent tronquée → fallback). On ne remplace la
+# description existante que si on en trouve une STRICTEMENT plus longue.
+# --------------------------------------------------------------------------- #
+
+_DESC_META_RE = re.compile(
+    r'<meta[^>]+(?:property|name)=["\'](?:og:description|description|twitter:description)["\']'
+    r'[^>]+content=["\']([^"\']*)["\']',
+    re.IGNORECASE,
+)
+_DESC_META_RE2 = re.compile(
+    r'<meta[^>]+content=["\']([^"\']*)["\']'
+    r'[^>]+(?:property|name)=["\'](?:og:description|description|twitter:description)["\']',
+    re.IGNORECASE,
+)
+
+
+def _unescape_json_str(s: str) -> str:
+    """Déséchappe sommairement une chaîne JSON capturée au regex (best-effort)."""
+    return (s.replace('\\"', '"').replace("\\n", " ").replace("\\r", " ")
+             .replace("\\t", " ").replace("\\/", "/").replace("\\\\", "\\"))
+
+
+def _extract_ldjson_descriptions(txt: str) -> list[str]:
+    """Collecte les champs `description` des blocs JSON-LD (parsing + repli regex)."""
+    out: list[str] = []
+    for block in _LDJSON_RE.findall(txt):
+        block = block.strip()
+        if '"description"' not in block and "'description'" not in block:
+            continue
+        try:
+            data = _json.loads(block)
+        except Exception:
+            for m in re.findall(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"', block):
+                out.append(_unescape_json_str(m))
+            continue
+
+        def _collect(node):
+            if isinstance(node, dict):
+                d = node.get("description")
+                if isinstance(d, str):
+                    out.append(d)
+                for v in node.values():
+                    if isinstance(v, (dict, list)):
+                        _collect(v)
+            elif isinstance(node, list):
+                for v in node:
+                    _collect(v)
+
+        _collect(data)
+    return out
+
+
+def _maybe_set_description(bien: dict, txt: str) -> None:
+    """Enrichit bien['description'] avec le texte détail s'il est plus complet.
+
+    Best-effort : ne lève jamais. N'écrase une description existante que si la
+    nouvelle est strictement plus longue (la vue liste tronque souvent)."""
+    try:
+        cands = list(_extract_ldjson_descriptions(txt))
+        for m in _DESC_META_RE.findall(txt) + _DESC_META_RE2.findall(txt):
+            cands.append(_html.unescape(m))
+        cands = [c.strip() for c in cands if c and c.strip()]
+        if not cands:
+            return
+        best = max(cands, key=len)
+        cur = (bien.get("description") or "").strip()
+        if len(best) > len(cur):
+            bien["description"] = best
+    except Exception:
+        pass
+
+
+def _enrich_meta(bien: dict, txt: str) -> None:
+    """DPE + description (best-effort) depuis le HTML/JSON détail déjà récupéré."""
+    _maybe_set_dpe(bien, txt=txt)        # txt=txt : forme volontaire (cf. dispatch)
+    _maybe_set_description(bien, txt)
+
+
+# Clés JSON considérées comme du texte descriptif d'annonce (API notaires & co.).
+_DESC_JSON_KEYS = {"description", "descriptif", "descriptifbien", "texte",
+                   "commentaire", "commentaires", "annonce", "libelle"}
+
+
+def _maybe_set_description_from_json(bien: dict, data: dict) -> None:
+    """Enrichit bien['description'] depuis un payload JSON (recherche en profondeur).
+
+    Ne retient que des chaînes longues (> 40 car.) portées par une clé descriptive,
+    et n'écrase l'existant que si strictement plus long. Ne lève jamais."""
+    try:
+        best = ""
+
+        def _walk(node):
+            nonlocal best
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if isinstance(v, str) and k.lower() in _DESC_JSON_KEYS and len(v.strip()) > 40:
+                        if len(v.strip()) > len(best):
+                            best = v.strip()
+                    elif isinstance(v, (dict, list)):
+                        _walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    _walk(v)
+
+        _walk(data)
+        cur = (bien.get("description") or "").strip()
+        if best and len(best) > len(cur):
+            bien["description"] = best
+    except Exception:
+        pass
+
+
 def _dpe_from_notaires(data: dict) -> str | None:
     """DPE depuis l'API notaires : bien.maison.consommationClasse (≠ emissionGesClasse)."""
     try:
@@ -446,6 +566,8 @@ async def _g_notaires(bien: dict, session: httpx.AsyncClient) -> list[str]:
         cls = _dpe_from_notaires(data)
         if cls:
             bien["dpe"] = cls
+    # Description complète depuis l'API (best-effort, sans requête supplémentaire).
+    _maybe_set_description_from_json(bien, data)
     mm = (((data or {}).get("vente") or {}).get("multimedias")) or []
     out = []
     for m in mm:
@@ -494,7 +616,7 @@ async def _g_century21(bien: dict, session: httpx.AsyncClient) -> list[str]:
     on garde la taille 8.
     """
     txt = await _get_text(session, bien["url"])
-    _maybe_set_dpe(bien, txt)
+    _enrich_meta(bien, txt)
     paths = re.findall(r"/imagesBien/[A-Za-z0-9_/.\-]+\.(?:jpe?g|png|webp)", txt)
     by_guid: dict[str, tuple[int, str]] = {}
     for p in paths:
@@ -512,7 +634,7 @@ async def _g_century21(bien: dict, session: httpx.AsyncClient) -> list[str]:
 async def _g_proprietes_privees(bien: dict, session: httpx.AsyncClient) -> list[str]:
     """proprietes_privees — photos séquentielles PROPRIETES-PRIVEES-{ref}-N.jpg."""
     txt = await _get_text(session, bien["url"])
-    _maybe_set_dpe(bien, txt)
+    _enrich_meta(bien, txt)
     raw = re.findall(
         r"https://images\.proprietes-privees\.com/annonce/[^\"'\\ ]+?\.(?:jpe?g|png|webp)",
         txt,
@@ -526,7 +648,7 @@ async def _g_lesiteimmo(bien: dict, session: httpx.AsyncClient) -> list[str]:
     On restreint à l'id du bien pour éviter les photos d'autres annonces de la page.
     """
     txt = await _get_text(session, bien["url"])
-    _maybe_set_dpe(bien, txt)
+    _enrich_meta(bien, txt)
     aid = bien.get("id_annonce") or ""
     if not aid:
         m = re.search(r"/(\d{5,})(?:[/?#].*)?$", bien.get("url", ""))
@@ -543,7 +665,7 @@ async def _g_lesiteimmo(bien: dict, session: httpx.AsyncClient) -> list[str]:
 async def _g_foncia(bien: dict, session: httpx.AsyncClient) -> list[str]:
     """foncia — photos cloudfront, mêmes hash en lg/md/sm → on garde lg."""
     txt = await _get_text(session, bien["url"])
-    _maybe_set_dpe(bien, txt)
+    _enrich_meta(bien, txt)
     raw = re.findall(
         r"https://d7b3sch6x3cpd\.cloudfront\.net/annonces/[A-Za-z0-9/]+/(?:lg|md|sm)\.(?:jpe?g|png|webp)",
         txt,
@@ -565,7 +687,7 @@ async def _g_drhouse(bien: dict, session: httpx.AsyncClient) -> list[str]:
     (les images bandeau/mandataires sont des bannières d'agent → filtrées.)
     """
     txt = await _get_text(session, bien["url"])
-    _maybe_set_dpe(bien, txt)
+    _enrich_meta(bien, txt)
     raw = re.findall(
         r"https://images\.drhouse-immo\.com/minisite/detail/[A-Za-z0-9/.\-]+?\.(?:webp|jpe?g|png)",
         txt,
@@ -576,7 +698,7 @@ async def _g_drhouse(bien: dict, session: httpx.AsyncClient) -> list[str]:
 async def _g_fnaim(bien: dict, session: httpx.AsyncClient) -> list[str]:
     """fnaim — photos sur imagesv2.fnaim.fr/images1/img/... (logos/ filtrés)."""
     txt = await _get_text(session, bien["url"])
-    _maybe_set_dpe(bien, txt)
+    _enrich_meta(bien, txt)
     raw = re.findall(
         r"https://imagesv2\.fnaim\.fr/images\d*/img/[^\"'\\ ]+?\.(?:jpe?g|png|webp)",
         txt,
@@ -592,7 +714,7 @@ async def _g_paruvendu(bien: dict, session: httpx.AsyncClient) -> list[str]:
     (placeholder novisu) → on retourne alors l'existant.
     """
     txt = await _get_text(session, bien["url"])
-    _maybe_set_dpe(bien, txt)
+    _enrich_meta(bien, txt)
     raw = re.findall(r"https://[a-z0-9.\-]*paruvendu\.fr/media_ext/[^\"'\\ )]+", txt)
     big, small = [], []
     for u in raw:
@@ -675,7 +797,7 @@ async def fetch_gallery(bien: dict, session: httpx.AsyncClient) -> list[str]:
     try:
         txt = await _get_text(session, url)
         base = url
-        _maybe_set_dpe(bien, txt)
+        _enrich_meta(bien, txt)
         found = _extract_generic(txt, base)
         return _better_of(existing, found, bien)
     except Exception as e:

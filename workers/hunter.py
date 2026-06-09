@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,10 @@ RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
 # Rayon (km) du flag "gare proche" pour l'annotation gare (non éliminatoire).
 GARE_RAYON_KM = 20.0
+
+# Rayon (km) du flag "bus proche" — court : un arrêt de bus utile est proche
+# (annotation informative, non éliminatoire).
+BUS_RAYON_KM = 2.0
 
 
 async def run_scraper(source_id: str, criteres: CriteresRecherche) -> list[dict]:
@@ -313,8 +318,38 @@ async def deduplicate_by_photo(
     return [b for idx, b in enumerate(biens) if idx not in drop]
 
 
+def _normalize_text(s: str) -> str:
+    """Minuscules, sans accents — pour comparer du texte d'annonce aux mots-clés."""
+    s = unicodedata.normalize("NFKD", (s or "").lower())
+    return "".join(c for c in s if not unicodedata.combining(c))
+
+
+def filter_mots_cles(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
+    """Filtre dur sur le TEXTE de l'annonce (titre + description COMPLÈTE).
+
+    Appliqué APRÈS l'enrichissement page détail (la description complète n'existe
+    qu'à ce moment), contrairement aux critères structurés qui filtrent au requêtage.
+      - mots_obligatoires : tous doivent figurer (logique ET) ;
+      - mots_interdits    : un seul présent ⇒ exclu.
+    Insensible à la casse/accents, correspondance par sous-chaîne."""
+    mots_oblig = [_normalize_text(m) for m in getattr(criteres, "mots_obligatoires", []) or []]
+    mots_int = [_normalize_text(m) for m in getattr(criteres, "mots_interdits", []) or []]
+    if not (mots_oblig or mots_int):
+        return biens
+
+    kept = []
+    for b in biens:
+        texte = _normalize_text(f"{b.get('titre', '')} {b.get('description', '')}")
+        if any(m in texte for m in mots_int):
+            continue
+        if mots_oblig and not all(m in texte for m in mots_oblig):
+            continue
+        kept.append(b)
+    return kept
+
+
 def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
-    """Applique les filtres d'exclusion durs."""
+    """Applique les filtres d'exclusion durs (champs STRUCTURÉS, au requêtage)."""
     filtered = []
     for b in biens:
         # DPE exclu
@@ -421,6 +456,16 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
         if before - len(filtered):
             print(f"[Hunter] Re-filtre DPE ({'/'.join(_dpe_excl)}) : {before - len(filtered)} bien(s) écarté(s)")
 
+    # Filtre mots-clés (obligatoires/interdits) sur l'annonce COMPLÈTE — la
+    # description n'est fiable qu'APRÈS l'enrichissement page détail (gallery).
+    before = len(filtered)
+    filtered = filter_mots_cles(filtered, criteres)
+    if before - len(filtered):
+        _mo = getattr(criteres, "mots_obligatoires", []) or []
+        _mi = getattr(criteres, "mots_interdits", []) or []
+        print(f"[Hunter] Filtre mots-clés (oblig={_mo} interdits={_mi}) : "
+              f"{len(filtered)}/{before} conservés")
+
     # photos_min : exclure les annonces trop pauvres (APRÈS enrichissement galerie)
     pmin = getattr(criteres, "photos_min", 0)
     if pmin:
@@ -437,6 +482,11 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     filtered = await deduplicate_by_photo(filtered)
     if len(filtered) != before:
         print(f"[Hunter] Après dédup photo : {len(filtered)} annonces\n")
+
+    # Annotation arrêt de bus le plus proche (toujours active, NON éliminatoire) :
+    # remplit bus_proche / bus_nom / bus_distance_km pour l'Excel.
+    from scrapers.bus import annotate_biens as bus_annotate
+    filtered = await bus_annotate(filtered, BUS_RAYON_KM)
 
     # Pré-localisation (liens satellite + ortho/cadastre), toujours active.
     from scrapers.geolocate import annotate_biens as geo_annotate

@@ -89,7 +89,7 @@ class Bien:
 
 @dataclass
 class CriteresRecherche:
-    """Critères parsés depuis criteria.md + criteres.yaml"""
+    """Critères parsés depuis criteria.md (seule source ; cf. config_loader.py)."""
     departements: list[str]
     types_bien: list[str]
     surface_min: int
@@ -102,3 +102,5 @@ class CriteresRecherche:
     dpe_exclus: list[str]
     description_qualitative: str = ""   # texte libre matché à l'annonce (NLP)
     photos_min: int = 0          # nb minimal de photos (0 = pas de filtre)
+    mots_obligatoires: list[str] = field(default_factory=list)  # tous exigés dans le texte (ET)
+    mots_interdits: list[str] = field(default_factory=list)     # exclu si l'un est présent
