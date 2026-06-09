@@ -42,7 +42,7 @@ _builtins.print = _ts_print
 # ─────────────────────────────────────────────────────────────────────────
 
 from config_loader import load_criteria, load_sources
-from workers import discovery, builder, hunter, analyst, vision
+from workers import discovery, builder, hunter, analyst
 
 DATA_DIR   = Path("data")
 RAW_DIR    = DATA_DIR / "raw"
@@ -64,7 +64,6 @@ def load_scheduler_config() -> dict:
         "hunter_interval_hours":   4,
         "discovery_interval_days": 7,
         "builder_interval_days":   30,
-        "score_seuil_interet":     65,
         "max_biens_suivi":         50,
     }
     try:
@@ -219,13 +218,12 @@ async def prune_dead_listings(biens: list[dict], concurrency: int = 8) -> tuple[
 # MISE À JOUR DU FICHIER DE SUIVI ACTIF
 # ──────────────────────────────────────────────
 
-async def update_suivi(new_biens_scored: list[dict], cfg: dict):
+async def update_suivi(new_biens: list[dict], cfg: dict):
     """
-    Fusionne les nouveaux biens scorés dans suivi_actif.xlsx.
-    Garde uniquement les max_biens_suivi meilleurs au-dessus du seuil.
+    Fusionne les nouveaux biens enrichis dans suivi_actif.xlsx.
+    Garde au plus max_biens_suivi biens (triés par match qualitatif).
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    seuil      = cfg["score_seuil_interet"]
     max_biens  = cfg["max_biens_suivi"]
 
     # Charger le suivi existant
@@ -234,25 +232,11 @@ async def update_suivi(new_biens_scored: list[dict], cfg: dict):
     if suivi_json.exists():
         existing = json.loads(suivi_json.read_text(encoding="utf-8"))
 
-    # Ajouter les nouveaux au-dessus du seuil
-    qualifying = [b for b in new_biens_scored if (b.get("score_total") or 0) >= seuil]
+    # Scoring retiré → on garde tous les nouveaux biens (à revoir plus tard).
+    qualifying = list(new_biens)
     # Les nouveaux d'abord : sur collision d'identité (même annonce), c'est la
     # version fraîche — mieux parsée (géoloc, prix à jour) — qui est conservée.
     merged = qualifying + existing
-
-    # Garde-fou éléments : (re)détecte les éléments indésirables (elements.yaml)
-    # sur les entrées legacy jamais évaluées. Rattrape les biens entrés au suivi
-    # AVANT l'ajout d'un élément — filter_new les empêche d'être re-scorés.
-    try:
-        newly_flagged = await vision.rescore_elements(merged)
-    except Exception as e:
-        newly_flagged = 0
-        print(f"[Scheduler] Garde-fou éléments ignoré ({e})")
-    before_elem = len(merged)
-    merged = [b for b in merged if not b.get("banni")]
-    if before_elem - len(merged):
-        print(f"[Scheduler] Garde-fou éléments : {before_elem - len(merged)} bien(s) écarté(s)"
-              f" ({newly_flagged} nouvellement détecté(s))")
 
     # Garde-fou département : ne JAMAIS conserver un bien hors zone cible.
     # Auto-nettoie les fuites historiques du suivi cumulatif (ex. bienici qui
@@ -294,7 +278,7 @@ async def update_suivi(new_biens_scored: list[dict], cfg: dict):
 
     # Déduplique par identité d'annonce (insensible au prix : une baisse de prix
     # ne crée plus de doublon), en gardant la 1ʳᵉ occurrence — donc la version
-    # fraîche puisque `qualifying` précède `existing`. PUIS tri par score + tronque.
+    # fraîche puisque `qualifying` précède `existing`. PUIS tri + tronque.
     seen_id = set()
     deduped = []
     for b in merged:
@@ -303,18 +287,19 @@ async def update_suivi(new_biens_scored: list[dict], cfg: dict):
             deduped.append(b)
             seen_id.add(ident)
 
-    deduped.sort(key=lambda x: x.get("score_total") or 0, reverse=True)
+    # Tri par match qualitatif décroissant (seul signal de pertinence restant).
+    deduped.sort(key=lambda x: x.get("match_qualitatif") or 0, reverse=True)
     deduped = deduped[:max_biens]
 
     # Sauvegarder JSON intermédiaire
     suivi_json.write_text(json.dumps(deduped, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     # Regénérer l'Excel
-    _write_suivi_excel(deduped, seuil)
-    print(f"[Scheduler] Suivi actif : {len(deduped)} biens (seuil {seuil}+)")
+    _write_suivi_excel(deduped)
+    print(f"[Scheduler] Suivi actif : {len(deduped)} biens")
 
 
-def _write_suivi_excel(biens: list[dict], seuil: int):
+def _write_suivi_excel(biens: list[dict]):
     try:
         import openpyxl
         from openpyxl.styles import PatternFill, Font, Alignment
@@ -330,11 +315,10 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
     # Aligné sur l'export resultats_*.xlsx (workers/analyst.py) + colonne
     # suivi-spécifique « Ajouté le ». Inclut géoloc et liens satellite/cadastre.
     headers = [
-        "Score", "Ajouté le", "Source", "Titre",
+        "Match qual.", "Ajouté le", "Source", "Titre",
         "Ville", "Dép", "Département", "Gare", "Bus", "Surface", "Terrain", "Pièces", "DPE",
-        "Prix (€)", "Prix/m²", "Prix/m² marché", "Résumé vision", "Alertes",
-        "Piscine hors-sol", "Éléments détectés",
-        "Parcelle probable", "Satellite", "Ortho+cadastre", "URL"
+        "Prix (€)", "Prix/m²", "Prix/m² marché", "Alertes",
+        "Satellite", "Ortho+cadastre", "URL"
     ]
     hfill = PatternFill("solid", fgColor="2C3E50")
     hfont = Font(color="FFFFFF", bold=True)
@@ -344,12 +328,7 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
         c.font = hfont
         c.alignment = Alignment(horizontal="center")
 
-    # Couleur du Score (sur la seule cellule Score) + zébrage 1 ligne sur 2.
-    fills = {
-        "high":   PatternFill("solid", fgColor="D5F5E3"),
-        "medium": PatternFill("solid", fgColor="FEF9E7"),
-    }
-    zebra_fill = PatternFill("solid", fgColor="F2F4F4")
+    zebra_fill = PatternFill("solid", fgColor="F2F4F4")   # zébrage 1 ligne sur 2
 
     # Colonnes affichées comme hyperliens : {index_1based: libellé}
     link_labels = {
@@ -357,16 +336,13 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
         headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
         headers.index("URL") + 1: "Voir l'annonce",
     }
-    score_col = headers.index("Score") + 1
     price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché", "Terrain")}
 
     for row, b in enumerate(biens, 2):
-        score = b.get("score_total", 0)
-        score_fill = fills["high"] if score >= 75 else fills["medium"]
         zebra = zebra_fill if row % 2 == 0 else None
 
         vals  = [
-            score,
+            b.get("match_qualitatif"),
             (b.get("date_ajout_suivi") or "")[:10],
             b.get("source", ""),
             b.get("titre", ""),
@@ -384,16 +360,7 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
             b.get("prix"),
             b.get("prix_m2_calcule"),
             b.get("prix_m2_marche_dep"),
-            b.get("resume_visuel", ""),
-            " | ".join(a for a in b.get("alerte", []) if "piscine_hors_sol" not in a),
-            next((f"🛟 {e['score']}" for e in (b.get("elements_detectes") or [])
-                  if e["nom"] == "piscine_hors_sol"), ""),
-            " | ".join(
-                f"{'⛔' if e.get('mode') == 'exclusion' else '⚠️'} {e['nom']} ({e['score']})"
-                for e in (b.get("elements_detectes") or [])
-                if e["nom"] != "piscine_hors_sol"
-            ),
-            b.get("parcelle_match", ""),
+            " | ".join(b.get("alerte", [])),
             b.get("maps_satellite_url", ""),
             b.get("geoportail_url", ""),
             b.get("url", ""),
@@ -402,10 +369,8 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
             if isinstance(v, (list, dict)):
                 v = str(v) if v else ""
             c = ws.cell(row=row, column=col, value=v)
-            # Fond : Score en couleur, le reste en zébrage 1 ligne/2
-            if col == score_col:
-                c.fill = score_fill
-            elif zebra is not None:
+            # Fond : zébrage 1 ligne sur 2
+            if zebra is not None:
                 c.fill = zebra
             if col in price_cols and isinstance(v, (int, float)):
                 c.number_format = "#,##0"
@@ -414,8 +379,8 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
                 c.value = link_labels[col]
                 c.style = "Hyperlink"
 
-    widths = [8, 12, 12, 40, 18, 6, 18, 24, 22, 9, 9, 8, 6, 12, 10, 14, 45, 35,
-              14, 26, 20, 14, 16, 16]
+    widths = [8, 12, 12, 40, 18, 6, 18, 24, 22, 9, 9, 8, 6, 12, 10, 14, 35,
+              20, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -425,8 +390,7 @@ def _write_suivi_excel(biens: list[dict], seuil: int):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     ws2 = wb.create_sheet("Infos")
     ws2["A1"] = f"Dernière mise à jour : {ts}"
-    ws2["A2"] = f"Seuil de score : {seuil}+"
-    ws2["A3"] = f"Nombre de biens suivis : {len(biens)}"
+    ws2["A2"] = f"Nombre de biens suivis : {len(biens)}"
 
     wb.save(SUIVI_FILE)
     print(f"[Scheduler] Excel mis à jour → {SUIVI_FILE}")
@@ -456,7 +420,7 @@ async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> dict:
         state["last_builder"] = now
         ran_something = True
 
-    # ── Hunter + Vision + Analyst ──
+    # ── Hunter + Analyst ──
     if should_run(state["last_hunter"], cfg["hunter_interval_hours"]):
         print(f"[Scheduler] {_ts()} Hunter...")
         biens_bruts = await hunter.run(sources, criteres)
@@ -471,19 +435,17 @@ async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> dict:
 
             if new_biens:
                 print(f"[Scheduler] {_ts()} Analyst sur {len(new_biens)} nouveaux biens...")
-                scored = []
-                from workers.analyst import score_bien, fetch_prix_marche_dvf
+                from workers.analyst import enrich_bien, fetch_prix_marche_dvf
                 prix_marche = await fetch_prix_marche_dvf(criteres.departements)
-                criteres_dict = {
-                    "surface_min":   criteres.surface_min,
-                    "surface_max":   criteres.surface_max,
-                    "terrain_min":   criteres.terrain_min,
-                    "poids_scoring": criteres.poids_scoring,
-                }
-                for b in new_biens:
-                    scored.append(score_bien(b, criteres_dict, prix_marche))
 
-                await update_suivi(scored, cfg)
+                # Match qualitatif NLP (si une description est définie)
+                desc_qual = getattr(criteres, "description_qualitative", "") or ""
+                if desc_qual.strip():
+                    from workers.qualitative import annotate_biens as qual_annotate
+                    qual_annotate(new_biens, desc_qual)
+
+                enriched = [enrich_bien(b, prix_marche) for b in new_biens]
+                await update_suivi(enriched, cfg)
             else:
                 print("[Scheduler] Aucun nouveau bien — garde-fous sur suivi existant")
                 # Pas de nouveau bien, mais on repasse le suivi aux garde-fous
@@ -536,7 +498,6 @@ async def run_forever():
     print(f"  Hunter    : toutes les {cfg['hunter_interval_hours']}h")
     print(f"  Discovery : tous les {cfg['discovery_interval_days']}j")
     print(f"  Builder   : tous les {cfg['builder_interval_days']}j")
-    print(f"  Seuil     : score >= {cfg['score_seuil_interet']}")
     print("=" * 55)
 
     while True:

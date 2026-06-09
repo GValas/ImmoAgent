@@ -16,10 +16,12 @@ import httpx
 from PIL import Image
 
 from models import Bien, CriteresRecherche
-from workers import vision as vision_worker
 
 SCRAPERS_DIR = Path(__file__).parent.parent / "scrapers"
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
+
+# Rayon (km) du flag "gare proche" pour l'annotation gare (non éliminatoire).
+GARE_RAYON_KM = 20.0
 
 
 async def run_scraper(source_id: str, criteres: CriteresRecherche) -> list[dict]:
@@ -112,8 +114,8 @@ def deduplicate(biens: list[dict]) -> list[dict]:
 # Seules les PHOTOS sont fiables : même bien ⇒ mêmes photos.
 #
 # Conception (coût borné) :
-#   1. On NE traite QUE les survivants post-filtres (gare/vision) — petit ensemble,
-#      photos déjà jugées pertinentes — pas les ~12000 biens bruts.
+#   1. On NE traite QUE les survivants post-filtres (gare/critères) — petit ensemble,
+#      pas les ~12000 biens bruts.
 #   2. Clé de BLOCAGE bon marché = surface arrondie à l'entier → on ne compare que
 #      les biens de surface quasi identique. (Le prix n'entre PAS dans la clé : net
 #      vs FAI peut différer de >10%.) Les groupes de taille 1 sont ignorés.
@@ -315,12 +317,6 @@ def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
     """Applique les filtres d'exclusion durs."""
     filtered = []
     for b in biens:
-        desc = ((b.get("description") or "") + " " + (b.get("titre") or "")).lower()
-
-        # Mots-clés négatifs
-        if any(mot.lower() in desc for mot in criteres.mots_cles_negatifs):
-            continue
-
         # DPE exclu
         dpe = b.get("dpe", "")
         if dpe and dpe.upper() in [d.upper() for d in criteres.dpe_exclus]:
@@ -351,66 +347,6 @@ def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
     return filtered
 
 
-_PISCINE_NEG_CTX = [
-    "possibilit", "à créer", "a creer", "à construire", "a construire",
-    "emplacement", "municipal", "intercommunal", "à proximit", "a proximit",
-    "prévu", "prevu", "futur", "projet", "potentiel", "envisa",
-    "syndicat", "piscine de la", "piscine du",
-]
-
-
-def _piscine_owned_in_text(texte: str) -> bool:
-    """
-    Retourne True si le texte mentionne une piscine appartenant au bien
-    (pas une piscine municipale, pas une possibilité future, etc.).
-    """
-    import re
-    texte = texte.lower()
-    for m in re.finditer(r"\bpiscine\b", texte):
-        window = texte[max(0, m.start() - 90): m.end() + 90]
-        if not any(neg in window for neg in _PISCINE_NEG_CTX):
-            return True
-    return False
-
-
-def filter_equipements_post_vision(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
-    """
-    Exclusion dure sur équipements requis, après scoring visuel CLIP.
-    Pour 'piscine' : exclut si non mentionné en tant que bien du bien (texte)
-                     ET non détecté visuellement par CLIP.
-    Pour les autres équipements : exclut si absent du texte.
-    """
-    equipements = getattr(criteres, "equipements_requis", [])
-    if not equipements:
-        return biens
-
-    kept, excluded = [], 0
-    for b in biens:
-        texte = ((b.get("titre") or "") + " " + (b.get("description") or "")).lower()
-
-        exclure = False
-        for e in equipements:
-            if e.lower() == "piscine":
-                has_api = b.get("has_pool", False)
-                has_text = _piscine_owned_in_text(texte)
-                has_visual = b.get("piscine_visuelle", False)
-                if not (has_api or (has_text and has_visual)):
-                    exclure = True
-                    break
-            else:
-                if e.lower() not in texte:
-                    exclure = True
-                    break
-
-        if exclure:
-            excluded += 1
-        else:
-            kept.append(b)
-
-    print(f"[Hunter] Filtre piscine : {len(kept)} conservés | {excluded} exclus")
-    return kept
-
-
 async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     """
     Lance tous les scrapers en parallèle, déduplique, filtre,
@@ -433,15 +369,14 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     deduped = deduplicate(all_biens)
     print(f"[Hunter] Après déduplication : {len(deduped)} annonces")
 
-    # Filtrage dur (prix, surface, DPE, mots-clés négatifs)
+    # Filtrage dur (prix, surface, DPE)
     filtered = filter_biens(deduped, criteres)
     print(f"[Hunter] Après filtrage : {len(filtered)} annonces")
 
-    # Filtre gare SNCF voyageurs à proximité (avant la vision pour épargner le CLIP)
-    if getattr(criteres, "gare_obligatoire", False):
-        from scrapers.gares import filter_biens_gare
-        filtered = await filter_biens_gare(filtered, criteres.gare_rayon_km)
-        print(f"[Hunter] Après filtre gare : {len(filtered)} annonces")
+    # Annotation gare SNCF voyageurs la plus proche (toujours active, NON
+    # éliminatoire) : remplit gare_nom / gare_distance_km pour l'Excel.
+    from scrapers.gares import annotate_biens as gare_annotate
+    filtered = await gare_annotate(filtered, GARE_RAYON_KM)
 
     # Enrichissement galerie : récupère la galerie COMPLÈTE depuis la page détail
     # des survivants (la plupart des scrapers ne captent que 0-1 photo en vue liste).
@@ -493,19 +428,7 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
         filtered = [b for b in filtered if len(b.get("photos") or []) >= pmin]
         print(f"[Hunter] Filtre photos_min({pmin}) : {len(filtered)}/{before} conservés")
 
-    # Sauvegarde pré-vision (permet --only-vision sans re-scraper)
     ts = datetime.now().strftime("%Y%m%d_%H%M")
-    prevision_path = RAW_DIR / f"biens_prevision_{ts}.json"
-    prevision_path.write_text(json.dumps(filtered, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    print(f"[Hunter] Pré-vision sauvegardé → {prevision_path}")
-
-    # Filtre visuel (style CLIP + détection piscine)
-    filtered = await vision_worker.run(filtered)
-    print(f"[Hunter] Après filtre visuel : {len(filtered)} annonces")
-
-    # Exclusion dure équipements requis (piscine texte + CLIP)
-    filtered = filter_equipements_post_vision(filtered, criteres)
-    print(f"[Hunter] Après filtre équipements : {len(filtered)} annonces\n")
 
     # Déduplication inter-sources par empreinte photo (sur les survivants, peu nombreux —
     # ne télécharge la 1ʳᵉ photo que des candidats regroupés par surface). Attrape un même
@@ -515,17 +438,9 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     if len(filtered) != before:
         print(f"[Hunter] Après dédup photo : {len(filtered)} annonces\n")
 
-    # Annotation bus (informatif, NON éliminatoire) — sur les survivants pour
-    # limiter les requêtes Overpass. Non-fatal : n'élimine ni ne plante rien.
-    if getattr(criteres, "bus_actif", True):
-        from scrapers.bus import annotate_biens as bus_annotate
-        filtered = await bus_annotate(filtered, criteres.bus_rayon_km)
-
-    # Pré-localisation cadastrale (liens satellite + parcelles candidates par surface
-    # terrain).
-    if getattr(criteres, "geoloc_actif", True):
-        from scrapers.geolocate import annotate_biens as geo_annotate
-        filtered = await geo_annotate(filtered, criteres)
+    # Pré-localisation (liens satellite + ortho/cadastre), toujours active.
+    from scrapers.geolocate import annotate_biens as geo_annotate
+    filtered = await geo_annotate(filtered)
 
     # Sauvegarde raw finale
     raw_path = RAW_DIR / f"biens_raw_{ts}.json"

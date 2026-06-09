@@ -8,8 +8,15 @@ l'architecture, les conventions, et comment intervenir efficacement.
 ## Vue d'ensemble
 
 **immo-agent** est un système multi-workers de recherche immobilière automatisée.
-Il scrape des sites d'annonces français, filtre visuellement les biens via CLIP,
-les score selon des critères pondérés, et produit un fichier Excel de suivi.
+Il scrape des sites d'annonces français, filtre les biens sur des critères
+structurés (prix, surface, terrain, pièces, DPE), les enrichit (DVF, géoloc, match
+qualitatif NLP) et produit un fichier Excel de suivi trié par pertinence qualitative.
+
+> **Filtre visuel CLIP retiré (2026-06-09)** — le worker `vision.py` et la
+> dépendance CLIP/torch ont été supprimés pour accélérer le batch. Le filtrage
+> se fait désormais sur les critères structurés et la correspondance texte. La
+> partie visuelle sera revue ultérieurement (l'historique git conserve
+> `workers/vision.py`, la logique d'éléments et l'ancien `config/elements.yaml`).
 
 Le pipeline peut tourner en continu via `scheduler.py`.
 **Aucun appel API Anthropic dans le code** — Claude Code (Pro) est le seul point d'intelligence.
@@ -27,17 +34,16 @@ models.py             Dataclasses : Bien, CriteresRecherche
 workers/
   discovery.py        Worker 1 — charge sources.yaml, filtre par département
   builder.py          Worker 2 — vérifie scrapers disponibles, liste les manquants
-  hunter.py           Worker 3 — scrape en parallèle, déduplique, filtre
-  vision.py           Worker 4 — scoring visuel CLIP local (pas d'API externe)
-  analyst.py          Worker 5 — scoring pondéré, DVF, résumé local, export Excel
+  hunter.py           Worker 3 — scrape en parallèle, déduplique, filtre (critères structurés)
+  analyst.py          Worker 4 — enrichit (DVF, alertes), résumé local, export Excel
+  qualitative.py      Util analyst — match NLP description_qualitative ↔ annonce (embeddings)
 
 scrapers/             25 scrapers actifs + 4 inactifs (voir liste ci-dessous)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
 
 config/
-  criteria.md         SEUL fichier édité par l'utilisateur (inclut les exclusions visuelles FR)
+  criteria.md         SEUL fichier édité par l'utilisateur
   sources.yaml        Éditable manuellement ou via Claude Code — contient aussi la blacklist
-  elements.yaml       Éléments visuels à écarter (prompts EN + seuil/mode), synchronisé depuis criteria.md
 
 data/
   raw/                JSON bruts par run (biens_raw_YYYYMMDD_HHMM.json)
@@ -106,24 +112,23 @@ data/
 `config_loader.py` le parse et utilise des valeurs par défaut intégrées (dictionnaire
 `DEFAULTS`) si une clé est absente — pas de fichier YAML externe.
 
-Organisé en deux familles de critères (le parser lit le 1ᵉʳ bloc comme
-départements, puis toute ligne `clé: valeur` de n'importe quel bloc) :
-- **Zone** — `## Départements` (codes dept, doit rester le 1ᵉʳ bloc)
+Organisé en familles de critères. Chaque bloc de code ``` est un **fragment YAML**
+(clé: valeur, listes et chaînes multi-lignes, commentaires `#`) ; les dictionnaires
+de tous les blocs sont fusionnés. Les départements sont la clé `departements: [..]`
+(repli sur les nombres nus du 1ᵉʳ bloc si absente).
 - **Phase 1 — Scraping** (champs structurés) : `## Critères du bien`
-  (types, surface, pièces, terrain, prix, dpe_exclus)
+  (departements, types, surface, pièces, terrain, prix, dpe_exclus, photos_min)
 - **Phase 2 — Analyse** (interprétation) :
-  - `## Analyse du TEXTE` (mots_cles_negatifs, equipements_requis)
-  - `## Analyse VISUELLE` (exclusions visuelles FR → `elements.yaml`)
-  - `## Analyse GÉO` (gare/bus, géolocalisation cadastre/ortho)
+  - `## Description qualitative` (texte libre matché à l'annonce via NLP — tri)
+  - `## Analyse GÉO` (automatique, non configurable : annotation gare + liens satellite/ortho)
   - `## Critères qualitatifs` (texte libre, non parsé)
-- **Scoring** — `## Pondérations du scoring` (poids_*, auto-normalisé à 100)
-- **Pipeline** — `## Scheduler` (intervalles et seuils)
+- **Pipeline** — `## Scheduler` (intervalles, max_biens_suivi)
 
 ---
 
 ## Rôle de Claude Code
 
-Claude Code intervient dans 4 situations :
+Claude Code intervient dans 3 situations :
 
 **1. Générer un scraper**
 ```
@@ -145,20 +150,6 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
 "Compare les prix/m² du dernier run avec les références DVF"
 ```
 
-**4. Synchroniser les exclusions visuelles**
-```
-"synchronise les exclusions visuelles"
-```
-L'utilisateur décrit en **français** les éléments à écarter dans
-`criteria.md` (section `## Analyse VISUELLE — Exclusions`).
-Claude Code traduit chaque ligne en prompts **anglais** (CLIP est entraîné en
-anglais ; le français inverse la détection — vérifié), choisit les prompts
-**négatifs** (confondants proches) et le **seuil**, puis met à jour
-`config/elements.yaml` (le fichier réellement lu au runtime). Un élément non
-calibré reste en `mode: alerte` (non destructif) jusqu'à validation via
-`python workers/vision.py --calibrer <nom>`. Voir aussi `### Détecteur d'éléments`
-ci-dessous.
-
 ---
 
 ## Conventions de code
@@ -176,27 +167,28 @@ ci-dessous.
 
 ## Points d'attention
 
-### CLIP / Vision
-- Modèle CLIP (ViT-B/32) téléchargé automatiquement au premier lancement (~340 MB)
-- Cache dans `~/.cache/clip/`
-- Embeddings texte (éléments, piscine) mis en cache global de session
-- Concurrence limitée à 8 pour les téléchargements de photos (httpx)
-- **Plus de scoring de style positif** ni de `style_references/` : le filtre visuel
-  est uniquement par exclusion d'éléments (voir ci-dessous)
+### Match qualitatif NLP (ajouté le 2026-06-09)
+- `workers/qualitative.py` compare la `description_qualitative` (criteria.md, texte
+  libre FR) au titre + description de chaque annonce par **embeddings de phrases**
+  (`sentence-transformers`, modèle `paraphrase-multilingual-MiniLM-L12-v2`, ~120 Mo
+  téléchargé au 1er run). **Réintroduit `torch`** (retiré pour CLIP) — assumé.
+- **NON éliminatoire** : annote `match_qualitatif` (0–100) et `match_extrait`
+  (phrase la plus proche) ; l'analyst **trie** les résultats par `match_qualitatif`
+  décroissant + colonnes Excel « Match qual. » / « Extrait qual. ». Désactivé si
+  `description_qualitative` est vide.
+- **Dégradation gracieuse** : si `sentence-transformers`/modèle indisponible, no-op
+  avec avertissement — le pipeline continue sans cette annotation (rien n'est éliminé).
+- Les similarités sémantiques se tassent vers 30–60 ; c'est l'**ordre relatif** qui
+  compte.
 
-### Détecteur d'éléments (`config/elements.yaml`)
-- Remplace l'ancien ban par image (`config/style_ban/`, supprimé). Filtre par
-  **présence d'un élément** dans les photos, pas par ressemblance globale.
-- Chaque élément = `positifs`/`negatifs` (prompts EN) + `seuil` + `mode`
-  (`exclusion` | `alerte`). CLIP zero-shot contrastif (présent vs absent), MAX sur
-  les photos du bien. `description` est en français, documentaire (ignorée du moteur).
-- **Prompts en anglais obligatoires** (CLIP est EN ; le FR inverse la détection).
-- Précision = qualité des `negatifs` (confondants) + seuil **calibré par élément** :
-  `python workers/vision.py --calibrer <nom>`. CLIP ne sépare pas finement des features
-  proches (ex. piscine hors-sol vs creusée+bois) → seuils prudents, démarrer en `alerte`.
-- `vision.rescore_elements` (appelé par `scheduler.update_suivi`) ré-évalue
-  rétroactivement les entrées legacy du suivi quand un élément est ajouté.
-- Colonne Excel « Éléments détectés » (suivi + resultats).
+### Filtre visuel (CLIP) — RETIRÉ le 2026-06-09
+- Le worker `workers/vision.py`, la dépendance CLIP/torch et la colonne Excel
+  « Éléments détectés » ont été supprimés pour accélérer le batch.
+- Le filtrage dur repose désormais uniquement sur les **critères structurés**
+  (prix, surface, terrain, pièces, DPE). L'analyse du texte se fait via le **match
+  qualitatif NLP** (tri, non éliminatoire — voir ci-dessus).
+- Pour réintroduire un filtre visuel plus tard : voir `workers/vision.py` et
+  l'ancien `config/elements.yaml` dans l'historique git (commit antérieur au 2026-06-09).
 
 ### Scrapers
 - Interface obligatoire : `async def search(criteres: dict) -> list[dict]`
@@ -237,15 +229,12 @@ ci-dessous.
     seulement ; nécessiteraient Playwright.
   - La **déduplication** (`hunter.py`) fusionne les coords d'un doublon Bien'ici écarté
     vers le bien conservé (Bien'ici aggrège IAD/SAFTI/ERA… → coords sinon perdues).
-  - croise avec le **cadastre IGN** (`apicarto.ign.fr`, gratuit) : ne garde que les
-    parcelles dont la `contenance` ≈ `surface_terrain` annoncée (±`geoloc_terrain_tol_pct`)
-- Ajoute dans l'Excel : `Parcelle probable`, liens `Satellite` (Google) et `Ortho+cadastre`
-  (Geoportail, idéal pour la vérification visuelle manuelle)
-- Lancé par `hunter.py` après le filtre gare, si `geoloc_actif` (criteria.md)
-- **Limites** :
-  - Parcelles candidates uniquement si coords précises (Bien'ici `blurInfo`) ; le repli
-    centre-commune ne donne qu'un lien satellite.
+- Ajoute dans l'Excel les liens `Satellite` (Google) et `Ortho+cadastre`
+  (Geoportail, idéal pour la vérification visuelle manuelle), et un flag `geo_precis`.
+- Lancé par `hunter.py` après l'annotation gare (toujours actif, plus de toggle)
 - **CGU** : on ne scrape pas les tuiles Google (liens pour le clic humain seulement).
+- > Le matching cadastral « parcelle probable » (apicarto IGN) a été **retiré le
+  > 2026-06-09** ; ne restent que les liens. Voir l'historique git pour le rétablir.
 
 ### Anti-bot & blacklist
 - **Cloudflare** (LeBonCoin, PAP, Logic-Immo, OuestFrance-Immo, MeilleursAgents) — infranchissable sans proxy rotatif ou cookie de session réel
@@ -262,7 +251,6 @@ ci-dessous.
 # Installation
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pip install git+https://github.com/openai/CLIP.git
 playwright install chromium
 
 # Pas de clé API requise
@@ -271,7 +259,7 @@ playwright install chromium
 python orchestrator.py                        # pipeline complet
 python orchestrator.py --skip-discovery       # sans Discovery
 python orchestrator.py --skip-build           # sans Builder
-python orchestrator.py --only-analyse         # re-scorer le dernier raw
+python orchestrator.py --only-analyse         # ré-enrichir le dernier raw
 
 # Pipeline continu
 python scheduler.py                           # boucle infinie
@@ -287,7 +275,6 @@ python scrapers/greenacres.py
 python workers/discovery.py
 python workers/builder.py
 python workers/hunter.py
-python workers/vision.py
 python workers/analyst.py
 ```
 

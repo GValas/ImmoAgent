@@ -35,8 +35,6 @@ class Bien:
     maps_satellite_url: Optional[str] = None
     geoportail_url: Optional[str] = None     # ortho IGN + parcellaire superposés
     cadastre_url: Optional[str] = None
-    parcelles_candidates: list = field(default_factory=list)
-    parcelle_match: Optional[str] = None     # "Section Numéro — N m²"
 
     # Gare SNCF voyageurs la plus proche (rempli par scrapers/gares.py)
     gare: Optional[bool] = None
@@ -67,16 +65,10 @@ class Bien:
     photos: list[str] = field(default_factory=list)
     agence: Optional[str] = None
 
-    # Analyse visuelle (remplie par Worker Vision dans Hunter)
-    resume_visuel: Optional[str] = None               # phrase de synthèse
-    elements_detectes: list = field(default_factory=list)  # éléments indésirables détectés
-    banni: bool = False                               # un élément en mode exclusion détecté
-    nb_photos_analysees: int = 0
-
-    # Scoring final (rempli par Worker Analyst)
-    score_total: Optional[float] = None
-    score_detail: dict = field(default_factory=dict)
-    alerte: list[str] = field(default_factory=list)   # anomalies détectées
+    # Enrichissement Worker Analyst
+    match_qualitatif: Optional[float] = None   # similarité NLP description ↔ annonce (0–100)
+    match_extrait: Optional[str] = None        # phrase de l'annonce la plus proche
+    alerte: list[str] = field(default_factory=list)   # anomalies détectées (prix, DPE…)
 
     def hash_dedup(self) -> str:
         """Clé de déduplication basée sur prix + surface + ville."""
@@ -108,13 +100,5 @@ class CriteresRecherche:
     pieces_max: int
     terrain_min: int
     dpe_exclus: list[str]
-    mots_cles_negatifs: list[str]
-    equipements_requis: list[str]
-    poids_scoring: dict
+    description_qualitative: str = ""   # texte libre matché à l'annonce (NLP)
     photos_min: int = 0          # nb minimal de photos (0 = pas de filtre)
-    gare_obligatoire: bool = False
-    gare_rayon_km: float = 10.0
-    bus_actif: bool = True
-    bus_rayon_km: float = 2.0
-    geoloc_actif: bool = True
-    geoloc_terrain_tol_pct: float = 25.0

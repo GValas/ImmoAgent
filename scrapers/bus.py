@@ -10,7 +10,7 @@ Choix de la source : OpenStreetMap Overpass API (Option B)
 ──────────────────────────────────────────────────────────────────────────────
 Les arrêts de bus sont TRÈS nombreux en France (>500k). Charger le jeu national
 en mémoire (option transport.data.gouv.fr) serait lourd et inutile : le pipeline
-annote le bus APRÈS le filtre gare et la vision, sur les seuls biens survivants
+annote le bus APRÈS le filtre gare, sur les seuls biens survivants
 (peu nombreux). On interroge donc Overpass PAR BIEN, sur un petit rayon, ce qui
 ne représente que quelques requêtes httpx légères.
 

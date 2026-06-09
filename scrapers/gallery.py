@@ -726,9 +726,9 @@ if __name__ == "__main__":
     PER_SOURCE = 6
 
     async def _test():
-        files = sorted(glob.glob(os.path.join(RAW, "biens_prevision_*.json")))
+        files = sorted(glob.glob(os.path.join(RAW, "biens_raw_*.json")))
         if not files:
-            print("Aucun fichier biens_prevision_*.json dans data/raw")
+            print("Aucun fichier biens_raw_*.json dans data/raw")
             return
         data = json.load(open(files[-1], encoding="utf-8"))
         print(f"Source de test : {os.path.basename(files[-1])} ({len(data)} biens)\n")

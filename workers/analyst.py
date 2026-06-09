@@ -1,6 +1,7 @@
 """
 workers/analyst.py — Worker 4 : Analyst
-Score chaque bien, enrichit avec données DVF réelles, agrège dans un Excel final.
+Enrichit chaque bien (DVF, match qualitatif NLP, alertes), agrège dans un Excel final.
+(Le scoring pondéré a été retiré — à revoir plus tard.)
 """
 import json
 import asyncio
@@ -15,21 +16,19 @@ from scrapers.dvf import get_prix_m2_reference as _dvf_get_prix_m2
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "output"
 
 # ──────────────────────────────────────────────
-# SCORING
+# ENRICHISSEMENT FACTUEL
+# (le scoring pondéré a été retiré — à revoir plus tard)
 # ──────────────────────────────────────────────
 
-DPE_SCORE = {"A": 100, "B": 85, "C": 70, "D": 55, "E": 30, "F": 10, "G": 0}
-
-def score_bien(bien: dict, criteres_dict: dict, prix_m2_marche: dict) -> dict:
+def enrich_bien(bien: dict, prix_m2_marche: dict) -> dict:
     """
-    Calcule un score pondéré sur 100 pour un bien.
-    Retourne le bien enrichi avec score_total et score_detail.
+    Enrichit un bien avec des données factuelles d'affichage : prix/m², prix/m²
+    marché (DVF) et alertes (bonne affaire, DPE passoire, travaux probables,
+    correspondance qualitative). Pas de score pondéré.
     """
-    poids = criteres_dict["poids_scoring"]
-    scores = {}
     alertes = []
 
-    # --- Prix vs marché ---
+    # --- Prix vs marché (DVF) ---
     dep = bien.get("departement", "")
     prix_m2_ref = prix_m2_marche.get(dep, 0)
     prix_m2_bien = bien.get("prix_m2") or (
@@ -37,64 +36,29 @@ def score_bien(bien: dict, criteres_dict: dict, prix_m2_marche: dict) -> dict:
     )
     if prix_m2_bien and prix_m2_ref:
         ratio = prix_m2_ref / prix_m2_bien  # >1 = bonne affaire
-        scores["prix"] = min(100, max(0, int(ratio * 50 + 50)))
         if ratio > 1.3:
             alertes.append("🟢 Prix très inférieur au marché")
         elif ratio < 0.8:
             alertes.append("🔴 Prix supérieur au marché")
-    else:
-        scores["prix"] = 50  # neutre si pas de données
-
-    # --- Surface ---
-    surface = bien.get("surface", 0) or 0
-    s_min = criteres_dict.get("surface_min", 80)
-    s_max = criteres_dict.get("surface_max", 300)
-    if surface >= s_max:
-        scores["surface"] = 100
-    elif surface >= s_min:
-        scores["surface"] = int((surface - s_min) / (s_max - s_min) * 100)
-    else:
-        scores["surface"] = 0
-
-    # --- Terrain ---
-    terrain = bien.get("surface_terrain", 0) or 0
-    t_min = criteres_dict.get("terrain_min", 200)
-    scores["terrain"] = min(100, int(terrain / max(t_min, 1) * 60)) if terrain else 20
 
     # --- DPE ---
     dpe = (bien.get("dpe") or "").upper()
-    scores["dpe"] = DPE_SCORE.get(dpe, 50)
     if dpe in ["F", "G"]:
         alertes.append(f"⚠️ DPE {dpe} — passoire thermique")
 
-    # --- Localisation (proxy : photos disponibles + adresse) ---
-    has_photos = len(bien.get("photos", [])) > 0
-    has_address = bool(bien.get("adresse") or bien.get("ville"))
-    scores["localisation"] = (50 if has_address else 20) + (30 if has_photos else 0)
-
     # --- État (proxy : mots-clés dans description) ---
     desc = ((bien.get("description") or "") + " " + (bien.get("titre") or "")).lower()
-    if any(w in desc for w in ["neuf", "rénov", "refait", "récent"]):
-        scores["etat"] = 90
-    elif any(w in desc for w in ["travaux", "rénover", "à rafraîchir"]):
-        scores["etat"] = 30
+    if any(w in desc for w in ["travaux", "rénover", "à rafraîchir"]):
         alertes.append("🔧 Travaux probables")
-    else:
-        scores["etat"] = 60
 
-    # --- Score total pondéré ---
-    # Les clés poids_scoring ont le préfixe "poids_"
-    total = sum(
-        scores.get(k, 50) * poids.get(f"poids_{k}", poids.get(k, 0)) / 100
-        for k in ["prix", "surface", "terrain", "localisation", "etat", "dpe"]
-    )
+    # --- Match qualitatif (NLP) — annoté en amont par workers.qualitative ---
+    mq = bien.get("match_qualitatif")
+    if mq is not None and mq >= 60:
+        alertes.append("✨ Colle à la description recherchée")
 
-    bien["score_total"] = round(total, 1)
-    bien["score_detail"] = scores
     bien["alerte"] = alertes
     bien["prix_m2_calcule"] = round(prix_m2_bien, 0) if prix_m2_bien else None
     bien["prix_m2_marche_dep"] = prix_m2_ref or None
-
     return bien
 
 
@@ -161,18 +125,17 @@ def llm_summary(top_biens: list[dict]) -> str:
     lignes = [f"Résumé généré le {ts} — {len(top_biens)} bien(s) analysé(s)\n"]
 
     for i, b in enumerate(top_biens[:5], 1):
-        score  = b.get("score_total", 0)
+        mq     = b.get("match_qualitatif")
+        mq_str = f"[match {mq:.0f}] " if mq is not None else ""
         prix   = f"{b.get('prix', '?'):,} €" if b.get("prix") else "prix ?"
         surf   = f"{b.get('surface', '?')} m²"
         ville  = b.get("ville", "?")
         dep    = b.get("departement", "")
         dpe    = b.get("dpe", "?")
-        els    = b.get("elements_detectes") or []
-        el_str = (" | ⚠️ " + ", ".join(e["nom"] for e in els)) if els else ""
         alertes = b.get("alerte", [])
         alert_str = f" ⚠ {alertes[0]}" if alertes else ""
         lignes.append(
-            f"#{i} [{score:.0f}/100{el_str}] {b.get('titre','')[:50]}\n"
+            f"#{i} {mq_str}{b.get('titre','')[:50]}\n"
             f"   {ville} ({dep}) — {surf} — {prix} — DPE {dpe}{alert_str}"
         )
 
@@ -242,12 +205,12 @@ def export_excel(biens: list[dict], resume: str) -> Path:
     ws.title = "Résultats"
 
     headers = [
-        "Score", "Source", "Titre", "Ville",
+        "Match qual.", "Source", "Titre", "Ville",
         "Dép", "Département", "Gare", "Bus",
         "Surface", "Terrain", "Pièces", "DPE",
         "Prix (€)", "Prix/m²", "Prix/m² marché",
-        "Résumé vision", "Alertes", "Piscine hors-sol", "Éléments détectés",
-        "Parcelle probable", "Satellite", "Ortho+cadastre", "URL"
+        "Alertes", "Extrait qual.",
+        "Satellite", "Ortho+cadastre", "URL"
     ]
     header_fill = PatternFill("solid", fgColor="2C3E50")
     header_font = Font(color="FFFFFF", bold=True)
@@ -258,12 +221,6 @@ def export_excel(biens: list[dict], resume: str) -> Path:
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
 
-    # Couleur du Score (qualité, sur la seule cellule Score) + zébrage des lignes.
-    score_fills = {
-        "high":   PatternFill("solid", fgColor="D5F5E3"),  # vert
-        "medium": PatternFill("solid", fgColor="FEF9E7"),  # jaune
-        "low":    PatternFill("solid", fgColor="FADBD8"),  # rouge
-    }
     zebra_fill = PatternFill("solid", fgColor="F2F4F4")    # 1 ligne sur 2
 
     # Colonnes affichées comme hyperliens : {index_1based: libellé du lien}
@@ -272,17 +229,13 @@ def export_excel(biens: list[dict], resume: str) -> Path:
         headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
         headers.index("URL") + 1: "Voir l'annonce",
     }
-    score_col = headers.index("Score") + 1
     price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché", "Terrain")}
 
     for row, b in enumerate(biens, 2):
-        score = b.get("score_total", 0)
-        score_fill = (score_fills["high"] if score >= 70
-                      else score_fills["medium"] if score >= 45 else score_fills["low"])
         zebra = zebra_fill if row % 2 == 0 else None   # 1 ligne sur 2
 
         values = [
-            score,
+            b.get("match_qualitatif"),
             b.get("source", ""),
             b.get("titre", ""),
             b.get("ville", ""),
@@ -299,16 +252,8 @@ def export_excel(biens: list[dict], resume: str) -> Path:
             b.get("prix"),
             b.get("prix_m2_calcule"),
             b.get("prix_m2_marche_dep"),
-            b.get("resume_visuel", ""),
-            " | ".join(a for a in b.get("alerte", []) if "piscine_hors_sol" not in a),
-            next((f"🛟 {e['score']}" for e in (b.get("elements_detectes") or [])
-                  if e["nom"] == "piscine_hors_sol"), ""),
-            " | ".join(
-                f"{'⛔' if e.get('mode') == 'exclusion' else '⚠️'} {e['nom']} ({e['score']})"
-                for e in (b.get("elements_detectes") or [])
-                if e["nom"] != "piscine_hors_sol"
-            ),
-            b.get("parcelle_match", ""),
+            " | ".join(b.get("alerte", [])),
+            b.get("match_extrait", ""),
             b.get("maps_satellite_url", ""),
             b.get("geoportail_url", ""),
             b.get("url", ""),
@@ -317,10 +262,8 @@ def export_excel(biens: list[dict], resume: str) -> Path:
             if isinstance(val, (list, dict)):
                 val = str(val) if val else ""
             cell = ws.cell(row=row, column=col, value=val)
-            # Fond : Score en couleur de qualité, le reste en zébrage 1 ligne/2
-            if col == score_col:
-                cell.fill = score_fill
-            elif zebra is not None:
+            # Fond : zébrage 1 ligne sur 2
+            if zebra is not None:
                 cell.fill = zebra
             # Séparateur de milliers sur les prix
             if col in price_cols and isinstance(val, (int, float)):
@@ -357,33 +300,36 @@ def export_excel(biens: list[dict], resume: str) -> Path:
 # ──────────────────────────────────────────────
 
 async def run(biens_bruts: list[dict], criteres) -> Path:
-    """Pipeline complet : enrichissement DVF → scoring → export Excel."""
-    print(f"[Analyst] Scoring de {len(biens_bruts)} biens...")
-
-    criteres_dict = {
-        "surface_min": criteres.surface_min,
-        "surface_max": criteres.surface_max,
-        "terrain_min": criteres.terrain_min,
-        "poids_scoring": criteres.poids_scoring,
-    }
+    """Pipeline : enrichissement DVF + match qualitatif NLP → export Excel.
+    (Le scoring pondéré a été retiré — à revoir plus tard.)"""
+    print(f"[Analyst] Enrichissement de {len(biens_bruts)} biens...")
 
     # Données marché DVF
     prix_marche = await fetch_prix_marche_dvf(criteres.departements)
 
-    # Scoring
-    scored = [score_bien(b, criteres_dict, prix_marche) for b in biens_bruts]
+    # Match qualitatif NLP (annote match_qualitatif/match_extrait) — si une
+    # description qualitative est définie (sinon no-op).
+    desc_qual = getattr(criteres, "description_qualitative", "") or ""
+    if desc_qual.strip():
+        from workers.qualitative import annotate_biens as qual_annotate
+        qual_annotate(biens_bruts, desc_qual)
 
-    # Tri par score décroissant
-    scored.sort(key=lambda b: b.get("score_total", 0), reverse=True)
+    # Enrichissement factuel (prix/m², DVF, alertes)
+    enriched = [enrich_bien(b, prix_marche) for b in biens_bruts]
 
-    print(f"[Analyst] Top 5 scores : {[b['score_total'] for b in scored[:5]]}")
+    # Tri par match qualitatif décroissant (seul signal de pertinence restant) ;
+    # ordre d'insertion si pas de description qualitative.
+    if desc_qual.strip():
+        enriched.sort(key=lambda b: b.get("match_qualitatif") or 0, reverse=True)
+        print(f"[Analyst] Top 5 match qualitatif : "
+              f"{[b.get('match_qualitatif') for b in enriched[:5]]}")
 
-    # Résumé LLM
-    resume = llm_summary(scored[:10])
+    # Résumé local
+    resume = llm_summary(enriched[:10])
     print(f"\n--- RÉSUMÉ EXÉCUTIF ---\n{resume}\n")
 
     # Export
-    path = export_excel(scored, resume)
+    path = export_excel(enriched, resume)
     return path
 
 

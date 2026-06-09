@@ -1,18 +1,15 @@
 """
-scrapers/geolocate.py — Pré-localisation cadastrale (open data IGN, sans clé API)
+scrapers/geolocate.py — Pré-localisation (open data IGN, sans clé API)
 
-Aide à retrouver l'emplacement précis d'un bien à partir de :
-  1. coordonnées approximatives fournies par l'annonce (Bien'ici expose blurInfo :
-     un centre + un rayon de floutage ~125 m) ;
-  2. la surface du terrain annoncée, croisée avec le cadastre (parcelles + contenance).
+Aide à retrouver l'emplacement précis d'un bien à partir des coordonnées
+approximatives fournies par l'annonce (Bien'ici expose blurInfo : un centre + un
+rayon de floutage ~125 m), avec repli sur le géocodage de la commune.
 
-Sources, toutes gratuites et sans authentification :
-  - apicarto cadastre IGN : https://apicarto.ign.fr/api/cadastre/parcelle
-        → parcelles intersectant une géométrie, avec `contenance` (m²)
-  - géocodage commune     : geo.api.gouv.fr (repli si le bien n'a pas de coordonnées)
+Source, gratuite et sans authentification :
+  - géocodage commune : geo.api.gouv.fr (repli si le bien n'a pas de coordonnées)
 
 Important : on n'automatise PAS le scraping des tuiles Google Maps (hors-CGU pour de
-la vision auto). Les liens Google/Geoportail produits sont destinés au clic humain.
+l'analyse auto). Les liens Google/Geoportail produits sont destinés au clic humain.
 
 Interface standard : async def search(criteres: dict) -> list[dict]
   → Retourne toujours [] (ce n'est pas une source d'annonces actives)
@@ -21,11 +18,9 @@ Interface utilitaire :
   maps_links(lat, lon) -> dict
       → liens cliquables (Google satellite, Geoportail ortho+cadastre, cadastre.gouv)
   async annotate_biens(biens, criteres) -> list[dict]
-      → enrichit chaque bien (in place) avec liens + parcelles candidates
+      → enrichit chaque bien (in place) avec ces liens + un flag geo_precis
 """
 import asyncio
-import json
-import math
 import re
 import sys
 from pathlib import Path
@@ -35,8 +30,6 @@ import httpx
 # Racine du projet sur le path (permet `python scrapers/geolocate.py` en direct)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-APICARTO_PARCELLE = "https://apicarto.ign.fr/api/cadastre/parcelle"
-
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 # Repli sur le géocodage commune du module gares (mêmes caches de session)
@@ -44,72 +37,6 @@ from scrapers.gares import _geocode_commune, _haversine_km  # noqa: E402
 
 # Rayon de recherche par défaut si l'annonce ne fournit pas de rayon de floutage (m)
 DEFAULT_RADIUS_M = 150.0
-# Tolérance par défaut sur l'écart de contenance vs surface terrain annoncée (%)
-DEFAULT_TERRAIN_TOL_PCT = 25.0
-# Nombre max de parcelles candidates conservées par bien
-MAX_CANDIDATES = 5
-# Plafond apicarto (la couche cadastre renvoie au plus ~200 features par requête)
-APICARTO_LIMIT = 200
-
-
-# ──────────────────────────────────────────────
-# Géométrie
-# ──────────────────────────────────────────────
-
-def _circle_polygon(lat: float, lon: float, r_m: float, n: int = 24) -> dict:
-    """Polygone GeoJSON (EPSG:4326) approximant un disque de rayon r_m autour du point."""
-    pts = []
-    for i in range(n + 1):
-        a = 2 * math.pi * i / n
-        dlat = (r_m * math.cos(a)) / 111320.0
-        dlon = (r_m * math.sin(a)) / (111320.0 * math.cos(math.radians(lat)))
-        pts.append([lon + dlon, lat + dlat])
-    return {"type": "Polygon", "coordinates": [pts]}
-
-
-def _ring_centroid(coords) -> tuple[float, float]:
-    """
-    Centroïde (lat, lon) approché d'une géométrie GeoJSON (Point/Polygon/MultiPolygon)
-    par moyenne de tous ses sommets [lon, lat], quelle que soit la profondeur.
-    """
-    pts: list[tuple[float, float]] = []
-
-    def walk(node):
-        if (isinstance(node, (list, tuple)) and len(node) == 2
-                and all(isinstance(v, (int, float)) for v in node)):
-            pts.append((node[0], node[1]))  # [lon, lat]
-        elif isinstance(node, (list, tuple)):
-            for child in node:
-                walk(child)
-
-    walk(coords)
-    if not pts:
-        return 0.0, 0.0
-    sx = sum(p[0] for p in pts)
-    sy = sum(p[1] for p in pts)
-    return sy / len(pts), sx / len(pts)  # (lat, lon)
-
-
-def _geom_span_m(coords, lat: float) -> float:
-    """Plus grande dimension (m) de la boîte englobante d'une géométrie GeoJSON."""
-    pts: list[tuple[float, float]] = []
-
-    def walk(node):
-        if (isinstance(node, (list, tuple)) and len(node) == 2
-                and all(isinstance(v, (int, float)) for v in node)):
-            pts.append((node[0], node[1]))
-        elif isinstance(node, (list, tuple)):
-            for child in node:
-                walk(child)
-
-    walk(coords)
-    if not pts:
-        return 0.0
-    lons = [p[0] for p in pts]
-    lats = [p[1] for p in pts]
-    h = (max(lats) - min(lats)) * 111320.0
-    w = (max(lons) - min(lons)) * 111320.0 * max(math.cos(math.radians(lat)), 1e-6)
-    return max(h, w)
 
 
 # ──────────────────────────────────────────────
@@ -133,66 +60,6 @@ def maps_links(lat: float, lon: float) -> dict:
         ),
         "cadastre": f"https://cadastre.data.gouv.fr/map?style=ortho#19/{lat:.6f}/{lon:.6f}",
     }
-
-
-# ──────────────────────────────────────────────
-# Cadastre — parcelles candidates par surface terrain
-# ──────────────────────────────────────────────
-
-async def candidate_parcels(
-    client: httpx.AsyncClient,
-    lat: float,
-    lon: float,
-    radius_m: float,
-    terrain_m2: float | None,
-    tol_pct: float = DEFAULT_TERRAIN_TOL_PCT,
-) -> list[dict]:
-    """
-    Renvoie les parcelles du disque (lat, lon, radius_m) classées par pertinence.
-    Si terrain_m2 est connu, ne conserve que celles dont la contenance est dans
-    ±tol_pct, classées par écart croissant. Sinon classe par contenance décroissante.
-
-    Chaque parcelle : {section, numero, contenance, lat, lon, ecart_pct, dist_m}.
-    """
-    geom = json.dumps(_circle_polygon(lat, lon, radius_m))
-    try:
-        r = await client.get(APICARTO_PARCELLE, params={"geom": geom, "_limit": str(APICARTO_LIMIT)})
-        if r.status_code != 200:
-            return []
-        feats = r.json().get("features", [])
-    except Exception as e:
-        print(f"[Geoloc] apicarto échec ({lat:.4f},{lon:.4f}): {e}")
-        return []
-
-    parcels = []
-    for f in feats:
-        p = f.get("properties", {}) or {}
-        cont = p.get("contenance")
-        if not cont:
-            continue
-        geom = f.get("geometry", {}).get("coordinates", [])
-        c_lat, c_lon = _ring_centroid(geom)
-        ecart = abs(cont - terrain_m2) / terrain_m2 * 100 if terrain_m2 else None
-        parcels.append({
-            "section": p.get("section", ""),
-            "numero": p.get("numero", ""),
-            "contenance": int(cont),
-            "lat": round(c_lat, 6),
-            "lon": round(c_lon, 6),
-            "span_m": round(_geom_span_m(geom, c_lat)),
-            "ecart_pct": round(ecart, 1) if ecart is not None else None,
-            "dist_m": round(_haversine_km(lat, lon, c_lat, c_lon) * 1000),
-        })
-
-    if terrain_m2:
-        parcels = [p for p in parcels if p["ecart_pct"] is not None and p["ecart_pct"] <= tol_pct]
-        parcels.sort(key=lambda p: (p["ecart_pct"], p["dist_m"]))
-    else:
-        # Surface terrain inconnue : la meilleure estimation est la parcelle SOUS le
-        # point (coords précises), pas la plus grande du voisinage.
-        parcels.sort(key=lambda p: p["dist_m"])
-
-    return parcels[:MAX_CANDIDATES]
 
 
 # ──────────────────────────────────────────────
@@ -375,17 +242,12 @@ async def _coords_for(client: httpx.AsyncClient, b: dict) -> tuple[tuple[float, 
 async def annotate_biens(biens: list[dict], criteres=None) -> list[dict]:
     """
     Enrichit chaque bien (in place) :
-      - maps_satellite_url / geoportail_url / cadastre_url
-      - geo_precis (bool)            : coords issues de l'annonce (vs centre commune)
-      - parcelles_candidates (list)  : parcelles compatibles avec surface_terrain
-      - parcelle_match (str)         : meilleure parcelle "Section Numéro — N m²"
+      - maps_satellite_url / geoportail_url / cadastre_url : liens de vérification
+      - geo_precis (bool) : coords issues de l'annonce (vs centre commune)
     """
-    tol = float(getattr(criteres, "geoloc_terrain_tol_pct", DEFAULT_TERRAIN_TOL_PCT)) if criteres else DEFAULT_TERRAIN_TOL_PCT
-    sem = asyncio.Semaphore(6)
-
     async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=40) as client:
         async def enrich(b: dict):
-            coords, radius, precis = await _coords_for(client, b)
+            coords, _radius, precis = await _coords_for(client, b)
             if not coords:
                 b["geo_precis"] = False
                 return
@@ -396,22 +258,10 @@ async def annotate_biens(biens: list[dict], criteres=None) -> list[dict]:
             b["cadastre_url"] = links["cadastre"]
             b["geo_precis"] = precis
 
-            # Parcelles candidates : seulement si la position est précise (sinon le
-            # disque couvrirait toute la commune → bruit).
-            if not precis:
-                return
-            terrain = b.get("surface_terrain")
-            async with sem:
-                parcels = await candidate_parcels(client, lat, lon, radius, terrain, tol)
-            b["parcelles_candidates"] = parcels
-            if parcels:
-                top = parcels[0]
-                b["parcelle_match"] = f"{top['section']} {top['numero']} — {top['contenance']} m²"
-
         await asyncio.gather(*(enrich(b) for b in biens))
 
-    n_loc = sum(1 for b in biens if b.get("parcelle_match"))
-    print(f"[Geoloc] {n_loc}/{len(biens)} biens avec parcelle probable")
+    n_loc = sum(1 for b in biens if b.get("geo_precis"))
+    print(f"[Geoloc] {n_loc}/{len(biens)} biens géolocalisés précisément")
     return biens
 
 
@@ -432,15 +282,9 @@ if __name__ == "__main__":
         "blur_radius_m": 125, "surface_terrain": 6000,
     }]
 
-    class _C:
-        geoloc_terrain_tol_pct = 30.0
-
-    out = asyncio.run(annotate_biens(demo, _C()))
+    out = asyncio.run(annotate_biens(demo, None))
     for b in out:
         print("\n=== ", b["titre"], "===")
         print("  satellite :", b.get("maps_satellite_url"))
         print("  geoportail:", b.get("geoportail_url"))
-        print("  parcelle  :", b.get("parcelle_match"))
-        for p in b.get("parcelles_candidates", []):
-            print(f"    - {p['section']} {p['numero']}  {p['contenance']} m²  "
-                  f"écart={p['ecart_pct']}%  dist={p['dist_m']}m")
+        print("  geo_precis:", b.get("geo_precis"))
