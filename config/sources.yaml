@@ -1011,6 +1011,86 @@ sources:
       Après critères (prix 300-600k, surface≥150) : 54 maisons (45:18, 72:9, 49:7, 89:5,
       36:3, 58:3, 41:4, 18:2, 28:1, 37:1, 53:1). dernier_test 2026-06-08.
 
+  # ── Nouveau scraper 2026-06-09 (scraper-scout — niche prestige/patrimoine, 0 fuite) ──
+  - id: chateauxetpatrimoine
+    nom: Châteaux et Patrimoine (agence FNAIM, demeures de caractère)
+    url_base: https://www.chateauxetpatrimoine.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Agence FNAIM spécialisée châteaux/manoirs/demeures de caractère/domaines,
+      couverture nationale (forte au Sud-Ouest). SSR WordPress (thème Suki), httpx
+      pur, pas de JS ni Cloudflare. Listing UNIQUE toutes-régions /proprietes/
+      (~54 biens sur une page, pas de pagination). Filtre dept FIABLE par CLASSE
+      CSS de l'article : <article class="... localisation-{region} localisation-
+      {dept}-{NN}"> -> on lit le code dept à 2 chiffres (ex. localisation-indre-36,
+      localisation-nievre-58) => 0 fuite par construction, indépendant du CP
+      (souvent absent : ville devinée depuis titre/description, province type
+      "Berry"/"Nivernais"). Cartes : article.entry, h2.entry-title a (titre+url),
+      .entry-content (desc courte). Prix/surface/DPE/photos absents de la carte ->
+      fetch détail /proprietes/{slug}/ sur les SEULS biens in-zone (qq requêtes/run) :
+      "Prix : N €", "Surface : N m²", "DPE : NNN F" (lettre conso), terrain en ha/
+      m² + pièces/chambres parsés dans le texte libre, photos wp-content/uploads
+      (hors logos FNAIM). Site de PRESTIGE : prix souvent > prix_max -> filtre prix
+      écarte la majorité (attendu). Stock zone observé : 9 annonces in-zone (36×5,
+      58×4) ; après critères 300-600k & surface>=150 -> 3 biens retenus (36×1 demeure
+      397k, 58×2 maison 430k / propriété 486k). Départements vus = {36,58} inclus
+      dans la cible, 0 fuite vérifiée. dernier_test 2026-06-09.
+
+  # ── Sites prestige/patrimoine écartés ou non exploitables 2026-06-09 (scraper-scout) ──
+  - id: immobilier_et_maisons
+    nom: Immobilier et Maisons (front french-property)
+    url_base: https://www.immobilier-et-maisons.com
+    methode: scrape_simple
+    actif: false
+    note: >-
+      SSR httpx propre (li.property_listing, h4 prix, schema.org ItemList) MAIS
+      doublon de feed : les images sortent de cdn3.french-property.com et le stock
+      est servi par le backend french-property.com (déjà couvert par french_property).
+      Les params dept (?counties_any/?departments_any) ne changent pas le résultat.
+      Écarté pour éviter le doublon de source. dernier_test 2026-06-09.
+
+  - id: realportico
+    nom: RealPortico (propriétés historiques)
+    url_base: https://www.realportico.fr
+    methode: scrape_js
+    actif: false
+    note: >-
+      Portail prestige/historique. /proprietes-historiques/vente/france/{region}[/{dept}]
+      renvoie 200 mais le HTML brut httpx ne contient AUCUNE carte d'annonce ni prix
+      (1 seul € sur 180 ko, que des liens de navigation) -> contenu rendu côté client
+      (CSR). Pas de __NEXT__/__NUXT__ ni JSON-LD exploitable dans le SSR. Nécessiterait
+      Playwright ou la découverte d'une API JSON interne. Non retenu (CSR). dernier_test 2026-06-09.
+
+  - id: heritageetpatrimoinedefrance
+    nom: Héritage & Patrimoine de France
+    url_base: https://heritageetpatrimoinedefrance.com
+    methode: scrape_simple
+    actif: false
+    note: >-
+      WordPress SSR (plugin listing, détail /property/{slug}/ avec JSON-LD
+      RealEstateListing + champ "Prix : N €"). Buildable en httpx, MAIS filtre dept
+      NON fiable : les pages région (/centre-val-de-loire/) fuient massivement
+      (Uzès, Provence, Champagne dans la liste "Centre"), et aucun code dept/CP
+      structuré -> il faudrait deviner le département par le texte de la description,
+      au cas par cas. Prix très élevés (2 M€+), stock in-zone marginal. Conservé en
+      réserve : réactivable si on accepte un post-filtre dept par nom dans le texte.
+      dernier_test 2026-06-09.
+
+  - id: vvgroupe_patrimoine
+    nom: VVGroupe (châteaux & monuments historiques)
+    url_base: https://www.vvgroupe-patrimoine.com
+    methode: scrape_simple
+    actif: false
+    note: >-
+      Petite agence patrimoine SSR httpx (détails organisés par siècle :
+      /chateaux-monuments-historiques/{categorie}/{slug-avec-dept}, pagination ?page=N).
+      Le dept apparaît dans le slug détail (lot/bearn/orne/correze/charentes…), pas de
+      prix sur le listing (fetch détail requis). Inventaire essentiellement SO/Sud,
+      stock in-zone quasi nul, structure dept peu fiable (slugs textuels hétérogènes).
+      Non retenu (faible stock zone + filtre dept fragile). dernier_test 2026-06-09.
+
   # ── Scrapers écrits mais inexploitables — viticoles hors-périmètre (actif:false) ──
   - id: ampelio
     nom: Ampelio
@@ -1435,6 +1515,322 @@ sources:
     priorite: 3
     note: "Site SSR httpx pur, accessible (200, pas de Cloudflare/JS). Pages organisees par region avec 4 categories thematiques ; aucun filtre departement cote serveur (la region melange tous ses depts) -> post-filtre strict code_postal[:2], CP extrait de fin de slug detail. Categories 2/3/4 decouvertes dynamiquement depuis la page cat-1 de chaque region pour ne pas figer les longs slugs. Test standalone avec les 4 depts demandes (72,28,45,89) : 2 biens (72150 prieure, 28200 maison de"
 
+  # ── Nouveau scraper 2026-06-09 (scraper-scout, niche néo-agences/proptech — filtre dept vérifié, 0 fuite) ──
+  - id: globalimmobilier
+    nom: "Global Immobilier"
+    url_base: "https://www.globalimmobilier.immo"
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: >-
+      Réseau de mandataires, SSR httpx pur (pas de Cloudflare/JS), même pattern
+      que le_tuc : /vente/{NN-dept-slug}/{page} → filtre département CÔTÉ SERVEUR
+      via le slug (DEPT_SLUGS). Une page de dept sans stock renvoie un gabarit
+      court ~121 ko sans <article> ; une page avec stock contient les cartes
+      article.property-listing-v2__container.item. Sélecteurs : a.item__title
+      (URL+titre, .title__content-1='Ville (CP)', .title__content-2=accroche),
+      .item__price, .item__reference. type_bien & nb pièces déduits du slug
+      (/1-maison/t7/) ; surface/terrain/chambres absents de la carte (page
+      détail seulement) → None. Post-filtre strict CP[:2]==dept : 0 fuite
+      vérifié (contrôle dept 85-vendee = 7 biens tous 85). Stock zone marginal :
+      89=1 (château), 53=1 ; autres depts cibles 0. Scraper conservé actif,
+      réévaluer si l'implantation s'étend. dernier_test 2026-06-09.
+
+  # ── Nouveau scraper 2026-06-09 (scraper-scout, niche agrégateurs/portails — filtre dept vérifié, 0 fuite) ──
+  - id: portail_immo
+    nom: "Portail Immo"
+    url_base: "https://www.portail-immo.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: >-
+      Portail/agrégateur d'agences sur plateforme Adaptimmo, SSR httpx pur (pas
+      de Cloudflare/JS ; page encodée en windows-1252 → r.encoding forcé). Filtre
+      département + transaction + type CÔTÉ SERVEUR via le slug d'URL :
+      /fr/annonces/vente/maison/{slug}-p-r300-1-1-{NN}-0-{page}.html
+      (ex sarthe-...-72-...) → la liste ne renvoie QUE des maisons à vendre du
+      département demandé. 12 cartes/page (div.liste-bien-container[data-show-on-map]).
+      La liste porte id, URL détail (a#lienphoto), type (h2.liste-bien-type),
+      ville (h3.liste-bien-ville), prix (costpermonth[data-price] / div.liste-bien-price)
+      et photos (img.liste-bien-photo-slideshow[data-src], assets.adaptimmo.com),
+      mais PAS le CP ni la surface → enrichissement par page détail (titre
+      "…160m² 10 pièces…", meta keywords "(72320)", bloc bien-specs, DPE/terrain
+      dans le texte). Post-filtre STRICT code_postal[:2]==dept. Test standalone
+      11 depts (300–600k, surface_min 150) : 61 biens, Départements vus
+      {36,37,41,45,49,53,72,89} tous cibles, 0 fuite. Stock observé : 49=28,
+      37=15, 45=7, 72=5, 41=3, 36/53/89=1, 28/18/58=0 (catalogue épars sur ces
+      depts). priorite 2 (volume zone correct, biens de caractère présents :
+      moulins, maisons de caractère, villas d'architecte). dernier_test 2026-06-09.
+
+  # ── Nouveaux scrapers 2026-06-09 (réseaux de mandataires) ────────────────
+  - id: bsk_immobilier
+    nom: "BSK Immobilier (réseau mandataires ~4400)"
+    url_base: "https://bskimmobilier.com"
+    methode: api_inoff
+    actif: true
+    priorite: 1
+    note: >-
+      DÉBLOCAGE de l'ancien blacklist bskimmobilier (2026-06-09) : l'API interne
+      GET /api/property/search est exploitable. Les paramètres NE sont PAS dans
+      app.js mais dans le FORM HTML de /acheter (#complete-search) : page[size],
+      page[number], search[transaction_type][]=SALE, search[property_type][]=
+      HOUSE|CASTLE|APARTMENT|TERRAIN…, search[min_price]/[max_price]/[min_surface].
+      Réponse JSON {data[], meta.last_page}. Le FILTRE DÉPARTEMENT serveur
+      (location[type]=department) renvoie 500 (confirme la note blacklist) → on
+      interroge le flux NATIONAL pré-filtré (maison/château + bornes prix/surface,
+      ~63 pages de 50) et on POST-FILTRE STRICT sur city.zipCode[:2] ∈ depts
+      cibles → 0 fuite. Champs riches par item : title, description, propertyType,
+      url, city.{name,zipCode}, priceInclFees, surface, surfaceTerrain, roomsCount,
+      bedroomsCount, energyConsumptionClass (DPE), photos[].url, agent.html (nom
+      mandataire). Test standalone 11 depts (300–600k, surface_min 150) : 160
+      annonces, Départements vus {18,28,36,37,41,45,49,53,58,72,89} TOUS cibles,
+      0 fuite. Stock par dept : 45=33, 37=31, 89=30, 53=14, 28=12, 49=11, 72=10,
+      58=7, 18/36/41=4. Couverture zone complète + biens de caractère (demeures,
+      propriétés, châteaux). Limite : l'API renvoie 429 si paginée trop vite
+      (sleep 0.7s entre pages ; au pire 1-2 dernières pages manquées). priorite 1
+      (riche, stock fort sur tous les depts cibles). dernier_test 2026-06-09.
+  - id: winkey
+    nom: "Winkey Immobilier (réseau mandataires, créé 2018)"
+    url_base: "https://www.winkey.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Réseau de mandataires national, SSR httpx pur (pas de Cloudflare/JS, ld+json
+      présent). Filtre département CÔTÉ SERVEUR via slug d'URL :
+      /vente/{NN-dept-slug}/{page} (ex /vente/72-sarthe/1) → la page ne renvoie
+      QUE des biens du département (vérifié : tous les data-url de la page portent
+      le préfixe attendu, 0 fuite). Cartes : article.property-listing-v1__item.
+      URL détail dans .js-obfuscation[data-url] (/vente/{NN-dept}/{ville}/{type}/
+      {tN}/{id}/). Titre/loc dans .item__title = "Ville (CP) reste du titre" ;
+      prix .item__price ; pièces/chambres .item__options ; réf .item__reference ;
+      photos img.item__img[src] (winkeys.staticlbi.com). Surface habitable extraite
+      du titre quand présente ; terrain/DPE absents de la carte → None. Type déduit
+      du segment d'URL (maisons/propriétés conservées). Pagination : page vide =
+      stop. Test standalone 11 depts (300–600k, surface_min 150) : 2 biens
+      retenus (72, 37) ; sans bornes : 9 biens in-zone {72=4, 37=2, 28/49/53=1},
+      0 fuite. Implantation inégale (45/89/36/18/58/41 = 0 au dernier test).
+      priorite 3 (scraper fiable mais faible volume zone). dernier_test 2026-06-09.
+
+
+# ── Sources ajoutées 2026-06-09 (scraper-scout, lot 2) ───────────────────
+  - id: immobiliere_remangeon
+    nom: "Immobilière Remangeon"
+    url_base: "https://www.immobiliere-remangeon.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper SSR httpx créé et testé en standalone. Site accessible (200), contenu intégralement dans le HTML brut. 78 annonces sur 7 pages (/fr/ventes/{N}, 12 cartes/page). Pas de filtre département serveur → post-filtre STRICT sur code_postal[:2] (span.cp, secours suffixe -NNNNN/ du slug). Biens vendus (/fr/bien-vendu/) exclus. Test sur les 4 départements demandés {72,28,45,89} : 3 biens, tous CP 45, 0 fuite. Test sur la zone projet complète (criteria.md, avec bornes prix 300-60"
+
+  - id: laflecheimmo
+    nom: "La Flèche Immobilier"
+    url_base: "https://www.laflecheimmo.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper SSR httpx fonctionnel. Sondage : status 200, microdata schema.org/Product dans le HTML brut, pas de Cloudflare/CSR. Filtre dept = post-filtre code_postal[:2] (CP dans img alt), aucune URL par dept. Stock total ~30 biens (26 maisons), depts 72 (22) + 49 (4), 0 fuite. Test depts 72/28/45/89 avec surface_min=150 → 4 biens, tous en 72 (seul test-dept couvert ; agence mono-implantation, 28/45/89 sans stock). Enrichissement détail OK (surface, terrain avec conversion hectar"
+
+  - id: conceptimmo
+    nom: "Concept Immo (Cosne-Cours-sur-Loire)"
+    url_base: "https://www.conceptimmo.net"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper SSR httpx créé et testé OK. Sondage réel : tous les slugs /vente/{NN-nom}/{page} renvoient 200 sans redirection ni Cloudflare. Filtre département serveur + post-filtre code_postal[:2] strict → 0 fuite confirmée (run non filtré sur les 11 depts connus = 66 biens, tous CP 58/18/45, aucun CP manquant). Sur les 4 depts de test (72/28/45/89), seul 45 a du stock (3 biens) ; 72/28/89 renvoient des pages valides à 0 annonce (normal, hors zone d'implantation). Avec les critère"
+
+  - id: bourjois_immobilier
+    nom: "Bourjois Immobilier"
+    url_base: "https://www.bourjois-immobilier.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Site SSR pur (httpx), 200 OK avec UA Chrome, contenu dans le HTML brut, pas de JS ni Cloudflare. Cartes div.property-listing-v1__item.item, ~10/page, pagination s'arrête proprement (page vide à la fin). Filtre département fiable par slug d'URL /vente/{NN-nom}/{page} : un dept non couvert renvoie une page 200 sans carte (testé 72/28/45 = 0). Post-filtre strict code_postal[:2]==dept appliqué en plus. Test standalone : 11 maisons/propriétés en 89 après application prix_max/surfa"
+
+  - id: fnaim_beugnot
+    nom: "Cabinet Beugnot (Nevers)"
+    url_base: "https://www.fnaim-beugnot.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Cabinet Beugnot = agence indépendante FNAIM à Nevers (Nièvre 58). Domaine fnaim-beugnot.com NON présent dans sources.yaml (distinct de scrapers/fnaim.py qui cible le portail national fnaim.fr). slug fnaim_beugnot unique. Sondage réel : /vente/58-nievre/1 -> 200, 10 cartes article.property-listing-v2__item, SSR complet (titres/prix/villes/CP dans le HTML brut, aucun JS requis). Pattern d'URL identique à le_tuc.py. Pagination /vente/58-nievre/{N} fonctionne UNIQUEMENT avec sess"
+
+  - id: sancerre_immo
+    nom: "Sancerre Immobilier"
+    url_base: "https://www.sancerre-immo.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Site sondé en réel : SSR pur httpx (200, Apache/CMS Modelo), aucune protection anti-bot, pas de JS requis. Point clé découvert : le slug /vente/{N-commune} N'EST PAS un code département mais un id interne de commune (ex 68=crezancy, 32=gardefort) — donc pas de filtrage serveur par dept possible ; le scraper scrape tout l'inventaire (~37 biens, 4 pages) et applique un post-filtre STRICT code_postal[:2] in departements. Tous les champs (type, pièces, chambres, surface, ville, C"
+
+  - id: maisons_de_bretagne
+    nom: "Maisons de Bretagne"
+    url_base: "https://www.maisons-de-bretagne.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper fonctionnel et teste (httpx SSR pur, aucun anti-bot). Zone reelle = Finistere 29 + Morbihan 56 (Bretagne Sud), hors des departements cibles actuels (72/28/45/89, Val-de-Loire) -> 0 stock en zone donc actif:false. Preuve de fonctionnement sur 29/56 : 80 biens bruts, 43 apres filtres prix<=400k/surface>=80, tous champs renseignes, 0 fuite hors-departement. Deux bugs corriges pendant le dev : (1) labels detail reels = 'Surface'/'Surface terrain'/'Nombre pieces' (pas 'Sur"
+
+  - id: remiserais_immobilier
+    nom: "L'Immobilier par Rémi Serais"
+    url_base: "https://www.remiserais-immobilier.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper cree et teste : /workspaces/ImmoAgent/scrapers/remiserais_immobilier.py (slug unique, absent de scrapers/). Site : L'Immobilier par Rémi Serais, acteur historique Normandie (Orne 61 + Calvados 14), CMS Polaris/osCommerce SSR, Apache status 200, pas de Cloudflare/anti-bot. Architecture retenue : - Listing national SSR /annonces/transaction/Vente.html?page={N} (pagination ?page=, 25 cartes/page, ~300 biens sur 12 pages). Cartes div.product--transaction-vente. - Les cart"
+
+  - id: immobilier_finistere
+    nom: "Portail Immobilier Finistère"
+    url_base: "https://www.immobilier-finistere.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper fonctionnel et validé. Stratégie : scrape des cartes de liste (vente maisons + immeubles) -> pré-filtre prix/surface depuis la carte -> ouverture de la fiche détail des seuls survivants pour récupérer le code postal autoritaire (absent de la liste) -> post-filtre département STRICT code_postal[:2]. Test criteria.md (72/28/45/89) : 0 bien, 0 fuite (site Finistère-29 only, pas de stock dans la zone). Test de validation dept 29 forcé : 82 biens retenus sur 86 candidats,"
+
+  - id: inova_immo
+    nom: "Inova Immobilier"
+    url_base: "https://www.inova-immo.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper SSR httpx fonctionnel et testé. Sur les départements de test (72/28/45/89) il retourne 0 bien car Inova ne couvre que la Bretagne (35, 29, 22, 56) — ce n'est pas un bug mais une absence de stock en zone. Validation parsing forcée sur 35/56 : 3 maisons correctement extraites (prix, surface, chambres, ville, photos), appartements (T2/T3) et terrain correctement exclus, 'Départements vus' = {35, 56} strictement => 0 fuite. CP fiable (présent dans l'URL et l'adresse). Pas"
+
+  - id: demeuresdugrandsud
+    nom: "Demeures du Grand Sud"
+    url_base: "https://www.demeuresdugrandsud.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper créé et fonctionnel (httpx SSR pur, 200, HTML très propre). URL pattern confirmé : listing global paginé /vente/{page} (pas de filtre dept serveur — l'URL détail /vente/{commune-slug}/{type}/{tN}/{id-slug}/ filtre par commune uniquement), d'où post-filtre strict code_postal[:2]. Test sur les départements cibles (72/28/45/89) → 0 bien, 0 fuite, 0 exception. Test de contrôle sur la zone réelle du site (84/30/26/04) → 41 biens parsés correctement (prix, surface, pièces,"
+
+  - id: domaines_forets
+    nom: "Domaines & Forêts"
+    url_base: "https://www.domaines-forets.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Candidat domaines-forets.fr exploré et INTÉGRÉ (actif). Scraper créé : /workspaces/ImmoAgent/scrapers/domaines_forets.py — méthode scrape_simple (httpx SSR, WordPress/WooCommerce). Sondage : status 200 UA Chrome, pas de Cloudflare. Store API /wp-json/wc/store/* renvoie 401, donc utilisation du sitemap produit /product-sitemap1.xml (185 biens) puis fetch des pages détail. Slug 'domaines_forets' unique (pas dans sources.yaml ; non présent dans scrapers/ ; à ne pas confondre ave"
+
+  - id: amn_notaires
+    nom: "Anjou Maine Notaires"
+    url_base: "https://amn.notaires.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper SSR httpx fonctionnel. Sondage réel : listing à /annonces-immmobilieres/ (triple 'm', l'orthographe correcte renvoie 404), pagination /page/N/, 7 pages x 24 = 168 biens. Aucun filtre département côté serveur : périmètre de l'office = majoritairement Sarthe (72, 161 biens) + résidu Vendée (85, 7 biens) filtré par post-filtre strict code_postal[:2]. Tous les champs (ville/CP, type, pièces, surface, prix total .montant, réf, photo, description) sont déjà dans la carte HT"
+
+  - id: vench
+    nom: "Vench (ventes aux encheres judiciaires)"
+    url_base: "https://www.vench.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper SSR httpx fonctionnel, 0 fuite departement (departements vus = {28,45,72,89} sous-ensemble des cibles, tous les CP presents). Filtre dept par slug serveur + post-filtre strict code_postal[:2] recupere sur la page detail (bloc Adresse). 23 biens sur les 4 depts de test avec criteres de prix relaches. Avec les criteres reels (prix_min 300000), renvoie 0 : comportement normal, les mises a prix d'encheres judiciaires sont presque toutes inferieures a la borne basse de pri"
+
+  - id: berrissimmo
+    nom: "Berrissimmo"
+    url_base: "https://www.berrissimmo.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Berrissimmo : agence locale Berry/Sologne basee a La Chatre (36400), catalogue 100% Indre (36). Sondage reel : /acheter renvoie 200 en httpx pur, SSR complet (titres, prix, villes, CP 36xxx presents dans le HTML brut), aucun anti-bot. Pas de pagination (page unique, 9 cartes -> 8 biens apres exclusion d'un terrain). Pas de parametre de departement cote serveur, inutile car mono-36 ; securite via post-filtre strict code_postal[:2]=='36'. Tests standalone : (1) depts criteria.m"
+
+  - id: immobiliercoteloire
+    nom: "Immobilier Côté Loire"
+    url_base: "https://www.immobiliercoteloire.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper httpx pur fonctionnel via sitemap + JSON-LD des pages détail (pas de Playwright nécessaire). Test standalone : 33 URL vente dans le sitemap, 21 biens retenus, départements vus = ['45'] uniquement → 0 fuite. Toutes les données extraites (titre, type, ville, CP, surface habitable, pièces, chambres, photos jusqu'à 12) sauf le PRIX : offers.price=0 dans le JSON-LD et aucun € dans le HTML (injection client-side). prix=None laissé, donc filtrage prix_min/max impossible sans"
+
+  - id: immobilier_amo
+    nom: "AMO Immobilier"
+    url_base: "https://www.immobilier-amo.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper créé et testé : /workspaces/ImmoAgent/scrapers/immobilier_amo.py. Approche httpx pur (pas de Playwright nécessaire, contrairement à l'indice : le prix EST dans le JSON-LD Product SSR de chaque page détail). Pipeline : GET sitemap.xml -> 27 URL détail vente -> filtre CP[:2] in departements -> GET détail concurrent (sem 6) -> parse JSON-LD Product (offers.price, itemOffered.numberOfRooms/floorSize/address/photo, @type). Verdict zone 45 : 27 annonces, cp prefixes {'45':2"
+
+  - id: visiteandsmile
+    nom: "Visite And Smile"
+    url_base: "https://www.visiteandsmile.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper httpx pur créé et validé en standalone réel. Découverte via sitemap.xml (49 fiches vente brutes -> 45 maison/appart après exclusion terrain/stationnement/immeuble), parsing du JSON-LD Product sur chaque fiche détail. Contrairement à l'indice du brief, Playwright N'EST PAS requis : le prix est bien présent en SSR dans offers.price du JSON-LD (les 'price:0/JSON-LD absent' observés au premier passage étaient une race du cache SSR react-helmet, résolus par retry x4 séquen"
+
+  - id: maisonblanche
+    nom: "Maison Blanche Immobilier"
+    url_base: "https://www.maisonblanche.immo"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper httpx SSR via sitemap.xml + JSON-LD Product des pages detail. Aucun Playwright requis (prix present dans le HTML brut, contrairement a l'indice initial). 0 fuite verifie : avec depts [49,28,45,37] -> 22 biens tous en 49, FUITES=[]. Test criteria.md (72/28/45/89+49...) -> seul le 49 a du stock maison (22). 28/45 du sitemap ne contiennent que des appartements (exclus par filtre type, normal). Donnees completes : 22/22 photos+surface, 18/22 prix (4 'Nous consulter'). Res"
+
+  - id: demeuresdecampagne
+    nom: "Demeures de Campagne"
+    url_base: "https://www.demeuresdecampagne.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Candidat sondé en réel : site accessible (HTTP 200), SSR pur httpx (aucun JS requis, aucun Cloudflare/DataDome). Filtre département fiable via slug d'URL /vente/{NN-nom}/{page} — seul le numéro NN compte (testé : 18-xxx renvoie quand même le Cher), doublé d'un post-filtre strict code_postal[:2]. Scraper calqué sur le_tuc.py. Test standalone OK : 19 biens bruts (Cher 18 = 17, Nièvre 58 = 2), tous avec CP valide, Départements vus = ['18','58'], 0 fuite hors-zone, 0 bien sans CP"
+
+  - id: colbert_immobilier89
+    nom: "Colbert Immobilier"
+    url_base: "https://www.colbertimmobilier89.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Candidat unique : Colbert Immobilier (colbertimmobilier89.com), réseau local 3 agences Yonne (89). Verdict : INTÉGRÉ, actif:true. Site SSR Apache, status 200 sous UA Chrome, aucun anti-bot. Pas de page /annonces ni /vente racine (404) ; la liste réelle est /immobilier/vente avec pagination /immobilier/vente{N} (1..6, 12 cartes a.property/page, ~71 biens en vente). Mono-département : tous les biens sont dans le 89, donc post-filtre code_postal[:2]=='89' suffit (pas de filtre d"
+
+  - id: immobiliere_normandie
+    nom: "L'Immobilière de Normandie"
+    url_base: "https://www.immobiliere-normandie.com"
+    methode: "api_inoff"
+    actif: true
+    priorite: 3
+    note: "Scraper api_inoff fonctionnel, filtre dept strict cote client (l'API ne filtre pas), 0 fuite confirme (test 72/28/45/89 -> CPs 72/28 uniquement). Stock zone cible : 72:1, 28:3 (sans contrainte). Sous criteria prod (surface_min 150, prix_min 300000, prix_max 600000) -> 0 bien : le seul eligible (Nogent-le-Rotrou 28, 184m2, 235k EUR) tombe sous le prix_min. Donc 0 stock matchant les criteres actuels, mais code correct -> actif:false (pas blacklist, aucun anti-bot). Slug immobil"
+
+  - id: lavallard_immobilier
+    nom: "Lavallard Immobilier"
+    url_base: "https://www.lavallard-immobilier.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Site = agence Lavallard Immobilier (Somme/Picardie), plateforme NettyImmo derrière BunnyCDN, status 200, pas de Cloudflare. Le SSR est CSR-like (React, classes hashées, aucun prix dans le HTML visible) MAIS les objets-annonces complets sont encodés en base64 dans un script (JSON.parse(b64_to_utf8(...))) — décodables en httpx pur, donc PAS besoin de Playwright (contrairement à l'indice 'Playwright probable'). apiUrl /webapi/ existe mais inutile : pagination simple via /vente?p"
+
+  - id: beauxvillages
+    nom: "Beaux Villages Immobilier"
+    url_base: "https://beauxvillages.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Candidat: Beaux Villages Immobilier — INTÉGRÉ (code conservé, actif:false). SSR httpx pur, status 200, ~256 ko. Filtre département serveur fiable via slug d'URL /en/property-{slug} (redirige vers /en/{slug}-property-for-sale). Cartes div.property-card sans code postal -> filtre strict sur le NOM de département (.list-location 'Ville, Département'). Pagination en suivant les liens a[href*='page-'] rendus dans le HTML (l'URL paginée embarque un itemid par catégorie, non reconst"
+
+  - id: immobilier_occitan
+    nom: "Immobilier Occitan"
+    url_base: "https://www.immobilier-occitan.com"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Site SSR httpx pur, 200, accessible (Apache), aucun anti-bot. Architecture calquée sur le_tuc.py : async search(criteres)->list[dict], clés Bien exactes, bloc __main__ de test. Particularité : le code postal n'est pas dans la carte liste, il faut ouvrir la page détail (dt/dd Adresse 'CP VILLE') → un GET détail par carte retenue (poli, sleep 0.5s, garde-fou MAX_DETAILS). Filtre dept = slug d'URL serveur + post-filtre STRICT code_postal[:2]==dept. Verdict : agence mono-départem"
+
+  - id: occitanie_immobilier
+    nom: "Occitanie Immobilier"
+    url_base: "https://www.occitanie-immobilier.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Site SSR httpx (200, pas de Cloudflare ni CSR), CMS LBI/staticlbi.com. Pagination /nos-biens/N (path), ~41 biens, agence mono-departement Aude (11). Aucun filtre dept URL -> post-filtre strict code_postal[:2]. Test depts cibles 72/28/45/89 : 0 bien, 0 fuite. Test force dept 11 : 22 maisons/villas/chalets, 0 fuite, parsing complet (prix, surface, pieces, chambres, photos). Verdict : scraper fonctionnel mais 0 stock dans la zone cible -> actif: false (PAS blocked). Fichier cree"
+
+  - id: occitanie_immo
+    nom: "Occitanie-Immo (entre particuliers)"
+    url_base: "https://www.occitanie-immo.fr"
+    methode: "scrape_simple"
+    actif: true
+    priorite: 3
+    note: "Scraper fonctionnel et 0 fuite. Occitanie-Immo est un portail RÉGIONAL Occitanie uniquement (depts 09/11/12/30/31/32/34/46/48/65/66/81/82), sans aucun recouvrement avec la zone cible actuelle (72/28/45/89/49/37/36/18/58/41/53). Mécanisme confirmé en réel : SSR, token de session a10t04h récupéré via GET, recherche par POST form (depa={NN}, type_bien=Maison), pagination POST /?page=N. Test fonctionnel hors-criteria : dept 81 -> 28 maisons, dept 34 -> 58 maisons, prix/surface/vi"
+
+
 blacklist:
 
   # ── Ajouts 2026-05-30 (workflow #3 — Cloudflare Bot Management) ──
@@ -1819,3 +2215,51 @@ blacklist:
     url_base: "https://www.lescheminsdusud.com"
     raison: "Site sonde en reel (httpx SSR, UA Chrome). /annonces renvoie 200 et 79 cartes div.annonce directement dans le HTML brut (prix dans .prix, type dans .nom, description, Ref, lien detail /{id}-{slug}) — donc techniquement scrapable sans Playwright. Probleme bloquant : aucun departement/code postal par bien. Le seul filtre est zoneGeographique (5 regions larges : Provence, Languedoc-Roussillon, Vallee du Rhone, Sud-Ouest, Occitanie ; certains biens en Italie), jamais un code dept"
     dernier_test: "2026-06-08"
+
+  # ── Bloquées 2026-06-09 (scraper-scout, niche néo-agences/iBuyers/proptech) ──
+  - id: homeloop
+    nom: "Homeloop (iBuyer)"
+    url_base: "https://www.homeloop.fr"
+    raison: "iBuyer SSR httpx-scrapable et filtre dept FIABLE : /fr/immobilier/vente?departements=NN renvoie les cartes côté serveur (a href=/fr/immobilier/vente/{type}/{ville}/{slug}/{id}), testé dept 75 = 11 annonces. MAIS implantation strictement grandes métropoles (Paris, Lyon, Nantes, Bordeaux, Nice, Rennes, Strasbourg, Toulouse…) : les 11 départements cibles Val-de-Loire/Ouest (72/28/45/89/49/37/36/18/58/41/53) renvoient TOUS 0 annonce (gabarit court). Aucun stock zone -> pas de scraper actif. Réactiver (scrape_simple, pattern departements=NN) si extension rurale."
+    dernier_test: "2026-06-09"
+    alternative: "globalimmobilier, iad, safti"
+  - id: casavo
+    nom: "Casavo / Proprioo (iBuyer)"
+    url_base: "https://casavo.com/fr"
+    raison: "iBuyer Next.js SSR : pages dept /fr/acheter-bien/{dept-slug}/ exposent des cartes /fr/annonce/{id}/ dans le HTML (ex. loire-atlantique=44 OK). Mais présence limitée à ~11 villes (Paris, Lyon, Nantes, Nice, Aix…) : les 11 depts cibles renvoient TOUS HTTP 404 (slug dept inexistant). proprioo.fr redirige vers casavo.com (Proprioo absorbé). 0 stock zone -> pas de scraper actif. Réactiver si implantation Val-de-Loire."
+    dernier_test: "2026-06-09"
+    alternative: "globalimmobilier, bienici"
+  - id: hosman
+    nom: "Hosman (néo-agence)"
+    url_base: "https://www.hosman.co"
+    raison: "Néo-agence à tarif fixe, présence 5 métropoles (Paris, Bordeaux, Nantes, Marseille, Lyon). /annonces = SPA pure CSR : HTML brut 55 ko sans aucune annonce (0 code postal, pas de __NEXT_DATA__/__NUXT__, pas de cartes), listings chargés via API privée non documentée (api.hosman.co DNS fail, /api/properties -> 500). Hors zone rurale cible de toute façon. Playwright + reverse de l'API requis ; non rentable pour la zone. Aucun scraper écrit."
+    dernier_test: "2026-06-09"
+    alternative: "globalimmobilier, iad"
+  - id: imop
+    nom: "Imop (néo-agence)"
+    url_base: "https://www.imop.fr"
+    raison: "Néo-agence frais fixes, focalisée Paris/IDF. /annonces = Next.js streaming (self.__next_f), listings injectés client-side : les 5-chiffres du HTML brut ne sont pas des CP d'annonces réelles, 0 lien /annonce. api.imop.fr répond 'OK' (200, 2 octets) sur toutes les routes testées = simple health-check, PAS l'API de listings (introuvable sans devtools réseau). CSR + hors zone -> non scrapable utilement. Aucun scraper écrit."
+    dernier_test: "2026-06-09"
+    alternative: "globalimmobilier, iad"
+  - id: zefir
+    nom: "Zefir (iBuyer)"
+    url_base: "https://www.zefir.fr"
+    raison: "iBuyer Next.js. /annonces = shell CSR de ~5 ko, aucune carte ni prix dans le HTML brut (les rares 5-chiffres sont du bruit Next). /acheter = 404. Listings chargés via API privée non exposée. Implantation métropoles (Lille à l'origine). CSR + hors zone -> non scrapable en httpx. Aucun scraper écrit."
+    dernier_test: "2026-06-09"
+    alternative: "globalimmobilier, bienici"
+  # bskimmobilier : RÉSOLU le 2026-06-09 — l'API /api/property/search a été
+  # débloquée (params dans le FORM HTML de /acheter, pas dans app.js) et un
+  # scraper actif existe désormais (scrapers/bsk_immobilier.py, id: bsk_immobilier,
+  # api_inoff, 160 biens in-zone sur 11 depts). Voir l'entrée active plus haut.
+  - id: welmo
+    nom: "Welmo (ex-néo-agence)"
+    url_base: "https://welmo.fr"
+    raison: "Welmo a été absorbé par Optimhome (déjà couvert par optimhome.py). welmo.fr/nos-annonces-immobilieres -> ConnectionRefused (service éteint) ; la racine redirige vers une page 'Welmo devient Optimhome'. Plus de portail d'annonces propre. Doublon fonctionnel d'optimhome. Aucun scraper écrit."
+    dernier_test: "2026-06-09"
+    alternative: "optimhome"
+  - id: immo_pop
+    nom: "Immo-Pop (néo-agence)"
+    url_base: "https://www.immo-pop.com"
+    raison: "Le domaine immo-pop.com redirige (httpx, 200) vers un site sans rapport (threesaintsrevival.com) — domaine expiré/détourné, plus aucune annonce immobilière exposée. Rien à scraper. Aucun scraper écrit."
+    dernier_test: "2026-06-09"
+    alternative: "globalimmobilier"
