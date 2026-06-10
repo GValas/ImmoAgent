@@ -3034,6 +3034,160 @@ sources:
     priorite: 3
     note: "SSR httpx, réseau de mandataires national. Autocomplete GET /i/javascript/localisationAllItems?term={dept} → liste filtrée par le serveur (testé dept 45 → 58 biens), post-filtre STRICT code_postal[:2]==dept → 0 fuite. Distinct de expertimo.com (en blacklist, domaine différent et accessible en SSR). dernier_test 2026-06-10."
 
+  # ── Nouveaux scrapers 2026-06-10 (scraper-scout — lot agences/mandataires) ──
+  - id: agence_simon_amboise_37
+    nom: "Agence Simon (Amboise)"
+    url_base: "https://agence-simon.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, agence locale Val de Loire (Amboise/Tours). Listing mono-zone,
+      cartes parsées (192 brutes), post-filtre STRICT code_postal[:2]==dept. 25
+      maisons retenues, 100% dept 37, 0 fuite. dernier_test 2026-06-10.
+  - id: agenceduterroir_41
+    nom: "Agence du Terroir"
+    url_base: "https://www.agenceduterroir.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, agence Loir-et-Cher (Vendôme/Perche). Listing paginé 12/page,
+      post-filtre STRICT code_postal[:2]. 5 maisons in-criteria, 100% dept 41,
+      0 fuite. Terrain bien renseigné. dernier_test 2026-06-10.
+  - id: agencesramos_89
+    nom: "Agences Ramos"
+    url_base: "https://agencesramos.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, agence Yonne (Auxerre). Listing multi-chemins, post-filtre
+      STRICT code_postal[:2]. 3 maisons (longères/caractère) in-criteria, 100%
+      dept 89, 0 fuite. DPE exposé en liste. dernier_test 2026-06-10.
+  - id: agencimo_89
+    nom: "Agencimo"
+    url_base: "https://www.agencimo.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, agence Yonne (Sens). Listing (~31 cartes), post-filtre STRICT
+      code_postal[:2]. 3 maisons in-criteria, 100% dept 89, 0 fuite. Photos
+      limitées (1/carte en liste). dernier_test 2026-06-10.
+  - id: antoine_immobilier_49
+    nom: "Antoine Immobilier"
+    url_base: "https://www.antoine-immobilier.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, agence Maine-et-Loire (Angers). Listings multi-chemins,
+      post-filtre STRICT code_postal[:2]. 3 maisons in-criteria, 100% dept 49,
+      0 fuite. Pièces parfois absentes en liste. dernier_test 2026-06-10.
+  - id: c_limmo_89
+    nom: "C-l'immo"
+    url_base: "https://www.c-limmo.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, agence Yonne/Loiret (secteur Sens). Post-filtre STRICT
+      code_postal[:2]. 9 maisons/longères/propriétés in-criteria : 89=6, 45=3.
+      0 fuite. Bon volume terrain/surface. dernier_test 2026-06-10.
+  - id: casadici
+    nom: "Casadici"
+    url_base: "https://www.casadici.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, agence Nièvre/Centre. Boucle sur les 11 depts cibles,
+      post-filtre STRICT code_postal[:2]. Stock faible : 1 propriété in-criteria
+      (dept 58, La Charité-sur-Loire), 0 fuite. dernier_test 2026-06-10.
+  - id: ikami
+    nom: "Réseau Ikami (ex i-Particuliers)"
+    url_base: "https://ikami.fr"
+    methode: api_inoff
+    actif: true
+    priorite: 2
+    note: >-
+      API JSON interne GET /data_management/api_search_ads.php?type_offre=vente&
+      departement={NN}&page={N}. Filtre dept CÔTÉ SERVEUR fiable + post-filtre
+      cp[:2]. Ne garde que maisons/propriétés. 17 maisons in-criteria sur depts
+      18/41/45/58/89, 0 fuite. NB : ce réseau route aussi le flux i-Particuliers
+      (sous-marque) — i_particuliers écarté comme doublon de feed (même domaine,
+      mêmes annonces). dernier_test 2026-06-10.
+  - id: lgm_immobilier
+    nom: "LGM Immobilier"
+    url_base: "https://www.lgm-immobilier.fr"
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: >-
+      API JSON GET https://app.lgm-immobilier.fr/sb/sales?page={N} (le site
+      public www.lgm-immobilier.fr/nos-biens consomme ce backend). Post-filtre
+      STRICT code_postal[:2]. 13 maisons/propriétés de caractère in-criteria :
+      41=7, 28=6, 0 fuite. Terrain/DPE renseignés. dernier_test 2026-06-10.
+  - id: lochois_immo_37
+    nom: "Lochois Immobilier"
+    url_base: "https://www.lochoisimmo.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, agence Indre-et-Loire (Loches/Sud-Touraine). Listing ~113
+      cartes brutes, post-filtre STRICT code_postal[:2]. 5 demeures/longères/
+      propriétés in-criteria : 37=4, 41=1, 0 fuite. dernier_test 2026-06-10.
+  - id: myfrenchagent
+    nom: "My French Agent"
+    url_base: "https://www.myfrenchagent.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, listing national /nos-biens (~77 maisons) puis post-filtre
+      STRICT code_postal[:2]. 16 maisons in-criteria, 100% dept 37, 0 fuite.
+      Terrain/DPE/pièces bien renseignés. dernier_test 2026-06-10.
+  - id: reseau_bonaparte
+    nom: "Réseau Bonaparte (mandataires)"
+    url_base: "https://www.reseau-bonaparte.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, réseau de mandataires. Boucle sur les depts cibles, post-filtre
+      STRICT code_postal[:2]. 7 maisons/propriétés in-criteria, 100% dept 49
+      (Saumurois/Angers), 0 fuite. dernier_test 2026-06-10.
+  - id: weinvest
+    nom: "We Invest"
+    url_base: "https://weinvest.fr"
+    methode: api_inoff
+    actif: true
+    priorite: 2
+    note: >-
+      API JSON Bubble GET /api/1.1/obj/property. Post-filtre STRICT
+      code_postal[:2]. 34 maisons in-criteria sur 8 depts cibles
+      (18/28/37/45/49/53/72/89), gros du stock en Sarthe (72), 0 fuite. DPE et
+      surface renseignés. dernier_test 2026-06-10.
+
+  # ── Scraper fonctionnel mais 0 stock in-criteria (conservé, actif:false) ──
+  - id: morvan_patrimoine_58
+    nom: "Morvan Patrimoine"
+    url_base: "https://www.morvan-patrimoine.com"
+    methode: scrape_simple
+    actif: false
+    priorite: 3
+    note: >-
+      SSR httpx (PHP), agence Nièvre (Château-Chinon/St-Saulge). Listing
+      /vente.php → fiches détail JSON-LD RealEstateListing (CP/prix/surface du
+      BIEN, pas de l'agence), post-filtre STRICT code_postal[:2]. Scraper
+      FONCTIONNEL : 12 fiches récupérées, 100% dept 58, 0 fuite (vérifié en
+      relâchant les bornes). INACTIF car 0 stock dans la bande critères : tout
+      l'inventaire est à 11k-29k€ (très en-deçà de prix_min=300k), petites
+      maisons rurales Nièvre. Réactiver si la zone de prix change. dernier_test
+      2026-06-10.
+
 blacklist:
 
   # ── Ajouts 2026-06-09 (scraper-scout — enchères/viager non retenus) ──
@@ -3644,3 +3798,23 @@ blacklist:
     raison: "Doublon : berrissimmo.fr déjà couvert par le scraper actif existant id berrissimmo (scrapers/berrissimmo.py, actif: true, fonctionnel, 0 fuite). Créer berriss_immo.py serait un doublon de domaine -> écarté. Aucun fichier créé."
     dernier_test: "2026-06-10"
     alternative: "berrissimmo"
+
+  # ── Ajouts 2026-06-10 (scraper-scout — lot validé : 3 écartés) ──
+  - id: alombreduntoit_72
+    nom: "À l'Ombre d'un Toit (Sarthe)"
+    url_base: "https://www.alombreduntoit.com"
+    raison: "Site injoignable depuis cet environnement : ConnectTimeout systématique sur www et apex (httpx UA Chrome + curl), aucune réponse TCP. Le scraper SSR (post-filtre code_postal[:2], 72/53) était structurellement correct mais 0 annonce récupérable (host ne se connecte pas). Fichier supprimé. Réessayer si le site redevient accessible."
+    dernier_test: "2026-06-10"
+    alternative: "lesiteimmo, foncia (couverture 72)"
+  - id: idlr
+    nom: "IDLR (réseau mandataires, ex La Solution Immo)"
+    url_base: "https://www.idlr.fr"
+    raison: "Site accessible et rapide (listing 200, 27 cartes/page), MAIS aucun filtre département serveur : la carte liste ne donne pas de CP fiable, le CP n'existe que sur la page détail. Le scraper doit donc crawler tout le listing NATIONAL (>50 pages) puis fetcher une page détail par bien -> centaines de requêtes séquentielles, ne termine jamais dans le timeout (90-120s tous deux Terminated). Non corrigeable rapidement sans redesign (pas de slug dept exploitable). Fichier supprimé."
+    dernier_test: "2026-06-10"
+    alternative: "—"
+  - id: i_particuliers
+    nom: "i-Particuliers (sous-marque réseau Ikami)"
+    url_base: "https://ikami.fr"
+    raison: "Doublon de feed/domaine. i-Particuliers route ses annonces par le moteur Ikami (ikami.fr), même endpoint API que le scraper actif 'ikami' ; le test renvoyait les 17 MÊMES annonces (identiques, depts 18/41/45/58/89). i_particuliers ne fait que filtrer un sous-ensemble (reference_client=iparticuliersxml) du même flux -> couvert par ikami (superset). Fichier supprimé."
+    dernier_test: "2026-06-10"
+    alternative: "ikami"
