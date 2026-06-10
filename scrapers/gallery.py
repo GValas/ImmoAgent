@@ -68,8 +68,8 @@ def _note_fail(dom: str) -> bool:
 # Fragments d'URL qui ne sont jamais des photos d'annonce.
 _BLACKLIST_FRAGMENTS = (
     "logo", "logos", "/logo", "picto", "pictos", "avatar", "icon", "/icons",
-    "sprite", "placeholder", "novisu", "no-visu", "no_photo", "nophoto",
-    "default", "blank", "1px", "spacer", "transparent", "loader", "loading",
+    "sprite", "placeholder", "novisu", "no-visu", "no_photo", "nophoto", "no-photo",
+    "default", "blank", "1px", "spacer", "transparent", "loader", "loading", "/pixel.",
     "/static/", "/_static_/", "/assets/img", "/assets/imgs", "diagrammeenergie",
     "/dpe.", "/dpe/", "diagnostic", "watermark", "facebook", "twitter", "instagram",
     "youtube", "linkedin", "flag-", "/flags/", "profile-picture", "agence-logo",
@@ -460,8 +460,11 @@ def _enrich_meta(bien: dict, txt: str) -> None:
 
 
 # Clés JSON considérées comme du texte descriptif d'annonce (API notaires & co.).
+# `desclongue`/`desccourte` : API notaires (vente.descriptions[*]) — le descriptif
+# complet (souvent ~1000 c.) vit dans descLongue, jamais dans la vue liste.
 _DESC_JSON_KEYS = {"description", "descriptif", "descriptifbien", "texte",
-                   "commentaire", "commentaires", "annonce", "libelle"}
+                   "commentaire", "commentaires", "annonce", "libelle",
+                   "desclongue", "desccourte"}
 
 
 def _maybe_set_description_from_json(bien: dict, data: dict) -> None:

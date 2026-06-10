@@ -1,0 +1,8 @@
+# ============================================================
+# Override CPU : `docker compose -f docker-compose.yml -f docker-compose.cpu.yml up`
+# (utilisé par `./run_prod.sh --cpu`). Désactive le GPU pour Ollama, qui retombe
+# alors sur le CPU — fonctionnel mais nettement plus lent pour un 3B.
+# ============================================================
+services:
+  ollama:
+    gpus: []        # remplace `gpus: all` du fichier de base → aucun GPU réservé

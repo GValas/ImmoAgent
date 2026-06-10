@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 # ============================================================
-# run_prod.sh — construit l'image et lance le scheduler immo-agent
-# en conteneur de prod (GPU + volumes persistés).
+# run_prod.sh — construit et lance la stack immo-agent (multi-conteneurs)
+# via docker compose : conteneur `ollama` (LLM local, GPU) + `scheduler`.
 #
 # Usage :
-#   ./run_prod.sh              # build + (re)lance le conteneur en arrière-plan
-#   ./run_prod.sh --logs       # idem, puis suit les logs en direct
-#   ./run_prod.sh --no-build   # relance sans reconstruire l'image
-#   ./run_prod.sh --cpu        # sans GPU (repli CPU, pas de --gpus)
+#   ./run_prod.sh                       # build + (re)lance la stack en arrière-plan
+#   ./run_prod.sh --logs                # idem, puis suit les logs du scheduler
+#   ./run_prod.sh --no-build            # relance sans reconstruire l'image
+#   ./run_prod.sh --cpu                 # Ollama sans GPU (repli CPU, plus lent)
+#   ./run_prod.sh --model qwen2.5:7b    # surcharge le modèle Ollama
 # ============================================================
 set -euo pipefail
-
-IMAGE="immo-agent:prod"
-CONTAINER="immo-agent-scheduler"
 
 # Se placer à la racine du repo (où vit ce script), quelle que soit l'invocation.
 cd "$(dirname "$(readlink -f "$0")")"
@@ -21,75 +19,70 @@ cd "$(dirname "$(readlink -f "$0")")"
 DO_BUILD=1
 FOLLOW_LOGS=0
 USE_GPU=1
-for arg in "$@"; do
-  case "$arg" in
+MODEL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --no-build) DO_BUILD=0 ;;
     --logs)     FOLLOW_LOGS=1 ;;
     --cpu)      USE_GPU=0 ;;
-    *) echo "Option inconnue : $arg" >&2; exit 2 ;;
+    --model)    MODEL="${2:-}"; shift ;;
+    *) echo "Option inconnue : $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 # --- Pré-requis ---
 command -v docker >/dev/null || { echo "❌ Docker n'est pas installé." >&2; exit 1; }
+docker compose version >/dev/null 2>&1 || {
+  echo "❌ 'docker compose' (plugin v2) indisponible." >&2; exit 1; }
 
 # --- Préparer les répertoires montés (sinon Docker les crée en root) ---
 mkdir -p data/raw data/output logs
 
-# --- Build ---
+# --- Fichiers compose : base (+ override CPU si demandé) ---
+COMPOSE_FILES=(-f docker-compose.yml)
+if [ "$USE_GPU" -eq 0 ]; then
+  COMPOSE_FILES+=(-f docker-compose.cpu.yml)
+  echo "==> Mode CPU : Ollama sans GPU (plus lent)"
+else
+  echo "==> Mode GPU : conteneur ollama avec --gpus all"
+fi
+
+# --- Modèle Ollama (surcharge optionnelle) ---
+if [ -n "$MODEL" ]; then
+  export QUALITATIVE_MODEL="$MODEL"
+  echo "==> Modèle Ollama : $QUALITATIVE_MODEL"
+fi
+
+# --- CACHEBUST = timestamp → force la reconstruction de la couche code (COPY . .)
+#     tout en gardant les couches lourdes (Playwright) en cache. ---
+export CACHEBUST="$(date +%s)"
+
+# --- Build + lancement ---
+UP_ARGS=(up -d --remove-orphans)
 if [ "$DO_BUILD" -eq 1 ]; then
-  echo "==> Construction de l'image $IMAGE (torch + Chromium + modèle NLP, peut prendre plusieurs minutes)"
-  # CACHEBUST = timestamp → force la reconstruction de la couche code (COPY . .) à
-  # chaque build : le code est TOUJOURS frais, les couches lourdes restent cachées.
-  docker build --build-arg CACHEBUST="$(date +%s)" -t "$IMAGE" .
+  echo "==> Build de l'image scheduler + pull de l'image ollama (peut prendre du temps)"
+  UP_ARGS+=(--build)
 else
   echo "==> Build sauté (--no-build)"
 fi
 
-# --- Remplacer un conteneur existant (idempotent) ---
-if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-  echo "==> Suppression du conteneur existant $CONTAINER"
-  docker rm -f "$CONTAINER" >/dev/null
-fi
+docker compose "${COMPOSE_FILES[@]}" "${UP_ARGS[@]}"
 
-# --- Construire les options GPU ---
-GPU_ARGS=()
-if [ "$USE_GPU" -eq 1 ]; then
-  GPU_ARGS=(--gpus all -e IMMO_FORCE_GPU=1)
-  echo "==> Mode GPU (--gpus all, IMMO_FORCE_GPU=1)"
-else
-  GPU_ARGS=(-e IMMO_FORCE_GPU=0)
-  echo "==> Mode CPU (--cpu) : pas de GPU exposé"
-fi
-
-# --- Lancer le scheduler (python scheduler.py = PID 1 du conteneur) ---
-echo "==> Démarrage du conteneur $CONTAINER"
-docker run -d \
-  --name "$CONTAINER" \
-  --restart unless-stopped \
-  "${GPU_ARGS[@]}" \
-  -v "$(pwd)/data:/app/data" \
-  -v "$(pwd)/config:/app/config" \
-  -v "$(pwd)/logs:/app/logs" \
-  "$IMAGE" >/dev/null
-
-# --- Vérifier qu'il tourne ---
-sleep 2
-if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
-  echo "✅ $CONTAINER démarré."
-  docker ps --filter "name=$CONTAINER" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
-  echo
-  echo "Logs   : docker logs -f $CONTAINER"
-  echo "Arrêt  : docker stop $CONTAINER"
-  echo "Suivi  : data/output/suivi_actif.xlsx"
-else
-  echo "❌ $CONTAINER s'est arrêté immédiatement — dernières lignes du log :" >&2
-  docker logs --tail 30 "$CONTAINER" >&2 || true
-  exit 1
-fi
+echo
+echo "✅ Stack démarrée."
+docker compose "${COMPOSE_FILES[@]}" ps
+echo
+echo "Le service ollama-pull télécharge le modèle au 1er lancement (modèle persisté"
+echo "ensuite dans le volume 'ollama-models'). Le scheduler attend qu'il soit prêt."
+echo
+echo "Logs scheduler : docker compose logs -f scheduler"
+echo "Logs LLM       : docker compose logs -f ollama"
+echo "Arrêt          : docker compose down"
+echo "Suivi          : data/output/suivi_actif.xlsx"
 
 # --- Suivre les logs si demandé ---
 if [ "$FOLLOW_LOGS" -eq 1 ]; then
-  echo "==> Suivi des logs (Ctrl-C pour quitter, le conteneur continue de tourner)"
-  exec docker logs -f "$CONTAINER"
+  echo "==> Suivi des logs scheduler (Ctrl-C pour quitter, les conteneurs continuent)"
+  exec docker compose "${COMPOSE_FILES[@]}" logs -f scheduler
 fi

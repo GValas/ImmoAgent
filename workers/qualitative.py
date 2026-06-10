@@ -1,161 +1,189 @@
 """
-qualitative.py — Matching sémantique description qualitative ↔ annonce (NLP).
+qualitative.py — Évaluation LLM locale (Ollama) de la correspondance
+description qualitative ↔ annonce.
 
-Compare la `description_qualitative` (criteria.md, texte libre en français) au
-texte de chaque annonce (titre + description) via des embeddings de phrases
-(sentence-transformers, multilingue). NON destructif : annote chaque bien d'un
-  • `match_qualitatif` : similarité 0–100 (None si l'annonce n'a pas de texte) ;
-  • `match_extrait`    : la phrase de l'annonce la plus proche (preuve lisible).
-L'analyst affiche ces champs (colonnes « Match qual. » / « Extrait qual. ») et
-trie les résultats par `match_qualitatif` décroissant.
+Remplace l'ancien moteur d'embeddings (sentence-transformers) par un petit LLM
+instruct servi par **Ollama** dans un conteneur dédié. Contrairement aux
+embeddings, le LLM comprend la NÉGATION (« pas de », « non », « sans »), les
+SEUILS NUMÉRIQUES (« piscine ≥ 4×9 m ») et pèse plusieurs critères à la fois.
 
-Dégradation gracieuse : si sentence-transformers / le modèle sont indisponibles
-(lib absente, pas de réseau pour le télécharger…), la fonction no-op avec un
-avertissement — le pipeline continue sans cette dimension, rien n'est éliminé.
+Interface (inchangée pour analyst/scheduler), mais désormais ASYNCHRONE :
+    async def annotate_biens(biens, description_qualitative) -> biens
+NON destructif : annote chaque bien d'un
+  • `match_qualitatif` : score 0–100 (None si l'annonce n'a pas de texte) ;
+  • `match_extrait`    : justification courte du LLM (preuve lisible, colonne Excel).
+Aucune élimination ici (tri par l'analyst) — les filtres durs restent
+mots_interdits / critères structurés.
 
-Modèle : paraphrase-multilingual-MiniLM-L12-v2 (~120 Mo, CPU OK, FR inclus).
+Configuration (variables d'environnement, posées par docker-compose) :
+  • OLLAMA_HOST       : URL du serveur Ollama (défaut http://localhost:11434) ;
+  • QUALITATIVE_MODEL : modèle Ollama (défaut qwen2.5:3b).
+
+Dégradation gracieuse : si Ollama est injoignable ou le modèle absent, on
+AVERTIT une fois et on no-op — le pipeline continue sans cette dimension, rien
+n'est éliminé.
 """
+import asyncio
+import json
 import os
-import re
 
-_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-_model = None
-_load_failed = False
+import httpx
+
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+MODEL = os.environ.get("QUALITATIVE_MODEL", "qwen2.5:3b")
+
+# Nb d'appels Ollama simultanés. Le GPU sert les requêtes quasi en série ; un
+# petit pipeline évite juste les temps morts réseau. Modeste pour ne pas saturer.
+_CONCURRENCY = int(os.environ.get("QUALITATIVE_CONCURRENCY", "4"))
+# Délai par appel (un 3B sur GPU répond en ~0,5–2 s ; on laisse de la marge).
+_TIMEOUT = float(os.environ.get("QUALITATIVE_TIMEOUT", "60"))
+
+_SYSTEM_PROMPT = (
+    "Tu es un assistant qui évalue dans quelle mesure une ANNONCE immobilière "
+    "correspond à une DESCRIPTION DE RECHERCHE en français.\n"
+    "Règles d'évaluation :\n"
+    "- Respecte les NÉGATIONS : « pas de X », « non X », « sans X » signifient que X "
+    "est INDÉSIRABLE → si l'annonce présente X, le score doit être BAS.\n"
+    "- Respecte les SEUILS NUMÉRIQUES (surfaces, distances, dimensions).\n"
+    "- N'INVENTE rien : si l'annonce ne mentionne pas un critère, ne le suppose ni "
+    "présent ni absent — il est simplement neutre.\n"
+    "- Pèse l'ensemble des critères ; un seul critère fort non respecté pénalise beaucoup.\n"
+    "Réponds UNIQUEMENT par un objet JSON, sans texte autour. Donne D'ABORD la "
+    "justification (ton analyse), PUIS le score qui en découle — dans cet ordre :\n"
+    '{"justification": "<UNE seule phrase courte en français, ≤ 25 mots>", '
+    '"score": <entier 0-100>}'
+)
+
+# Plafond de tokens générés : laisse au modèle la place de raisonner dans la
+# justification (qui précède le score) tout en bornant la latence ; Ollama sérialise
+# par défaut (NUM_PARALLEL=1), donc cette borne pèse directement sur le débit.
+_NUM_PREDICT = int(os.environ.get("QUALITATIVE_NUM_PREDICT", "200"))
 
 
-def _pick_device() -> str:
-    """Choisit le device des embeddings, en tenant compte de `IMMO_FORCE_GPU`.
+def _build_user_prompt(description_qualitative: str, titre: str, description: str) -> str:
+    return (
+        "DESCRIPTION DE RECHERCHE (critères du client) :\n"
+        f"{description_qualitative.strip()}\n\n"
+        "ANNONCE À ÉVALUER :\n"
+        f"Titre : {titre.strip()}\n"
+        f"Description : {description.strip()}\n\n"
+        "Évalue la correspondance GLOBALE de l'annonce avec la description "
+        "(0 = ne correspond pas du tout, 100 = correspond parfaitement)."
+    )
 
-    `IMMO_FORCE_GPU` (posé par run_prod.sh selon le mode du conteneur) :
-      • "0"     → CPU forcé (mode --cpu) ;
-      • "1"     → GPU exigé : si CUDA est indisponible, on AVERTIT bruyamment
-                  (le conteneur a probablement été lancé sans `--gpus all`, ou
-                  nvidia-container-toolkit manque sur l'hôte, ou torch est en
-                  version CPU) puis repli CPU — l'annotation n'est pas éliminatoire ;
-      • absent  → auto : GPU si disponible, sinon CPU.
-    """
-    force = os.environ.get("IMMO_FORCE_GPU")
+
+async def _check_available(client: httpx.AsyncClient) -> bool:
+    """Vérifie qu'Ollama répond et que le modèle est présent. N'écrit qu'un log."""
     try:
-        import torch
-        cuda = torch.cuda.is_available()
-    except Exception:
-        cuda = False
-
-    if force == "0":
-        return "cpu"
-    if cuda:
-        return "cuda"
-    if force == "1":
-        print("[Qualitatif] ⚠️  IMMO_FORCE_GPU=1 mais CUDA indisponible "
-              "(torch.cuda.is_available()=False) → repli CPU (plus lent). "
-              "Vérifier : conteneur lancé avec `--gpus all`, nvidia-container-toolkit "
-              "installé sur l'hôte, et torch en build CUDA (cu124).")
-    return "cpu"
-
-
-def _get_model():
-    """Charge le modèle une seule fois (singleton paresseux), sur GPU si possible."""
-    global _model, _load_failed
-    if _model is not None or _load_failed:
-        return _model
-    try:
-        from sentence_transformers import SentenceTransformer
-        device = _pick_device()
-        print(f"[Qualitatif] Chargement du modèle {_MODEL_NAME.split('/')[-1]} "
-              f"sur {device.upper()}…")
-        # device explicite : on n'utilise le CPU que si aucun GPU CUDA n'est dispo.
-        _model = SentenceTransformer(_MODEL_NAME, device=device)
-        try:
-            import torch
-            if device == "cuda":
-                print(f"[Qualitatif] GPU : {torch.cuda.get_device_name(0)}")
-        except Exception:
-            pass
+        r = await client.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
+        r.raise_for_status()
+        tags = {m.get("name", "") for m in (r.json().get("models") or [])}
+        # Ollama liste « qwen2.5:3b » ; on tolère un tag sans suffixe explicite.
+        present = any(t == MODEL or t.startswith(MODEL.split(":")[0] + ":") for t in tags) \
+            if tags else False
+        if not present:
+            print(f"[Qualitatif] ⚠️  Modèle '{MODEL}' absent d'Ollama ({OLLAMA_HOST}). "
+                  f"Modèles vus : {sorted(tags) or '∅'}. "
+                  f"Vérifier le service 'ollama-pull' du docker-compose.")
+            return False
+        return True
     except Exception as e:
-        _load_failed = True
-        print(f"[Qualitatif] Modèle indisponible ({type(e).__name__}: {e}) "
-              f"— dimension qualitative ignorée.")
-        _model = None
-    return _model
+        print(f"[Qualitatif] ⚠️  Ollama injoignable ({OLLAMA_HOST}) : {type(e).__name__}: {e} "
+              f"— dimension qualitative ignorée (rien n'est éliminé).")
+        return False
 
 
-def _phrases(texte: str) -> list[str]:
-    """Découpe grossièrement un texte en phrases exploitables."""
-    parts = re.split(r"[.;!?\n•]+", texte)
-    return [p.strip() for p in parts if len(p.strip()) >= 12]
+def _coerce_score(value) -> float | None:
+    try:
+        s = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(100.0, s))
 
 
-def annotate_biens(biens: list[dict], description_qualitative: str) -> list[dict]:
-    """Annote `match_qualitatif` (0–100) et `match_extrait` sur chaque bien.
+async def _score_one(client: httpx.AsyncClient, sem: asyncio.Semaphore,
+                     bien: dict, desc_qual: str) -> None:
+    """Annote un bien (in place). Best-effort : ne lève jamais."""
+    texte_titre = bien.get("titre") or ""
+    texte_desc = bien.get("description") or ""
+    if len((texte_titre + texte_desc).strip()) < 12:
+        bien["match_qualitatif"] = None
+        bien["match_extrait"] = ""
+        return
+
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": _build_user_prompt(desc_qual, texte_titre, texte_desc)},
+        ],
+        "stream": False,
+        "format": "json",            # force une sortie JSON valide
+        "options": {"temperature": 0, "num_predict": _NUM_PREDICT},
+    }
+    try:
+        async with sem:
+            r = await client.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=_TIMEOUT)
+        r.raise_for_status()
+        content = (r.json().get("message") or {}).get("content") or ""
+        data = json.loads(content)
+        score = _coerce_score(data.get("score"))
+        justification = str(data.get("justification") or "").strip()
+        bien["match_qualitatif"] = round(score, 1) if score is not None else None
+        bien["match_extrait"] = justification
+    except Exception as e:
+        # Un échec ponctuel ne casse rien : bien laissé non annoté.
+        bien.setdefault("match_qualitatif", None)
+        bien.setdefault("match_extrait", "")
+        print(f"[Qualitatif] échec scoring ({type(e).__name__}) sur "
+              f"{(texte_titre or bien.get('url',''))[:50]}")
+
+
+async def annotate_biens(biens: list[dict], description_qualitative: str) -> list[dict]:
+    """Annote `match_qualitatif` (0–100) et `match_extrait` via le LLM Ollama.
 
     Idempotent et sûr : retourne `biens` inchangé si la description est vide,
-    s'il n'y a aucun bien, ou si le modèle ne peut être chargé."""
+    s'il n'y a aucun bien, ou si Ollama / le modèle sont indisponibles."""
     desc = (description_qualitative or "").strip()
     if not desc or not biens:
         return biens
 
-    model = _get_model()
-    if model is None:
-        return biens
+    async with httpx.AsyncClient() as client:
+        if not await _check_available(client):
+            return biens
 
-    import numpy as np
+        print(f"[Qualitatif] Évaluation LLM ({MODEL} via {OLLAMA_HOST}) "
+              f"sur {len(biens)} biens…")
+        sem = asyncio.Semaphore(_CONCURRENCY)
+        await asyncio.gather(*[_score_one(client, sem, b, desc) for b in biens])
 
-    # Vecteur de la requête qualitative (normalisé → produit scalaire = cosinus)
-    q = model.encode(desc, convert_to_numpy=True, normalize_embeddings=True)
-
-    textes = [((b.get("titre") or "") + ". " + (b.get("description") or "")).strip()
-              for b in biens]
-
-    # Similarité document entier (stable, peu sensible au bruit local)
-    doc_vecs = model.encode(textes, convert_to_numpy=True, normalize_embeddings=True,
-                            batch_size=64, show_progress_bar=False)
-    doc_sims = doc_vecs @ q
-
-    n_ann = 0
-    for b, txt, dsim in zip(biens, textes, doc_sims):
-        if len(txt) < 12:
-            b["match_qualitatif"] = None
-            b["match_extrait"] = ""
-            continue
-
-        # Meilleure phrase comme preuve, et score = max(doc, meilleure phrase)
-        # pour capter une correspondance locale forte sans sur-réagir au bruit.
-        best = float(dsim)
-        extrait = ""
-        phs = _phrases(txt)
-        if phs:
-            pv = model.encode(phs, convert_to_numpy=True, normalize_embeddings=True,
-                              batch_size=64, show_progress_bar=False)
-            sims = pv @ q
-            j = int(np.argmax(sims))
-            extrait = phs[j]
-            best = max(best, float(sims[j]))
-
-        # cosinus [-1,1] → [0,100] (les négatifs = aucun rapport → 0)
-        b["match_qualitatif"] = round(max(0.0, best) * 100, 1)
-        b["match_extrait"] = extrait
-        n_ann += 1
-
-    if n_ann:
-        vals = [b["match_qualitatif"] for b in biens if b.get("match_qualitatif") is not None]
-        moy = round(sum(vals) / len(vals), 1) if vals else 0
-        top = round(max(vals), 1) if vals else 0
-        print(f"[Qualitatif] {n_ann}/{len(biens)} biens annotés "
-              f"(similarité moy {moy} / max {top} sur 100)")
+    vals = [b["match_qualitatif"] for b in biens if b.get("match_qualitatif") is not None]
+    if vals:
+        moy = round(sum(vals) / len(vals), 1)
+        top = round(max(vals), 1)
+        print(f"[Qualitatif] {len(vals)}/{len(biens)} biens annotés "
+              f"(score moy {moy} / max {top} sur 100)")
     return biens
 
 
-# Test standalone : python workers/qualitative.py
+# Test standalone : OLLAMA_HOST=http://localhost:11434 python workers/qualitative.py
 if __name__ == "__main__":
     demo = [
         {"titre": "Belle longère en pierre pleine de cachet",
-         "description": "Maison de caractère rénovée avec goût, poutres apparentes, "
-                        "au calme à la campagne, lumineuse."},
-        {"titre": "Appartement T3 récent",
-         "description": "Immeuble neuf, balcon, proche tramway, prestations modernes."},
+         "description": "Maison ancienne de caractère rénovée avec goût, pierres "
+                        "apparentes et colombages, au calme à la campagne, piscine "
+                        "extérieure 5x10, proche commerces."},
+        {"titre": "Villa contemporaine d'architecte",
+         "description": "Maison contemporaine de 2015, lignes épurées, dans un "
+                        "lotissement récent, zone inondable, gros travaux à prévoir."},
         {"titre": "Pavillon sans texte", "description": ""},
     ]
-    crit = "maison ancienne de caractère en pierre, au calme, avec du charme et du cachet"
-    annotate_biens(demo, crit)
+    crit = ("- Champêtre, caractère, authentique\n"
+            "- Matériaux : pierres apparentes, colombages\n"
+            "- pas de zone inondable\n"
+            "- pas de travaux à prévoir\n"
+            "- pas de maison contemporaine")
+    asyncio.run(annotate_biens(demo, crit))
     for b in demo:
-        print(f"  {b['match_qualitatif']!s:>6}  | {b['titre'][:40]:40} | extrait: {b.get('match_extrait','')[:50]}")
+        print(f"  {b.get('match_qualitatif')!s:>6}  | {b['titre'][:40]:40} | "
+              f"{b.get('match_extrait','')[:60]}")

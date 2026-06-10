@@ -312,7 +312,7 @@ async def run(biens_bruts: list[dict], criteres) -> Path:
     desc_qual = getattr(criteres, "description_qualitative", "") or ""
     if desc_qual.strip():
         from workers.qualitative import annotate_biens as qual_annotate
-        qual_annotate(biens_bruts, desc_qual)
+        await qual_annotate(biens_bruts, desc_qual)
 
     # Enrichissement factuel (prix/m², DVF, alertes)
     enriched = [enrich_bien(b, prix_marche) for b in biens_bruts]

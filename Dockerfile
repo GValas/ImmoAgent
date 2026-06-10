@@ -20,15 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- Stack Python + Playwright (couche cachée tant que requirements.txt et le
 #     script ne changent pas). scripts/install-stack.sh est MUTUALISÉ avec le
 #     devcontainer (.devcontainer/Dockerfile) → source unique de vérité.
-#     cu126 (GPU) par défaut ; repli CPU : passer l'URL whl/cpu en argument. ---
+#     Image légère, 100 % CPU : le matching qualitatif est délégué au conteneur
+#     `ollama` (cf. docker-compose.yml), plus de torch ni de modèle embarqué. ---
 COPY requirements.txt scripts/install-stack.sh ./
 RUN bash install-stack.sh && rm -f install-stack.sh
-
-# --- Pré-cache du modèle d'embeddings NLP (~120 Mo) pour un démarrage offline.
-#     Le téléchargement se fait sur CPU au build ; le RUNTIME choisit GPU/CPU via
-#     IMMO_FORCE_GPU (cf. workers/qualitative.py). ---
-RUN python -c "from sentence_transformers import SentenceTransformer; \
-SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 
 # --- Code applicatif (en dernier : invalide le moins de couches au rebuild) ---
 # CACHEBUST : run_prod.sh passe un timestamp → cette couche (et donc le code) est

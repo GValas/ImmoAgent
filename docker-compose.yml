@@ -1,21 +1,28 @@
 # ============================================================
-# immo-agent — orchestration prod du scheduler
-#   docker compose up -d --build      # construire + lancer en arrière-plan
-#   docker compose logs -f scheduler  # suivre les logs
-#   docker compose down               # arrêter
+# immo-agent — orchestration prod (multi-conteneurs)
+#
+#   docker compose up -d --build       # construire + lancer en arrière-plan
+#   docker compose logs -f scheduler   # suivre les logs du pipeline
+#   docker compose logs -f ollama      # suivre les logs du LLM
+#   docker compose down                # arrêter (les modèles Ollama persistent)
+#
+# Trois services :
+#   • ollama       — serveur LLM local (GPU), sert le modèle de matching qualitatif
+#   • ollama-pull  — tâche one-shot : télécharge le modèle au démarrage, puis sort
+#   • scheduler    — le pipeline immo-agent (boucle continue), parle à ollama
+#                    via le réseau Docker interne (OLLAMA_HOST=http://ollama:11434)
+#
+# Le modèle est configurable : QUALITATIVE_MODEL=qwen2.5:7b docker compose up -d
 # ============================================================
 services:
-  scheduler:
-    build: .
-    image: immo-agent:prod
-    container_name: immo-agent-scheduler
-    restart: unless-stopped          # redémarre après crash / reboot de l'hôte
-    environment:
-      # Exige le GPU : CLIP échoue bruyamment si CUDA absent (pas de fallback CPU
-      # silencieux). Mettre à 0 ou retirer pour autoriser le repli CPU.
-      IMMO_FORCE_GPU: "1"
+
+  # --- LLM local (GPU) : évalue la correspondance annonce ↔ description qualitative.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: immo-agent-ollama
+    restart: unless-stopped
     # --- Accès GPU NVIDIA (nécessite nvidia-container-toolkit sur l'hôte) ---
-    gpus: all                        # équivaut à `docker run --gpus all`
+    gpus: all                          # équivaut à `docker run --gpus all`
     # Alternative portable (si `gpus:` non supporté par ta version de compose) :
     # deploy:
     #   resources:
@@ -25,18 +32,59 @@ services:
     #           count: all
     #           capabilities: [gpu]
     volumes:
+      # Modèles téléchargés persistés (volume nommé) → pas de re-pull au redémarrage.
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    # Pas de port publié sur l'hôte : Ollama n'est joignable que sur le réseau
+    # Docker interne (rien en local), conformément au besoin.
+
+  # --- Tâche one-shot : s'assure que le modèle est présent avant le scheduler.
+  #     `ollama pull` est idempotent (no-op si le modèle est déjà dans le volume).
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: immo-agent-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      QUALITATIVE_MODEL: ${QUALITATIVE_MODEL:-qwen2.5:3b}
+    entrypoint: ["/bin/sh", "-c", "ollama pull \"$${QUALITATIVE_MODEL:-qwen2.5:3b}\""]
+    restart: "no"
+
+  # --- Pipeline immo-agent (scheduler en boucle continue).
+  scheduler:
+    build:
+      context: .
+      args:
+        CACHEBUST: ${CACHEBUST:-0}      # run_prod.sh y injecte un timestamp
+    image: immo-agent:prod
+    container_name: immo-agent-scheduler
+    restart: unless-stopped            # redémarre après crash / reboot de l'hôte
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    environment:
+      # URL du LLM (réseau Docker interne) + modèle à utiliser.
+      OLLAMA_HOST: http://ollama:11434
+      QUALITATIVE_MODEL: ${QUALITATIVE_MODEL:-qwen2.5:3b}
+    volumes:
       # config/ monté en lecture-écriture : tu édites criteria.md à chaud,
       # le prochain cycle du scheduler le relit (config_loader = source de vérité).
       - ./config:/app/config
       # data/ persisté sur l'hôte : suivi_actif.xlsx, biens_vus.json,
-      # scheduler_state.json et les raw/output survivent aux redémarrages
-      # ET restent lisibles directement depuis ./data sur la machine.
+      # scheduler_state.json et les raw/output survivent aux redémarrages.
       - ./data:/app/data
       # logs accessibles depuis l'hôte
       - ./logs:/app/logs
-    # Aucune clé API : le code ne fait aucun appel Anthropic (cf. CLAUDE.md).
-    # Si tu veux limiter les ressources :
-    # deploy:
-    #   resources:
-    #     limits:
-    #       memory: 4g
+    # Aucune clé API Anthropic : la seule intelligence est le LLM LOCAL Ollama.
+
+volumes:
+  ollama-models:                       # cache persistant des modèles Ollama

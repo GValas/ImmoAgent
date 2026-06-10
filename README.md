@@ -1,68 +1,86 @@
 # Immo-Agent 🏠
 
-Système multi-workers Claude pour la recherche automatisée de biens immobiliers.
+Système multi-workers de recherche immobilière automatisée. Il scrape des dizaines de
+sites d'annonces français, filtre les biens sur des critères structurés (prix, surface,
+terrain, pièces, DPE), applique un filtre mots-clés, enrichit (DVF, géoloc, gare/bus),
+**évalue la correspondance qualitative via un LLM local (Ollama)** et produit un Excel de
+suivi trié par pertinence.
+
+> **Aucun appel API Anthropic dans le code.** La seule intelligence *runtime* est un LLM
+> local servi par Ollama (conteneur dédié). Aucune clé API n'est requise.
 
 ## Architecture
 
 ```
-orchestrator.py           ← point d'entrée unique
-├── workers/discovery.py  ← Worker 1 : identifie les sources via web_search
-├── workers/builder.py    ← Worker 2 : génère les scrapers Python
-├── workers/hunter.py     ← Worker 3 : lance les scrapers en parallèle
-└── workers/analyst.py    ← Worker 4 : score, enrichit DVF, export Excel
+orchestrator.py           ← point d'entrée (pipeline à la demande)
+scheduler.py              ← pipeline continu (boucle ; maintient suivi_actif.xlsx)
+config_loader.py          ← parse config/criteria.md (source unique de vérité)
+├── workers/discovery.py  ← Worker 1 : charge sources.yaml, filtre par département
+├── workers/builder.py    ← Worker 2 : vérifie les scrapers disponibles
+├── workers/hunter.py     ← Worker 3 : scrape // , déduplique, filtre structurel +
+│                            mots-clés, enrichit page détail, annote gare/bus/géo
+├── workers/analyst.py    ← Worker 4 : enrichit DVF, match qualitatif LLM, export Excel
+└── workers/qualitative.py ← util analyst : score description_qualitative ↔ annonce (Ollama)
 ```
 
-## Installation
+## Installation (local)
 
 ```bash
-git clone / copier le projet
-cd immo-agent
-
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium   # si scraping JS nécessaire
-
-export ANTHROPIC_API_KEY=sk-ant-...
+playwright install chromium
 ```
 
-## Configuration
+L'image/app est légère (CPU) : pas de torch ni de modèle embarqué. Le match qualitatif
+appelle un LLM local **Ollama**. En local, pour activer cette étape, fais tourner un
+Ollama joignable et exporte `OLLAMA_HOST` (sinon l'étape est simplement sautée, le reste
+du pipeline tourne normalement) :
 
-### 1. Définir tes départements cibles
-
-Édite `config/criteria.md` — bloc de code du haut :
+```bash
+export OLLAMA_HOST=http://127.0.0.1:11434     # un Ollama avec le modèle qwen2.5:3b
 ```
-06  # Alpes-Maritimes
-83  # Var
+
+## Configuration — `config/criteria.md`
+
+**Tout** se règle dans ce fichier (source unique de vérité). Quatre familles de critères :
+
+| Famille | Section | Effet |
+|---|---|---|
+| **Structurés** (filtre dur) | `## Critères du bien` | départements, types, surface, pièces, terrain, prix, DPE, photos |
+| **Mots-clés** (filtre dur sur le TEXTE) | `## Filtre mots-clés` | `mots_obligatoires` (ET) et `mots_interdits` (exclusion) |
+| **Qualitatif** (tri, non éliminatoire) | `## Description qualitative` | texte libre évalué par le LLM → score « Match qual. » + tri |
+| **Pipeline** | `## Scheduler` | intervalles, `max_biens_suivi` |
+
+Boucle de réglage rapide (sans re-scraper, ~1 min) après chaque édition de `criteria.md` :
+
+```bash
+OLLAMA_HOST=http://127.0.0.1:11434 python orchestrator.py --only-analyse
 ```
 
-### 2. Ajuster les critères
-
-Édite `config/criteres.yaml` : budget, surface, types de biens, pondérations de scoring.
+> Astuce : une **exclusion** dans la description qualitative doit commencer la ligne par
+> `pas de…` / `sans…` / `non…` (sinon elle est lue comme un critère positif). Pour écarter
+> **dur**, mets le terme dans `mots_interdits` plutôt que dans la description qualitative.
 
 ## Utilisation
 
 ```bash
-# Pipeline complet (discovery → build → hunt → analyse)
-python orchestrator.py
+python orchestrator.py                       # pipeline complet (discovery → build → hunt → analyse)
+python orchestrator.py --skip-discovery --skip-build   # scrapers déjà générés
+python orchestrator.py --only-analyse        # re-filtre + re-score le dernier raw, sans re-scraper
 
-# Re-lancer seulement la recherche (scrapers déjà générés)
-python orchestrator.py --skip-discovery --skip-build
-
-# Re-scorer le dernier jeu de données sans re-scraper
-python orchestrator.py --only-analyse
-
-# Workers individuels
-python workers/discovery.py
-python workers/builder.py
+# Workers / scrapers en isolation (debug)
 python workers/hunter.py
-python workers/analyst.py
+python scrapers/bienici.py
 ```
 
 ## Déploiement en production (Docker + GPU)
 
-Le **scheduler** (`scheduler.py`) tourne en boucle continue et c'est lui — et lui seul —
-qui maintient `data/output/suivi_actif.xlsx` (le fichier de suivi cumulatif). En prod on
-le fait tourner dans un conteneur Docker avec GPU NVIDIA pour le scoring CLIP.
+Le **scheduler** tourne en boucle continue et c'est lui — et lui seul — qui maintient
+`data/output/suivi_actif.xlsx`. La stack est **multi-conteneurs** (`docker-compose.yml`) :
+
+- **`ollama`** — serveur LLM local (utilise le GPU) ;
+- **`ollama-pull`** — tâche one-shot : télécharge le modèle au 1er lancement ;
+- **`scheduler`** — le pipeline, parle à Ollama via le réseau Docker interne.
 
 > ⚠️ `orchestrator.py` produit des instantanés `resultats_*.xlsx` mais **ne met jamais à
 > jour** `suivi_actif.xlsx`. Seul le scheduler le fait.
@@ -71,126 +89,89 @@ le fait tourner dans un conteneur Docker avec GPU NVIDIA pour le scoring CLIP.
 
 - Docker Engine + Docker Compose v2
 - **GPU NVIDIA** : driver à jour + [`nvidia-container-toolkit`](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-- Sous **WSL2** : driver NVIDIA installé côté **Windows** (pas dans WSL), puis le toolkit dans WSL
+- Sous **WSL2** : driver NVIDIA installé côté **Windows**, puis le toolkit dans WSL
 
-Vérifier que Docker voit le GPU :
-```bash
-docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
-```
+Vérifier que Docker voit le GPU : `docker run --rm --gpus all ubuntu nvidia-smi`
 
 ### Build & lancement
 
 ```bash
-docker compose up -d --build       # construit l'image (torch CUDA + Chromium + CLIP) et démarre le scheduler
-docker compose logs -f scheduler   # suivre la boucle en direct
+./run_prod.sh                      # build + lance toute la stack (recommandé)
+./run_prod.sh --logs               # + suit les logs du scheduler
+./run_prod.sh --cpu                # Ollama sans GPU (plus lent)
+./run_prod.sh --model qwen2.5:7b   # surcharge le modèle qualitatif
+# ou directement :
+docker compose up -d --build
+docker compose logs -f scheduler   # logs du pipeline
+docker compose logs -f ollama      # logs du LLM
 ```
 
-Au démarrage, le log doit afficher le GPU — sinon le conteneur **s'arrête en erreur**
-(garde-fou `IMMO_FORCE_GPU=1`, pas de repli CPU silencieux) :
-```
-[Vision] CLIP chargé sur cuda (NVIDIA GeForce RTX ...)
-```
+Le GPU est utilisé par **Ollama** (l'app est CPU). Au 1er lancement, `ollama-pull`
+télécharge le modèle (`qwen2.5:3b` par défaut, ~2 Go, persisté dans le volume
+`ollama-models`) ; le scheduler **attend** qu'il soit prêt. Surcharge :
+`QUALITATIVE_MODEL=qwen2.5:7b ./run_prod.sh`.
 
-### Variante pas à pas (commandes Docker brutes, sans Compose)
-
-Si tu veux comprendre ce que fait Compose, voici l'équivalent en commandes Docker
-directes. Chaque option correspond à une ligne du `docker-compose.yml`.
-
-```bash
-# 1) Construire l'image (la 1re fois, ou après une modif du code/des deps).
-#    Télécharge torch CUDA + Chromium + le modèle CLIP : plusieurs Go, plusieurs minutes.
-docker build -t immo-agent:prod .
-
-# 2) Lancer le scheduler dans un conteneur détaché.
-docker run -d \
-  --name immo-agent-scheduler \
-  --restart unless-stopped \          # redémarre après crash / reboot
-  --gpus all \                        # expose le GPU NVIDIA au conteneur
-  -e IMMO_FORCE_GPU=1 \               # exige le GPU (échoue si absent)
-  -v "$(pwd)/data:/app/data" \        # persiste suivi_actif.xlsx, biens_vus.json, etc.
-  -v "$(pwd)/config:/app/config" \    # criteria.md éditable à chaud
-  -v "$(pwd)/logs:/app/logs" \        # logs lisibles depuis l'hôte
-  immo-agent:prod                     # l'image construite à l'étape 1
-#  → la commande lancée dans le conteneur est `python scheduler.py` (CMD du Dockerfile)
-
-# 3) Suivre la boucle en direct
-docker logs -f immo-agent-scheduler
-
-# 4) Piloter le conteneur
-docker stop immo-agent-scheduler       # arrêter
-docker start immo-agent-scheduler      # relancer
-docker rm -f immo-agent-scheduler      # supprimer (les données restent dans ./data)
-```
-
-> Le conteneur exécute `python scheduler.py` en PID 1 : la boucle infinie du scheduler
-> EST le processus principal du conteneur. Pas besoin de `nohup` ni de `&` — Docker gère
-> le détachement (`-d`) et le redémarrage (`--restart`).
-
-C'est strictement équivalent à `docker compose up -d --build` ; Compose ne fait que lire
-ces mêmes options depuis `docker-compose.yml`. Utilise l'un **ou** l'autre, pas les deux
-(ils créeraient deux conteneurs concurrents).
+> Lancer les conteneurs « à la main » avec `docker run` exigerait de recréer le réseau et
+> d'ordonner les dépendances : utilise `./run_prod.sh` ou `docker compose`, pas `docker run` brut.
 
 ### Persistance
 
-Trois volumes sont montés (cf. `docker-compose.yml`) :
-
-| Montage | Contenu | Pourquoi |
-|---|---|---|
-| `./data` → `/app/data` | `suivi_actif.xlsx`, `biens_vus.json`, `scheduler_state.json`, `raw/`, `output/` | survit aux redémarrages **et** reste lisible depuis l'hôte (ouvre l'Excel dans `./data/output/`) |
-| `./config` → `/app/config` | `criteria.md`, `elements.yaml` | édition **à chaud** : le prochain cycle relit `criteria.md`, pas de rebuild |
-| `./logs` → `/app/logs` | journaux | accessibles depuis l'hôte |
+| Montage | Contenu |
+|---|---|
+| `./data` → `/app/data` | `suivi_actif.xlsx`, `biens_vus.json`, `scheduler_state.json`, `raw/`, `output/` |
+| `./config` → `/app/config` | `criteria.md` (édition à chaud : relu au cycle suivant) |
+| `./logs` → `/app/logs` | journaux |
+| volume `ollama-models` | modèles Ollama (pas de re-téléchargement au redémarrage) |
 
 ### Exploitation
 
 ```bash
-docker compose ps                  # état du conteneur
-docker compose logs -f scheduler   # logs en direct
-docker compose restart scheduler   # redémarrer (relit criteria.md)
-docker compose down                # arrêter
-docker compose up -d --build       # après un git pull / nouveau scraper : rebuild + relance
+docker compose ps
+docker compose logs -f scheduler
+docker compose restart scheduler   # relit criteria.md
+docker compose down
 ```
-
-### Repli CPU (sans GPU)
-
-Pour tourner sans GPU : dans `Dockerfile` remplacer l'index `cu124` par `cpu`, et dans
-`docker-compose.yml` retirer `gpus: all` et passer `IMMO_FORCE_GPU` à `"0"`.
 
 ### ⚠️ Un seul scheduler à la fois
 
 Ne pas lancer `scheduler.py` sur l'hôte **et** dans le conteneur simultanément : ils
-écriraient dans le même `data/` (dédup, état, Excel) → conflits.
+écriraient dans le même `data/` → conflits.
 
 ## Output
 
-- `data/raw/biens_raw_YYYYMMDD_HHMM.json` — données brutes
-- `data/output/resultats_YYYYMMDD_HHMM.xlsx` — Excel scoré avec résumé LLM
+- `data/raw/biens_raw_YYYYMMDD_HHMM.json` — biens bruts survivants (sortie du Hunter)
+- `data/output/resultats_YYYYMMDD_HHMM.xlsx` — Excel final, trié par match qualitatif
+- `data/output/suivi_actif.xlsx` — suivi cumulatif (maintenu par le scheduler)
 
-### Colonnes Excel
+### Colonnes Excel (principales)
 
 | Colonne | Description |
 |---|---|
-| Score | Score pondéré /100 (vert ≥70, jaune ≥45, rouge <45) |
-| Prix/m² | Prix calculé du bien |
-| Prix/m² marché | Médiane DVF du département |
-| Alertes | Anomalies détectées (DPE, prix, travaux...) |
+| Match qual. | Score LLM 0–100 de correspondance avec `description_qualitative` (tri) |
+| Extrait qual. | Justification courte du LLM |
+| Prix / Prix m² / Prix m² marché | prix du bien et médiane DVF du département |
+| DPE, Gare, Bus | annotations (non éliminatoires) |
+| Satellite / Ortho+cadastre | liens de vérification visuelle (Google / Geoportail) |
+| Alertes | anomalies (DPE, prix vs marché, doublon photo fusionné…) |
 
-## Ajouter un scraper manuellement
+## Ajouter un scraper
 
-Crée `scrapers/mon_site.py` avec cette interface :
+Crée `scrapers/mon_site.py` exposant l'interface obligatoire :
 
 ```python
 async def search(criteres: dict) -> list[dict]:
-    """
-    criteres: {departements, types_bien, surface_min, prix_max, ...}
-    Retourne une liste de dicts conformes au modèle Bien.
-    """
+    """criteres: {departements, types_bien, surface_min, prix_max, ...}
+    Retourne une liste de dicts conformes au modèle Bien (models.py)."""
     ...
 ```
 
-Puis ajoute la source dans `config/sources.yaml`.
+Puis déclare la source dans `config/sources.yaml`. Voir `CLAUDE.md` pour les conventions,
+la blacklist anti-bot et la liste des scrapers actifs.
 
 ## Notes légales
 
-- **PAP**, **DVF (data.gouv.fr)**, **immonot** : usage autorisé
-- **LeBonCoin**, **SeLoger** : scraping interdit par CGU — utiliser avec discernement
-- Pour usage intensif, privilégier des services comme Apify ou ScraperAPI
+- **DVF (data.gouv.fr)**, **immonot**, **immobilier.notaires.fr** : usage autorisé
+- **LeBonCoin**, **SeLoger**, **PAP**, **Logic-Immo** : protégés (Cloudflare / CGU) — voir la
+  blacklist dans `sources.yaml`
+- On ne scrape pas les tuiles cartographiques (liens pour clic humain uniquement)
+- Pour usage intensif sur sites bloqués : Apify / ScraperAPI

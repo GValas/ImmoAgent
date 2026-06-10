@@ -8,6 +8,7 @@ python-dateutil>=2.9.0
 # Traitement d'images (empreinte photo pour la déduplication inter-sources)
 Pillow>=10.0.0
 numpy>=1.26.0
-# Matching qualitatif NLP (embeddings de phrases ; tire torch en dépendance).
-# Modèle paraphrase-multilingual-MiniLM-L12-v2 téléchargé au 1er run (~120 Mo).
-sentence-transformers>=2.7.0
+# Matching qualitatif : déléguée à un LLM local servi par Ollama (conteneur
+# dédié, cf. docker-compose.yml + workers/qualitative.py). Appels via httpx
+# (déjà listé ci-dessus) → AUCUNE dépendance Python lourde ici (plus de
+# sentence-transformers ni torch).
