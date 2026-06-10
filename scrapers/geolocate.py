@@ -62,6 +62,20 @@ def maps_links(lat: float, lon: float) -> dict:
     }
 
 
+def rome2rio_url(ville: str, code_postal: str | None = None) -> str:
+    """Lien Rome2Rio (planificateur multimodal) Paris → commune : permet de vérifier
+    d'un clic le temps de trajet en train/transports depuis Paris (critère
+    « accessible par le train »). Lien cliquable seulement — aucun appel API.
+    Ne dépend pas des coordonnées : commune + code postal suffisent."""
+    from urllib.parse import quote
+    ville = (ville or "").strip()
+    if not ville:
+        return ""
+    cp = str(code_postal or "").strip()
+    dest = f"{ville} {cp}".strip() if cp else f"{ville}, France"
+    return f"https://www.rome2rio.com/s/Paris/{quote(dest)}"
+
+
 # ──────────────────────────────────────────────
 # Enrichissement des biens
 # ──────────────────────────────────────────────
@@ -247,6 +261,9 @@ async def annotate_biens(biens: list[dict], criteres=None) -> list[dict]:
     """
     async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=40) as client:
         async def enrich(b: dict):
+            # Lien accessibilité Rome2Rio (Paris → commune) : indépendant des coords,
+            # posé sur tous les biens.
+            b["rome2rio_url"] = rome2rio_url(b.get("ville", ""), b.get("code_postal"))
             coords, _radius, precis = await _coords_for(client, b)
             if not coords:
                 b["geo_precis"] = False

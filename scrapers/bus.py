@@ -33,10 +33,11 @@ import math
 import unicodedata
 import httpx
 
-# Plusieurs miroirs Overpass — on bascule sur le suivant en cas d'échec.
+# Miroir Overpass. (2026-06-10 : kumi.systems était mort et openstreetmap.fr est
+#  whitelist-only — 403. On garde le miroir canonique overpass-api.de, qui répond,
+#  À CONDITION d'un User-Agent honnête : le spoof « Mozilla/… » renvoyait 406.)
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
 ]
 
 # Sentinelle : Overpass injoignable (≠ "joignable mais aucun arrêt trouvé").
@@ -46,7 +47,9 @@ _OVERPASS_UNAVAILABLE = object()
 _BREAKER_THRESHOLD = 3
 GEO_API_URL = "https://geo.api.gouv.fr/communes"
 
-_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) immo-agent"}
+# UA honnête : overpass-api.de renvoie 406 sur un User-Agent qui usurpe un navigateur
+# (« Mozilla/… ») ; il accepte un UA descriptif. NE PAS remettre un UA Mozilla ici.
+_HEADERS = {"User-Agent": "immo-agent/1.0 (personal real-estate search)"}
 
 # Caches de session
 _GEOCODE_CACHE: dict[str, tuple[float, float] | None] = {}
@@ -201,7 +204,10 @@ async def annotate_biens(biens: list[dict], rayon_km: float = 2.0) -> list[dict]
 
     rayon_m = max(100, int(rayon_km * 1000))
 
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=40) as client:
+    # Timeout borné : connect 8 s (un miroir mort échoue vite au lieu de hanger),
+    # read 28 s (une requête Overpass chargée peut prendre jusqu'à ~25 s côté serveur).
+    _to = httpx.Timeout(28.0, connect=8.0)
+    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=_to) as client:
         geo_sem = asyncio.Semaphore(8)       # géocodage geo.api.gouv.fr (tolérant)
         # Overpass public demande un accès quasi-séquentiel (sinon 429). Sur les
         # quelques biens survivants annotés ici, le coût total reste faible.

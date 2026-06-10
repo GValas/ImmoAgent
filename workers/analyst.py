@@ -204,9 +204,10 @@ def export_excel(biens: list[dict], resume: str) -> Path:
     ws = wb.active
     ws.title = "Résultats"
 
+    from scrapers.geolocate import rome2rio_url
     headers = [
         "Match qual.", "Source", "Titre", "Ville",
-        "Dép", "Département", "Gare", "Bus",
+        "Dép", "Département", "Gare", "Bus", "Accessibilité",
         "Surface", "Terrain", "Pièces", "DPE",
         "Prix (€)", "Prix/m²", "Prix/m² marché",
         "Alertes", "Extrait qual.",
@@ -225,6 +226,7 @@ def export_excel(biens: list[dict], resume: str) -> Path:
 
     # Colonnes affichées comme hyperliens : {index_1based: libellé du lien}
     link_labels = {
+        headers.index("Accessibilité") + 1: "Paris ▸ train",
         headers.index("Satellite") + 1: "Vue satellite",
         headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
         headers.index("URL") + 1: "Voir l'annonce",
@@ -245,6 +247,7 @@ def export_excel(biens: list[dict], resume: str) -> Path:
              if b.get("gare_nom") else ""),
             (f"{b.get('bus_nom')} ({b.get('bus_distance_km')} km)"
              if b.get("bus_proche") else ""),
+            b.get("rome2rio_url") or rome2rio_url(b.get("ville", ""), b.get("code_postal")),
             b.get("surface"),
             b.get("surface_terrain"),
             b.get("pieces"),
@@ -274,7 +277,7 @@ def export_excel(biens: list[dict], resume: str) -> Path:
                 cell.style = "Hyperlink"  # style natif Excel → change de couleur après clic
 
     # Largeurs colonnes
-    widths = [8, 12, 40, 20, 6, 18, 24, 22, 9, 9, 8, 6, 12, 10, 14, 45, 40,
+    widths = [8, 12, 40, 20, 6, 18, 24, 22, 16, 9, 9, 8, 6, 12, 10, 14, 45, 40,
               14, 26, 20, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w

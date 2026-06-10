@@ -383,9 +383,11 @@ def _write_suivi_excel(biens: list[dict]):
 
     # Aligné sur l'export resultats_*.xlsx (workers/analyst.py) + colonne
     # suivi-spécifique « Ajouté le ». Inclut géoloc et liens satellite/cadastre.
+    from scrapers.geolocate import rome2rio_url
     headers = [
         "Match qual.", "Ajouté le", "Source", "Titre",
-        "Ville", "Dép", "Département", "Gare", "Bus", "Surface", "Terrain", "Pièces", "DPE",
+        "Ville", "Dép", "Département", "Gare", "Bus", "Accessibilité",
+        "Surface", "Terrain", "Pièces", "DPE",
         "Prix (€)", "Prix/m²", "Prix/m² marché", "Alertes",
         "Satellite", "Ortho+cadastre", "URL"
     ]
@@ -401,6 +403,7 @@ def _write_suivi_excel(biens: list[dict]):
 
     # Colonnes affichées comme hyperliens : {index_1based: libellé}
     link_labels = {
+        headers.index("Accessibilité") + 1: "Paris ▸ train",
         headers.index("Satellite") + 1: "Vue satellite",
         headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
         headers.index("URL") + 1: "Voir l'annonce",
@@ -422,6 +425,7 @@ def _write_suivi_excel(biens: list[dict]):
              if b.get("gare_nom") else ""),
             (f"{b.get('bus_nom')} ({b.get('bus_distance_km')} km)"
              if b.get("bus_proche") else ""),
+            b.get("rome2rio_url") or rome2rio_url(b.get("ville", ""), b.get("code_postal")),
             b.get("surface"),
             b.get("surface_terrain"),
             b.get("pieces"),
@@ -448,7 +452,7 @@ def _write_suivi_excel(biens: list[dict]):
                 c.value = link_labels[col]
                 c.style = "Hyperlink"
 
-    widths = [8, 12, 12, 40, 18, 6, 18, 24, 22, 9, 9, 8, 6, 12, 10, 14, 35,
+    widths = [8, 12, 12, 40, 18, 6, 18, 24, 22, 16, 9, 9, 8, 6, 12, 10, 14, 35,
               20, 14, 16, 16]
     for col, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
