@@ -47,7 +47,9 @@ services:
   #     `ollama pull` est idempotent (no-op si le modèle est déjà dans le volume).
   ollama-pull:
     image: ollama/ollama:latest
-    container_name: immo-agent-ollama-pull
+    # Pas de container_name fixe : tâche one-shot (elle sort une fois le modèle pull).
+    # Un nom fixe laisserait un conteneur « Exited » qui bloquerait le prochain `up`
+    # (« container name already in use ») → on laisse compose l'auto-nommer.
     depends_on:
       ollama:
         condition: service_healthy

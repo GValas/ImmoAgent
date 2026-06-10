@@ -20,8 +20,11 @@
 #
 # `departements`, `types`, `surface_*`, `pieces_*`, `terrain_min`, `prix_*` et
 # `dpe_exclus` sont envoyés aux scrapers quand le site le permet, PUIS re-vérifiés
-# après scraping (hunter.filter_biens). Un bien sans prix/surface/DPE renseigné
-# n'est PAS exclu par ces tests.
+# après scraping (hunter.filter_biens). Un bien sans prix/surface renseigné n'est PAS
+# exclu par ces tests. NB : le DPE et le TERRAIN sont en plus ré-extraits APRÈS la page
+# détail (DPE depuis le diagnostic, terrain depuis la description quand le scraper ne le
+# renseigne pas — ex. « terrain de 412 m² ») puis re-filtrés → un terrain énoncé
+# seulement dans le texte est désormais pris en compte par `terrain_min`.
 
 ## Critères du bien
 
