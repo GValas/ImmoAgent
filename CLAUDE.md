@@ -19,7 +19,9 @@ qualitatif NLP) et produit un fichier Excel de suivi trié par pertinence qualit
 > `workers/vision.py`, la logique d'éléments et l'ancien `config/elements.yaml`).
 
 Le pipeline peut tourner en continu via `scheduler.py`.
-**Aucun appel API Anthropic dans le code** — Claude Code (Pro) est le seul point d'intelligence.
+**Aucun appel API Anthropic dans le code.** La seule « intelligence » runtime est un
+**LLM local servi par Ollama** (conteneur dédié) pour le match qualitatif ; Claude Code
+(Pro) reste le point d'intelligence côté développement (génération de scrapers, debug).
 
 ---
 
@@ -38,7 +40,7 @@ workers/
                       enrichit page détail (photos/DPE/description), filtre mots-clés,
                       annote gare/bus/géoloc
   analyst.py          Worker 4 — enrichit (DVF, alertes), résumé local, export Excel
-  qualitative.py      Util analyst — match NLP description_qualitative ↔ annonce (embeddings, GPU si dispo)
+  qualitative.py      Util analyst — match description_qualitative ↔ annonce via LLM local Ollama (conteneur dédié)
 
 scrapers/             25 scrapers actifs + 4 inactifs (voir liste ci-dessous)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
@@ -174,23 +176,37 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
 
 ## Points d'attention
 
-### Match qualitatif NLP (ajouté le 2026-06-09)
-- `workers/qualitative.py` compare la `description_qualitative` (criteria.md, texte
-  libre FR) au titre + **description complète** de chaque annonce (enrichie en page
-  détail par `gallery.py`) par **embeddings de phrases** (`sentence-transformers`,
-  modèle `paraphrase-multilingual-MiniLM-L12-v2`, ~120 Mo téléchargé au 1er run).
-  **Réintroduit `torch`** (retiré pour CLIP) — assumé.
-- **GPU** : le modèle est chargé sur **CUDA si disponible** (device explicite via
-  `_pick_device()`, log « … sur CUDA » + nom du GPU), repli **CPU** sinon. Vérifié
-  sur RTX 4070 Ti (torch `cu126`). `python workers/qualitative.py` affiche le device.
+### Match qualitatif via LLM local Ollama (refondu le 2026-06-10)
+- `workers/qualitative.py` évalue la correspondance `description_qualitative`
+  (criteria.md, texte libre FR) ↔ titre + **description complète** de chaque annonce
+  (enrichie en page détail par `gallery.py`) via un **petit LLM instruct servi par
+  Ollama** dans un conteneur dédié. **Remplace l'ancien moteur d'embeddings**
+  (`sentence-transformers`) — `torch` et le modèle embarqué ont disparu, l'image
+  applicative est redevenue légère / CPU.
+- **Pourquoi un LLM** : contrairement aux embeddings, il comprend la **négation**
+  (« pas de », « non », « sans »), les **seuils numériques** (« piscine ≥ 4×9 m »)
+  et pèse plusieurs critères. Un **3-4B suffit** pour ce scoring cadré — pas besoin
+  d'un gros modèle (la similarité pure n'est pas l'objectif).
+- **Interface ASYNCHRONE** : `async def annotate_biens(biens, description_qualitative)`.
+  Appelée avec `await` dans `analyst.run` / `scheduler.run_cycle`, et via
+  `asyncio.run(...)` dans `scheduler.refilter_suivi` (synchrone). Appels HTTP à
+  `OLLAMA_HOST/api/chat` (httpx, `format: json`, `temperature: 0`), concurrence
+  bornée (`QUALITATIVE_CONCURRENCY`, défaut 4).
+- **Config (env, posées par docker-compose)** : `OLLAMA_HOST`
+  (défaut `http://localhost:11434`), `QUALITATIVE_MODEL` (défaut `qwen2.5:3b`).
+  Surcharge : `QUALITATIVE_MODEL=qwen2.5:7b docker compose up -d`.
+- **Conteneurs** : `docker-compose.yml` définit `ollama` (LLM, GPU), `ollama-pull`
+  (one-shot : `ollama pull` du modèle, persiste dans le volume `ollama-models`) et
+  `scheduler` (dépend des deux via `service_healthy` / `service_completed_successfully`).
+  Le GPU est passé à **Ollama** (plus à l'app). `./run_prod.sh` lance la stack
+  (`docker compose up -d --build`) ; `--cpu` ajoute `docker-compose.cpu.yml`.
 - **NON éliminatoire** : annote `match_qualitatif` (0–100) et `match_extrait`
-  (phrase la plus proche) ; l'analyst **trie** les résultats par `match_qualitatif`
-  décroissant + colonnes Excel « Match qual. » / « Extrait qual. ». Désactivé si
-  `description_qualitative` est vide.
-- **Dégradation gracieuse** : si `sentence-transformers`/modèle indisponible, no-op
-  avec avertissement — le pipeline continue sans cette annotation (rien n'est éliminé).
-- Les similarités sémantiques se tassent vers 30–60 ; c'est l'**ordre relatif** qui
-  compte.
+  (**justification courte du LLM** — preuve lisible) ; l'analyst **trie** par
+  `match_qualitatif` décroissant + colonnes Excel « Match qual. » / « Extrait qual. ».
+  Désactivé si `description_qualitative` est vide.
+- **Dégradation gracieuse** : si Ollama est injoignable ou le modèle absent, no-op
+  avec avertissement — le pipeline continue (rien n'est éliminé). Test standalone :
+  `OLLAMA_HOST=http://localhost:11434 python workers/qualitative.py`.
 
 ### Filtre mots-clés obligatoires / interdits (ajouté le 2026-06-09)
 - Deux listes dans `criteria.md` (`## Filtre mots-clés`) : `mots_obligatoires`
@@ -287,23 +303,34 @@ Un site en blacklist ne doit pas être retenté sans changement de stratégie (p
 ## Commandes utiles
 
 ```bash
-# Installation
+# Installation (app légère, CPU — plus de torch ni de modèle embarqué)
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 
-# Pas de clé API requise
+# Pas de clé API Anthropic. Le match qualitatif appelle un LLM LOCAL Ollama :
+#   - en prod : conteneur `ollama` (docker compose), OLLAMA_HOST posé automatiquement
+#   - en local : un Ollama joignable + export OLLAMA_HOST=http://127.0.0.1:11434
+#                (sinon le match qualitatif est juste sauté — pipeline OK).
+#   QUALITATIVE_MODEL (défaut qwen2.5:3b), QUALITATIVE_NUM_PREDICT, QUALITATIVE_CONCURRENCY.
+
+# Déploiement prod (multi-conteneurs : ollama + scheduler)
+./run_prod.sh                                 # build + lance la stack (docker compose)
+./run_prod.sh --logs                          # + suit les logs du scheduler
+./run_prod.sh --cpu                           # Ollama sans GPU
+./run_prod.sh --model qwen2.5:7b              # surcharge le modèle
 
 # Pipeline à la demande
 python orchestrator.py                        # pipeline complet
 python orchestrator.py --skip-discovery       # sans Discovery
 python orchestrator.py --skip-build           # sans Builder
-python orchestrator.py --only-analyse         # ré-enrichir le dernier raw
+python orchestrator.py --only-analyse         # ré-enrichir/re-scorer le dernier raw
+                                              # (boucle de réglage rapide de criteria.md)
 
-# Pipeline continu
+# Pipeline continu (en local ; en prod c'est le conteneur scheduler)
 python scheduler.py                           # boucle infinie
 python scheduler.py --once                    # un seul cycle (debug)
-nohup python scheduler.py > logs/scheduler.log 2>&1 &
+python scheduler.py --refilter                # re-filtre + re-score le suivi, sans scraper
 
 # Tester un scraper individuellement
 python scrapers/bienici.py

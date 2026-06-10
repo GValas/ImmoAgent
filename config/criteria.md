@@ -6,7 +6,8 @@
 # Deux familles de critères :
 #   1. SCRAPING  → filtre dur sur des champs STRUCTURÉS (type, surface, prix,
 #      pièces, terrain, DPE). Aucune interprétation : un nombre, on garde ou on jette.
-#   2. ANALYSE   → la description qualitative, matchée à l'annonce par NLP (tri).
+#   2. ANALYSE   → la description qualitative, évaluée par un LLM local (Ollama) qui
+#                  note la correspondance avec chaque annonce et TRIE (non éliminatoire).
 #                  La géo (gare + liens satellite/cadastre) est automatique.
 #
 # Lecture (config_loader.py) : chaque bloc de code (entre triple accents graves)
@@ -61,26 +62,32 @@ photos_min:  3          # exclure les annonces avec moins de N photos
 # Insensible à la casse et aux accents ; correspondance par sous-chaîne (donc
 # « pierre » matche aussi « pierres »). À distinguer de la description qualitative,
 # qui n'élimine pas mais trie.
-#   • mots_obligatoires : TOUS doivent être présents (logique ET) — un seul
-#     manquant ⇒ le bien est écarté.
-#   • mots_interdits    : si un seul est présent ⇒ le bien est écarté.
+#   • mots_obligatoires : TOUS doivent être présents EN CONTEXTE AFFIRMATIF
+#     (logique ET). Une mention d'absence/potentiel ne compte pas : « sans piscine »,
+#     « emplacement pour piscine », « on rêverait d'une piscine » ⇒ piscine ABSENTE.
+#   • mots_interdits    : si un seul est présent (sous-chaîne) ⇒ le bien est écarté.
 # Laisser une liste vide ([]) la désactive.
 
 ## Filtre mots-clés
 
 ```
 mots_obligatoires: ["piscine"]        
-mots_interdits:    ["viager", "hors-sol", "hors sol"]      
+mots_interdits:    ["viager", "piscine hors-sol", "piscine hors sol", "piscine intérieure", "piscine semi-enterrée", "piscine enterrée", "maison contemporaine", "maison moderne", "lotissement"]
 ```
 
 
-# ── PHASE 2 — DESCRIPTION QUALITATIVE (NLP, non éliminatoire) ─────────────────
+# ── PHASE 2 — DESCRIPTION QUALITATIVE (LLM local, non éliminatoire) ───────────
 #
-# Texte libre comparé SÉMANTIQUEMENT (embeddings) au titre + description de chaque
-# annonce. Remplit les colonnes Excel « Match qual. » (0–100) et « Extrait qual. »,
-# et TRIE les résultats. Synonymes/reformulations compris (« cachet » ≈ « caractère »).
-# Désactiver : laisser le texte vide. NB : les similarités se tassent vers 30–60,
-# c'est l'ORDRE relatif qui compte.
+# Texte libre soumis à un LLM local (Ollama, modèle QUALITATIVE_MODEL, défaut
+# qwen2.5:3b) qui ÉVALUE la correspondance avec le titre + description complète de
+# chaque annonce. Remplit les colonnes Excel « Match qual. » (0–100) et
+# « Extrait qual. » (justification du LLM), et TRIE les résultats. NE supprime rien.
+# Le LLM comprend la NÉGATION et les nuances — MAIS pour qu'une exclusion soit prise
+# comme telle, formule-la EN TÊTE DE LIGNE : « pas de … », « sans … », « non … »
+# (une négation au milieu d'une phrase reste un critère positif sur le thème).
+# Pour écarter DUR (et pas seulement rétrograder), utilise plutôt `mots_interdits`.
+# Désactiver le tri qualitatif : laisser le texte vide. C'est l'ORDRE relatif qui
+# compte (les scores se tassent souvent vers 20–75).
 
 ## Description qualitative
 
@@ -88,12 +95,14 @@ mots_interdits:    ["viager", "hors-sol", "hors sol"]
 description_qualitative: |
   - A moins de 4h de Paris 11e en train sans voiture
   - Proche de tous commerces (boulangerie, médecin, supermarché)
-  - Zone non inondable ; idéalement proche d'un fleuve ou d'une rivière
-  - Piscine : au moins 4×9 m — éliminatoire si absente
-  - Bon état général, sans travaux à prévoir
+  - idéalement proche d'un fleuve ou d'une rivière
+  - Piscine : au moins 4×9 m
+  - Bon état général
   - Champêtre, caractère, authentique
   - Matériaux : pierres apparentes, pierre de taille, colombages, briques anciennes
-  - PAS de contemporain / lotissement / moderne
+  - pas de zone inondable
+  - pas de travaux à prévoir
+  - pas de maison contemporaine, moderne ou d'architecte
 ```
 
 

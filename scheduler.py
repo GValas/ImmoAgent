@@ -303,10 +303,12 @@ def refilter_suivi():
     """Ré-applique le filtrage A POSTERIORI au suivi cumulatif EXISTANT, sans
     re-scraper, puis régénère data/output/suivi_actif.xlsx.
 
-    Répercute un changement de criteria.md (ex. nouveau mot interdit) sur le suivi
-    déjà constitué : garde-fou département + filtre structurel (prix/surface/
-    pièces/DPE) + mots-clés (obligatoires/interdits) + photos_min, sur les données
-    DÉJÀ scrapées et enrichies. Ne fait AUCUNE requête réseau (pas de liveness)."""
+    Répercute un changement de criteria.md (ex. nouveau mot interdit, nouvelle
+    description qualitative) sur le suivi déjà constitué : garde-fou département +
+    filtre structurel (prix/surface/pièces/DPE) + mots-clés (obligatoires/interdits)
+    + photos_min, puis ré-annotation qualitative NLP (re-score + re-tri), sur les
+    données DÉJÀ scrapées et enrichies. Ne re-scrape RIEN (pas de requête liste/
+    détail, pas de liveness) ; seul le NLP tourne en local (GPU si dispo)."""
     cfg = load_scheduler_config()
     criteres = load_criteria()
     suivi_json = DATA_DIR / "suivi_actif.json"
@@ -333,6 +335,15 @@ def refilter_suivi():
     pmin = getattr(criteres, "photos_min", 0)
     if pmin:
         biens = [b for b in biens if len(b.get("photos") or []) >= pmin]
+
+    # Ré-annotation qualitative (NLP) sur les survivants : répercute un changement
+    # de description_qualitative et rafraîchit match_qualitatif avant le tri.
+    desc_qual = getattr(criteres, "description_qualitative", "") or ""
+    if desc_qual.strip() and biens:
+        from workers.qualitative import annotate_biens as qual_annotate
+        # refilter_suivi() est synchrone (lancé depuis __main__ hors boucle) :
+        # on exécute la coroutine d'annotation via asyncio.run.
+        asyncio.run(qual_annotate(biens, desc_qual))
 
     # Tri par match qualitatif décroissant + plafond max_biens_suivi.
     biens.sort(key=lambda x: x.get("match_qualitatif") or 0, reverse=True)
@@ -487,7 +498,7 @@ async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> dict:
                 desc_qual = getattr(criteres, "description_qualitative", "") or ""
                 if desc_qual.strip():
                     from workers.qualitative import annotate_biens as qual_annotate
-                    qual_annotate(new_biens, desc_qual)
+                    await qual_annotate(new_biens, desc_qual)
 
                 enriched = [enrich_bien(b, prix_marche) for b in new_biens]
                 await update_suivi(enriched, cfg)

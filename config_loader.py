@@ -36,7 +36,11 @@ def load_criteria() -> CriteresRecherche:
     for block in blocks:
         try:
             data = yaml.safe_load(block)
-        except Exception:
+        except Exception as e:
+            # Un bloc invalide ne doit PAS être avalé en silence : sinon une simple
+            # faute de frappe (guillemet manquant…) désactive des critères sans alerte.
+            print(f"[Config] ⚠️  Bloc YAML ignoré (erreur de syntaxe dans criteria.md) — "
+                  f"les critères de ce bloc sont PERDUS : {e}")
             continue
         if isinstance(data, dict):
             overrides.update(data)

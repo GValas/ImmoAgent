@@ -324,14 +324,55 @@ def _normalize_text(s: str) -> str:
     return "".join(c for c in s if not unicodedata.combining(c))
 
 
+# Marqueurs (texte normalisé) trahissant un mot mentionné sans qu'il soit RÉEL :
+#  - absence, JUSTE avant le mot (« sans piscine », « pas de piscine ») ;
+#  - souhait / potentiel, dans une fenêtre plus large avant (« on rêverait d'une
+#    piscine », « emplacement pour piscine », « possibilité de créer une piscine »).
+_ABSENCE_BEFORE = ("sans ", "pas de ", "pas d", "aucune ", "aucun ", "ni ", "ni de ")
+_WISH_BEFORE = (
+    "rever", "imagin", "possib", "emplacement", "creer", "creation", "constru",
+    "pourrait", "permet", "envisage", "projet", "prevoir",
+    "place pour", "espace pour", "ideal pour", "parfait pour", "pour une", "pour y",
+    "pour installer", "pour amenager", "pour accueillir", "potentiel", "amenageable",
+)
+_WISH_AFTER = (
+    "a creer", "a amenager", "a prevoir", "a construire", "possible", "envisageable",
+    "realisable", "en projet", "potentiel",
+)
+
+
+def _present_affirmative(texte: str, mot: str) -> bool:
+    """True si `mot` apparaît au moins une fois en contexte AFFIRMATIF dans `texte`.
+
+    Écarte les mentions d'absence (« sans piscine ») ou de simple potentiel
+    (« on rêverait d'une piscine », « emplacement pour piscine »). `texte` et `mot`
+    sont supposés déjà normalisés (minuscules, sans accents)."""
+    start = 0
+    while True:
+        pos = texte.find(mot, start)
+        if pos == -1:
+            return False
+        before = texte[max(0, pos - 45):pos]
+        after = texte[pos + len(mot):pos + len(mot) + 25]
+        near_absence = any(before.endswith(a) or before.endswith(a + "la ")
+                           or before.endswith(a + "une ") or before.endswith(a + "grande ")
+                           for a in _ABSENCE_BEFORE)
+        if not near_absence \
+           and not any(w in before for w in _WISH_BEFORE) \
+           and not any(w in after for w in _WISH_AFTER):
+            return True                       # occurrence affirmative trouvée
+        start = pos + len(mot)
+
+
 def filter_mots_cles(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
     """Filtre dur sur le TEXTE de l'annonce (titre + description COMPLÈTE).
 
     Appliqué APRÈS l'enrichissement page détail (la description complète n'existe
     qu'à ce moment), contrairement aux critères structurés qui filtrent au requêtage.
-      - mots_obligatoires : tous doivent figurer (logique ET) ;
-      - mots_interdits    : un seul présent ⇒ exclu.
-    Insensible à la casse/accents, correspondance par sous-chaîne."""
+      - mots_obligatoires : tous doivent figurer en contexte AFFIRMATIF (logique ET) —
+        une mention d'absence/souhait (« on rêverait d'une piscine ») ne compte pas ;
+      - mots_interdits    : un seul présent (sous-chaîne) ⇒ exclu.
+    Insensible à la casse/accents."""
     mots_oblig = [_normalize_text(m) for m in getattr(criteres, "mots_obligatoires", []) or []]
     mots_int = [_normalize_text(m) for m in getattr(criteres, "mots_interdits", []) or []]
     if not (mots_oblig or mots_int):
@@ -342,7 +383,7 @@ def filter_mots_cles(biens: list[dict], criteres: CriteresRecherche) -> list[dic
         texte = _normalize_text(f"{b.get('titre', '')} {b.get('description', '')}")
         if any(m in texte for m in mots_int):
             continue
-        if mots_oblig and not all(m in texte for m in mots_oblig):
+        if mots_oblig and not all(_present_affirmative(texte, m) for m in mots_oblig):
             continue
         kept.append(b)
     return kept
@@ -364,13 +405,22 @@ def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
         if prix and getattr(criteres, 'prix_min', 0) and prix < criteres.prix_min:
             continue
 
-        # Surface min
+        # Surface habitable min / max
         surface = b.get("surface")
         if surface and surface < criteres.surface_min:
             continue
+        if surface and getattr(criteres, "surface_max", 0) and surface > criteres.surface_max:
+            continue
 
-        # Pièces max
+        # Terrain min (surface_terrain) — un bien sans terrain renseigné n'est PAS exclu.
+        terrain = b.get("surface_terrain")
+        if terrain and getattr(criteres, "terrain_min", 0) and terrain < criteres.terrain_min:
+            continue
+
+        # Pièces min / max
         pieces = b.get("pieces")
+        if pieces and getattr(criteres, "pieces_min", 0) and pieces < criteres.pieces_min:
+            continue
         if pieces and getattr(criteres, "pieces_max", 0) and pieces > criteres.pieces_max:
             continue
 
