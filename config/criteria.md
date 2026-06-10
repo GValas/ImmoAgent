@@ -96,13 +96,13 @@ mots_interdits:    ["viager", "piscine hors-sol", "piscine hors sol", "piscine i
 
 ```
 description_qualitative: |
-  - A moins de 4h de Paris 11e en train sans voiture
+  - proche de Paris, accessible par le train, proche d'une gare ou arrêt de bus
   - Proche de tous commerces (boulangerie, médecin, supermarché)
-  - idéalement proche d'un fleuve ou d'une rivière
-  - Piscine : au moins 4×9 m
-  - Bon état général
-  - Champêtre, caractère, authentique
-  - Matériaux : pierres apparentes, pierre de taille, colombages, briques anciennes
+  - proche d'un fleuve ou d'une rivière
+  - grande piscine en plein air
+  - bon état général
+  - champêtre, caractère, authentique
+  - pierres apparentes, pierres de taille, colombages, briques anciennes, bois
   - pas de zone inondable
   - pas de travaux à prévoir
   - pas de maison contemporaine, moderne ou d'architecte
