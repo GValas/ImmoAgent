@@ -58,6 +58,13 @@ fi
 #     tout en gardant les couches lourdes (Playwright) en cache. ---
 export CACHEBUST="$(date +%s)"
 
+# --- Nettoyage idempotent : retire d'éventuels conteneurs aux noms fixes laissés par
+#     un déploiement précédent (ancien `docker run`, ou run compose interrompu). Sans
+#     ça, `compose up` échoue sur « container name already in use ». Les volumes
+#     (dont ollama-models) et le réseau persistent. ---
+docker compose "${COMPOSE_FILES[@]}" down --remove-orphans >/dev/null 2>&1 || true
+docker rm -f immo-agent-scheduler immo-agent-ollama immo-agent-ollama-pull >/dev/null 2>&1 || true
+
 # --- Build + lancement ---
 UP_ARGS=(up -d --remove-orphans)
 if [ "$DO_BUILD" -eq 1 ]; then
