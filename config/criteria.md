@@ -85,10 +85,11 @@ mots_interdits:    ["viager", "piscine hors-sol", "piscine hors sol", "piscine i
 # qwen2.5:3b) qui ÉVALUE la correspondance avec le titre + description complète de
 # chaque annonce. Remplit les colonnes Excel « Match qual. » (0–100) et
 # « Extrait qual. » (justification du LLM), et TRIE les résultats. NE supprime rien.
-# Le LLM comprend la NÉGATION et les nuances — MAIS pour qu'une exclusion soit prise
-# comme telle, formule-la EN TÊTE DE LIGNE : « pas de … », « sans … », « non … »
-# (une négation au milieu d'une phrase reste un critère positif sur le thème).
-# Pour écarter DUR (et pas seulement rétrograder), utilise plutôt `mots_interdits`.
+# Le LLM comprend la NÉGATION et les nuances OÙ QU'ELLES SOIENT dans la phrase
+# (« pas de … », « sans … », « non … », même en milieu de ligne) ainsi que les seuils
+# numériques — écris en langage naturel, comme une consigne à un agent immobilier.
+# Une exclusion ici ne fait que RÉTROGRADER le bien (tri) ; pour l'écarter DUR, mets
+# le terme dans `mots_interdits`.
 # Désactiver le tri qualitatif : laisser le texte vide. C'est l'ORDRE relatif qui
 # compte (les scores se tassent souvent vers 20–75).
 
