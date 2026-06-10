@@ -331,6 +331,19 @@ def refilter_suivi():
 
     # Mêmes filtres a posteriori que le Hunter, sur données déjà enrichies.
     biens = hunter.filter_biens(biens, criteres)
+    # Re-filtre terrain depuis le texte (comme hunter.run) : surface_terrain n'est
+    # souvent que dans la description ; on l'extrait pour les biens sans terrain, puis
+    # on ré-applique terrain_min (les données du suivi sont déjà enrichies/détaillées).
+    _tmin = getattr(criteres, "terrain_min", 0)
+    if _tmin:
+        for b in biens:
+            if not b.get("surface_terrain"):
+                t = hunter.extract_terrain_from_text(b.get("description") or "")
+                if t:
+                    b["surface_terrain"] = t
+                    b["terrain_estime_texte"] = True
+        biens = [b for b in biens
+                 if not (b.get("surface_terrain") and b["surface_terrain"] < _tmin)]
     biens = hunter.filter_mots_cles(biens, criteres)
     pmin = getattr(criteres, "photos_min", 0)
     if pmin:

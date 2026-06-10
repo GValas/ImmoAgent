@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import unicodedata
 from datetime import datetime
 from pathlib import Path
@@ -389,6 +390,39 @@ def filter_mots_cles(biens: list[dict], criteres: CriteresRecherche) -> list[dic
     return kept
 
 
+# Extraction du terrain depuis le TEXTE — fallback quand le scraper ne renseigne pas
+# surface_terrain (beaucoup de sources ne l'exposent que dans la description libre,
+# ex. bsk_immobilier qui met 0). Conservateur : ne retient qu'un nombre clairement
+# rattaché à « terrain »/« parcelle » et suivi de m²/m2, et prend la valeur MAX
+# trouvée (évite d'exclure à tort un bien dont on aurait capté un petit nombre annexe).
+_TERRAIN_NUM = r"(\d[\d  .,]*\d|\d)"
+_TERRAIN_RES = (
+    # « terrain de 412 m² », « parcelle d'environ 4 172 m² »
+    re.compile(r"(?:terrain|parcelle)[^.\n]{0,40}?" + _TERRAIN_NUM + r"\s*m(?:²|2)\b", re.IGNORECASE),
+    # « 4 292 m² de terrain », « 13210 m² de parcelle »
+    re.compile(_TERRAIN_NUM + r"\s*m(?:²|2)\s+(?:de\s+|d['’]\s*|environ\s+)*(?:terrain|parcelle)", re.IGNORECASE),
+)
+
+
+def extract_terrain_from_text(texte: str) -> Optional[float]:
+    """Surface de terrain (m²) déduite du texte, None si rien de fiable.
+
+    Best-effort, conservateur : un nombre doit être collé à « terrain »/« parcelle »
+    ET suivi de m². Retourne le MAX des valeurs plausibles (50 ≤ v ≤ 2 000 000)."""
+    if not texte:
+        return None
+    best = None
+    for rx in _TERRAIN_RES:
+        for m in rx.finditer(texte):
+            digits = re.sub(r"[  .,]", "", m.group(1))
+            if not digits.isdigit():
+                continue
+            val = float(digits)
+            if 50 <= val <= 2_000_000 and (best is None or val > best):
+                best = val
+    return best
+
+
 def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
     """Applique les filtres d'exclusion durs (champs STRUCTURÉS, au requêtage)."""
     filtered = []
@@ -505,6 +539,27 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
                     if not (b.get("dpe") and str(b.get("dpe")).upper() in _dpe_excl)]
         if before - len(filtered):
             print(f"[Hunter] Re-filtre DPE ({'/'.join(_dpe_excl)}) : {before - len(filtered)} bien(s) écarté(s)")
+
+    # Re-filtre TERRAIN : comme le DPE, le terrain n'est souvent fiable qu'APRÈS la
+    # page détail — beaucoup de scrapers ne renseignent pas surface_terrain (il n'est
+    # que dans le texte, ex. bsk_immobilier qui met 0). On l'extrait de la description
+    # COMPLÈTE pour les biens sans terrain renseigné, puis on ré-applique terrain_min.
+    _tmin = getattr(criteres, "terrain_min", 0)
+    if _tmin:
+        _enr = 0
+        for b in filtered:
+            if not b.get("surface_terrain"):
+                t = extract_terrain_from_text(b.get("description") or "")
+                if t:
+                    b["surface_terrain"] = t
+                    b["terrain_estime_texte"] = True   # trace : valeur déduite du texte
+                    _enr += 1
+        before = len(filtered)
+        filtered = [b for b in filtered
+                    if not (b.get("surface_terrain") and b["surface_terrain"] < _tmin)]
+        if _enr or before - len(filtered):
+            print(f"[Hunter] Terrain post-détail : {_enr} extrait(s) du texte ; "
+                  f"re-filtre terrain_min({_tmin}) : {before - len(filtered)} bien(s) écarté(s)")
 
     # Filtre mots-clés (obligatoires/interdits) sur l'annonce COMPLÈTE — la
     # description n'est fiable qu'APRÈS l'enrichissement page détail (gallery).
