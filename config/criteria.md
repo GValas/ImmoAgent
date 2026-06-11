@@ -45,9 +45,9 @@ departements: [
 types:       ["maison", "propriete", "manoir", "longere"]
 surface_min: 150        # m² habitables minimum
 surface_max: 300
-pieces_min:  6          # 4 chambres + séjour + cuisine minimum
+pieces_min:  5          # 4 chambres + séjour + cuisine minimum
 pieces_max:  13         # au-delà = trop grand / immeuble de rapport
-terrain_min: 4000       # m² — terrain arboré impératif
+terrain_min: 3000       # m² — terrain arboré impératif
 prix_min:    300000     # €
 prix_max:    600000     # €
 dpe_exclus:  ["F", "G"] # A B C D E acceptés
@@ -75,7 +75,8 @@ photos_min:  3          # exclure les annonces avec moins de N photos
 
 ```
 mots_obligatoires: ["piscine"]        
-mots_interdits:    ["viager", "piscine hors-sol", "piscine hors sol", "piscine intérieure", "piscine semi-enterrée", "piscine enterrée", "maison contemporaine", "maison moderne", "lotissement"]
+mots_interdits:    ["viager", "piscine hors-sol", "piscine hors sol", "piscine intérieure", 
+"semi-enterrée", "piscine enterrée", "maison contemporaine", "maison moderne", "lotissement"]
 ```
 
 
@@ -107,6 +108,7 @@ description_qualitative: |
   - pas de zone inondable
   - pas de travaux à prévoir
   - pas de maison contemporaine, moderne ou d'architecte
+  - terrain arboré
 ```
 
 

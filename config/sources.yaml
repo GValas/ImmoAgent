@@ -3188,6 +3188,373 @@ sources:
       maisons rurales Nièvre. Réactiver si la zone de prix change. dernier_test
       2026-06-10.
 
+  # ── Nouveaux scrapers 2026-06-11 (scraper-scout round 1 — filtre dept vérifié, 0 fuite) ──
+  - id: power_immo
+    nom: "Power Immo"
+    url_base: "https://www.power-immo.com"
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: >-
+      api_inoff (CMS power_agences). Endpoint JSON POST
+      immobilier/core/ajax_resultats.php (global_search[localisations][]=d-NN,
+      limit 24/offset). Filtre dept SERVEUR via jeton d-NN (autocomplete) +
+      re-vérif cp[:2]==dept. 18 biens in-criteria, 0 fuite. dernier_test 2026-06-10.
+  - id: immo_du_centre_28
+    nom: "Immo du Centre (Chartres, Eure-et-Loir)"
+    url_base: "https://www.immoducentre28.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (CMS Webgenery/Apimo), mono-dept 28 (Chartres). Liste
+      /fr/acheter/maison[/.../{N}] ; données via JSON-LD (name/description/
+      offers.price/image). Post-filtre STRICT code_postal[:2]=='28', ne tourne
+      que si 28 ciblé. 0 fuite. dernier_test 2026-06-10.
+  - id: durand_montouche
+    nom: "Durand-Montouché"
+    url_base: "https://www.dmimmo.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx pur, agence mono-dept Orléans/Loiret (45). Liste unique
+      /180-achat-maison-appartement-orleans.htm (div.inner). CP absent/non
+      fiable -> filtre dept via mapping VILLE_CP (agglo Orléans + Loiret),
+      departement forcé '45'. 0 fuite vérifié. dernier_test 2026-06-10.
+  - id: chevalannonce
+    nom: "ChevalAnnonce (immobilier équestre)"
+    url_base: "https://www.chevalannonce.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx pur, portail équestre niche. URL
+      /annonces/fr/{dept-slug}/immobilier-equestre/ -> filtre dept SERVEUR via
+      slug, garde VENTE only (exclut Location/terrains/pension). Post-filtre
+      strict departement+CP[:2]. Stock faible (49=1). 0 fuite. dernier_test 2026-06-10.
+  - id: viagimmo
+    nom: "Viagimmo"
+    url_base: "https://viagimmo.fr"
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: >-
+      Réseau national viager. Grille AJAX WordPress (POST admin-ajax.php
+      action=getAnnonces, nonce). Pas de filtre dept natif -> requête préfecture
+      par dept + POST-FILTRE STRICT code_postal[:2] (CP récupéré en page détail).
+      30 biens, 0 fuite. ATTENTION 'viager' ∈ mots_interdits criteria.md (hunter
+      écartera en pratique). dernier_test 2026-06-10.
+  - id: lesclesdumidi
+    nom: "Les Clés du Midi"
+    url_base: "https://www.lesclesdumidi.com"
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: >-
+      Portail entre-particuliers + petites agences. Endpoint AJAX SSR HTML
+      /2016/ajax_listing_infini_dep.php?numdep={NN}&loc=vente (pas de 10).
+      Filtre dept SERVEUR via numdep + double sécurité code_postal[:2]. Cartes
+      article.card. 0 fuite. dernier_test 2026-06-10.
+  - id: immo_laberrichonne
+    nom: "Agence Immobilière La Berrichonne"
+    url_base: "https://www.immo-laberrichonne.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (CMS solocal, layout tables), agence mono-dept Châteauroux/Indre
+      (36). URL /catalogue/{ID}/... ; pas de CP en cartes -> filtre dept STRICT
+      via dictionnaire embarqué des 241 communes de l'Indre (nom->CP 36xxx),
+      commune non reconnue rejetée. Skip si 36 hors cible. 0 fuite. dernier_test 2026-06-10.
+  - id: advicim
+    nom: "Advicim"
+    url_base: "https://www.advicim.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (ISO-8859-1, Netty.immo), réseau mandataires Centre-VdL. Liste
+      nationale paginée /annonces/transaction/vente.html ; pas de filtre dept
+      serveur fiable -> POST-FILTRE STRICT sur le code dept de 'Ville (NN)'
+      (code_postal vide, departement porte le filtre). 8 biens (45/41/37), 0
+      fuite. Soft rate-limit 202 -> sleep+retry. dernier_test 2026-06-10.
+  - id: timmonivernais
+    nom: "T'immo Nivernais"
+    url_base: "https://www.timmonivernais.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (WordPress WpEstate), agence mono-dept Nièvre. Liste
+      /annonces/page/{N}/ -> page détail (div.listing_detail 'Label: valeur').
+      Filtre dept = State/County contient 'Nièvre' => dept 58 (0 fuite, hors-58
+      = 0). CP non exposé (code_postal=None). ATTENTION parsing surface
+      '110 m 2' -> couper à 'm'. dernier_test 2026-06-10.
+  - id: sud_loire_immobilier
+    nom: "Sud Loire Immobilier"
+    url_base: "https://www.sudloireimmobilier.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (CMS Periimmo/AC3), agence Blois (41). Liste
+      /annonces/transaction/Vente.html (div.product). Pas de CP en carte ->
+      résolution ville->CP via API BAN (municipality, citycode) + post-filtre
+      STRICT code_postal[:2]. 21 biens (37/41), 0 fuite. dernier_test 2026-06-10.
+  - id: francepropertyshop
+    nom: "France Property Shop"
+    url_base: "https://www.francepropertyshop.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: >-
+      SSR httpx (Cloudflare CDN sans challenge), portail anglophone de campagne.
+      URL /french-property-for-sale/{region}/{dept}/?page=N -> filtre dept
+      SERVEUR. Cartes div.card ; AUCUN CP exposé -> post-filtre via geo.api.gouv.fr
+      commune->codeDepartement + slug serveur. 67 biens, 0 fuite. Limites :
+      pieces/terrain/dpe/CP absents. Distinct de french-property.com. dernier_test 2026-06-10.
+  - id: immo_sarthois
+    nom: "Immo Sarthois"
+    url_base: "https://www.immo-sarthois.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Agence mono-dept Sarthe (Mayet 72), front React/CSR (Septeo/Netty). Liste
+      non SSR -> sitemap.xml -> URLs biens, page détail JSON-LD Product extrait
+      par REGEX (bs4 déraille sur le HTML React). Pré-filtre CP slug + re-vérif
+      postalCode[:2] cibles -> 0 fuite (exclut showroom 73/Dubai). dernier_test 2026-06-10.
+  - id: village_notaires
+    nom: "Village des Notaires et du Patrimoine"
+    url_base: "https://www.village-notaires-patrimoine.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Agrégateur d'annonces des offices notariaux, SSR httpx. URL
+      /-les-annonces-immobilieres-des-notaires-/{NN}/MAIS -> filtre dept SERVEUR
+      + post-filtre CP[:2]. Cartes div.col-xs-12.mb-2 (h4 'Achat maison - Ville
+      (CP)'). 47 biens 300-600k / 9 depts, 0 fuite. Republie immonot -> dédup
+      hunter gère le recoupement. dernier_test 2026-06-10.
+  - id: equestrian_immobilier
+    nom: "Equestrian Immobilier"
+    url_base: "https://www.equestrian-immobilier.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: >-
+      SSR httpx (WordPress RealHomes), catalogue national équestre. Pas de filtre
+      dept serveur -> scrape /les-proprietes-2/ + POST-FILTRE strict : pré-filtre
+      '(NN)' titre/slug puis confirmation JSON-LD streetAddress (CP[:2] ou nom
+      dept) en page détail. 6 biens prod (36/37/45/58/89), 0 fuite. dernier_test 2026-06-10.
+  - id: officeduviager
+    nom: "Office du Viager"
+    url_base: "https://www.officeduviager.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      Portail spécialiste viager, SSR Symfony httpx. URL
+      /annonces/viager-{dept-slug} -> filtre dept SERVEUR fiable + post-filtre
+      code_postal[:2]. prix=valeur vénale (bouquet/rente en description). 2 biens
+      in-criteria (dont 37). 0 fuite. dernier_test 2026-06-10.
+  - id: maisonduparticulier
+    nom: "Maison Du Particulier"
+    url_base: "https://maisonduparticulier.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (Script PAG), 100% P2P gratuit. URL
+      /annonces/offres/Vente-Maison/{NomDepartement}?page=N -> filtre dept
+      SERVEUR (slug littéral sans accent) + post-filtre strict code_postal[:2].
+      15 biens / 7 depts, type forcé maison. 0 fuite. dernier_test 2026-06-10.
+  - id: carmin_immobilier
+    nom: "Carmin Immobilier"
+    url_base: "https://www.carmin-immobilier.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (WordPress), agence mono-dept Bourges (18). Liste maisons filtrée
+      serveur (?transaction=vente&type=146) -> fiche détail (CP inline, carac,
+      DPE depuis nom image). Filtre dept STRICT : CP[:2] sinon geo.api.gouv.fr ;
+      indéterminé rejeté. Skip si 18 hors cible. 0 fuite. dernier_test 2026-06-10.
+  - id: immosurmesure
+    nom: "Immosurmesure"
+    url_base: "https://www.immosurmesure.fr"
+    methode: api_inoff
+    actif: false
+    priorite: 3
+    note: >-
+      Réseau mandataires (Netty SaaS). SSR embarque l'inventaire en blob JSON
+      base64 -> décodage httpx pur. Filtre dept serveur /vente/maison/
+      departement-{slug} + on n'utilise QUE prodResults['search'] (les groupes
+      'populaires' = promos nationales, fuite, ignorés) + post-filtre cp[:2].
+      INACTIF : zone cible (89=4,58=1) TOUS VENDUS (promo==1001) -> 0 en vente.
+      Réseau d'origine Grand Est. 0 fuite. dernier_test 2026-06-10.
+  - id: repimmo
+    nom: "Repimmo"
+    url_base: "http://www.repimmo.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: >-
+      Portail/annuaire d'annonces, SSR httpx pur (HTTP — HTTPS a un certif
+      expiré, contenu identique). URL /annonces-immobilieres-gratuites-{slug}/
+      vente-maison-{slug}-{NN}/?page=P -> filtre dept + type maison SERVEUR.
+      Cartes div.annonce_resume (microdata schema.org) + post-filtre code_postal[:2].
+      68 biens / 10 depts, 0 fuite. Terrain/DPE via gallery.py. dernier_test 2026-06-11.
+  - id: fraudin_immobilier
+    nom: "Fraudin Immobilier"
+    url_base: "https://www.fraudin-immobilier.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: >-
+      SSR httpx (WordPress, o2switch, pas de Cloudflare), agence mono-agence
+      Laval/Mayenne (53). Liste unique /biens/ (a.property-preview ; titre
+      'Type - {surface} m² - {pieces} pièces - {Ville} {CP}'). Pas de filtre
+      serveur -> POST-FILTRE strict code_postal[:2] cibles. 0 fuite (depts vus
+      ['53']). Stock petit. dernier_test 2026-06-10.
+  - id: karacterre
+    nom: "Karacterre Immobilier"
+    url_base: "https://www.karacterre-immobilier.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      CMS Netty.immo (SPA) MAIS données produits injectées SSR en base64 dans
+      window._TEMPLATE_DATA -> httpx pur, décodage base64->JSON (pas de
+      Playwright). Listing /fr/vente?page=N. Pas de filtre dept serveur ->
+      POST-FILTRE STRICT cp[:2]. 37 biens (72/49/53), 0 fuite. Limite : pieces=
+      len(roomsList) peut surévaluer. dernier_test 2026-06-10.
+  - id: bourreau_immobilier
+    nom: "Bourreau Immobilier"
+    url_base: "https://bourreau-immobilier.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (CMS Elone), agence mono-dept Joigny (Yonne 89). Liste
+      /fr/ventes?page=N (ul.listing > li.property). Ni carte ni détail n'exposent
+      le CP du bien -> résolution VILLE->CP via geo.api.gouv.fr en exigeant un
+      match nom EXACT dans un dept cible (filtre STRICT, 0 fuite frontières
+      77/45/58/21). 5 biens, tous 89. Distinct de bourjois-immobilier (Sens).
+      dernier_test 2026-06-10.
+  - id: ajp_immobilier
+    nom: "AJP Immobilier"
+    url_base: "https://www.ajp-immobilier.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (plateforme immo-facile), réseau ~110 agences. Pas de filtre dept
+      serveur -> scrape 4 pages ville zone (angers/cholet/segre/sevremoine-49,
+      couvre tout le 49 + débordement 53) ; dept+type+id extraits de l'URL détail
+      (onclick) -> POST-FILTRE STRICT dept ∈ {49,53}. 5 biens, 0 fuite. CP/pieces/
+      DPE via gallery.py. dernier_test 2026-06-10.
+  - id: bellespierres
+    nom: "BellesPierres"
+    url_base: "https://www.bellespierres.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: >-
+      SSR httpx (Vue rendu serveur), agrégateur demeures de caractère/prestige
+      (Barnes/Junot/Kretz/Cabinet Le Nail/Sotheby's VdL/Equestrian). 403 direct
+      -> warm-up GET home (cookie) puis pages avec Referer. URL EN
+      /en/sale/luxury-real-estate/{slug}-{NN}/?page=P (le /fr/ ignore le slug =
+      fuite, ne pas utiliser). CP dans slug ville-CCPPP -> post-filtre STRICT
+      code_postal[:2]==dept (le serveur fuit qq limitrophes, ramenés à 0). 53
+      biens / 11 depts, 0 fuite. dernier_test 2026-06-10.
+
+  # ── Nouveaux scrapers 2026-06-11 (scraper-scout round 1 — reliquat validé, 0 fuite) ──
+  - id: immo_diffusion
+    nom: "Immo-Diffusion"
+    url_base: "https://www.immo-diffusion.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, portail multi-agences (base Loir-et-Cher 41 + Le Mans 72).
+      ⚠️ l'URL DÉPARTEMENTALE ne filtre PAS (grille nationale « en avant ») ;
+      seules les URL VILLE filtrent -> itère sur villes/dept puis post-filtre
+      STRICT code_postal[:2]. Ne garde que maisons/propriétés. 30 biens
+      (28/41/49/53/89), 0 fuite. dernier_test 2026-06-11.
+  - id: viager_diffusion
+    nom: "Viager Diffusion"
+    url_base: "https://www.viager-diffusion.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, portail national viager/nue-propriété/vente à terme. Filtre dept
+      CÔTÉ SERVEUR via /extra/listing.php?vl[]=d{NN} (jeton autocomplete). ATTENTION
+      `prix` = BOUQUET (comptant), pas un prix de vente classique. 8 biens
+      (18/37/41/49/58/89), 0 fuite. dernier_test 2026-06-11.
+  - id: rnc_notaires
+    nom: "RNC Notaires (Réseau Notaires & Conseils, Arnage 72)"
+    url_base: "https://www.rnc.notaires.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (GenAPI/sites-notaires.immonot). Office mono-département SARTHE
+      (72). Liste /annonces-immobilieres-sarthe.html (alias office « 3 »),
+      pagination /fr_FR/3/{page}/... 9 cartes/page. Dept déduit du slug détail
+      « vente-...-sarthe-... » (CP en page détail via gallery.py). 3 biens (72),
+      0 fuite. dernier_test 2026-06-11.
+  - id: notaires_gapais_legalldutertre_28
+    nom: "Étude notariale Gapais & Le Gall du Tertre (Perche, 28/72)"
+    url_base: "https://gapais-legalldutertre.notaires.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (gabarit notaires.fr Genapi/immonot, .htm). Office du Perche à
+      cheval 28 (cœur) + 72. Liste /service-negociation.htm?page={N}, PAS de
+      filtre dept serveur -> post-filtre STRICT code_postal[:2] (CP exposé en
+      carte). Dédup par slug, stop quand page sans neuf. 2 biens (28/72), 0 fuite.
+      dernier_test 2026-06-11.
+  - id: lafoncieredupalais
+    nom: "La Foncière du Palais (Bourges, 18)"
+    url_base: "https://lafoncieredupalais.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (WordPress WPResidence). Agence mono-département CHER (18). Liste
+      unique /tous-nos-biens-immobiliers/ (tout le catalogue dans le HTML, pas de
+      pagination). CP absent des cartes -> map ville→CP du Cher, dept forcé '18',
+      garde stricte CP[:2]=='18'. Ne garde que maisons/propriétés. 3 biens (18),
+      0 fuite. dernier_test 2026-06-11.
+  - id: cabinet_girard
+    nom: "Cabinet Girard Immobilier (Nevers, 58)"
+    url_base: "https://cabinet-girard-immobilier.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx (plateforme Altera/Periscope). Petite agence de la Nièvre (58).
+      Liste /fr/ventes?page=N. AUCUN code postal exposé (ni carte ni détail) ->
+      résolution NOM DE COMMUNE → (dept, CP) via geo.api.gouv.fr, puis post-filtre
+      STRICT code_postal[:2] ∈ cibles. Stock faible (1 bien, 58). 0 fuite.
+      dernier_test 2026-06-11.
+  - id: le_partenaire
+    nom: "Le Partenaire (mandataires, Val-de-Loire/Berry)"
+    url_base: "https://www.le-partenaire.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, réseau de mandataires (base Orléans 45, fort sur l'Indre 36).
+      Filtre dept CÔTÉ SERVEUR via annuaire départemental → liens villes (CP
+      préfixé), puis post-filtre STRICT code_postal[:2]. Villes scrapées en
+      parallèle (CITY_CONCURRENCY=6) pour tenir dans le batch. Gros volume sur 36
+      (252 biens), 0 fuite. dernier_test 2026-06-11.
+
 blacklist:
 
   # ── Ajouts 2026-06-09 (scraper-scout — enchères/viager non retenus) ──

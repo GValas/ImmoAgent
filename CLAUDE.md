@@ -42,7 +42,7 @@ workers/
   analyst.py          Worker 4 — enrichit (DVF, alertes), résumé local, export Excel
   qualitative.py      Util analyst — match description_qualitative ↔ annonce via LLM local Ollama (conteneur dédié)
 
-scrapers/             25 scrapers actifs + 4 inactifs (voir liste ci-dessous)
+scrapers/             277 scrapers actifs + 33 inactifs (source : sources.yaml)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
 
 config/
@@ -58,12 +58,15 @@ data/
 
 ---
 
-## Scrapers actifs (41 + DVF)
+## Scrapers actifs (277 + DVF)
 
-> Source de vérité : `config/sources.yaml` (le tableau ci-dessous peut être en retard).
-> Ajouts 2026-05-30 : cabinet_le_nail, terresetdemeuresdefrance, architecturedecollection,
-> french_property, emile_garcin, groupe_mercure, drhouse, exp_france, webimmo123,
-> meilleursbiens, imkiz, liberkeys, cimm, le_tuc (filtre département vérifié, 0 fuite).
+> Source de vérité : `config/sources.yaml` (310 sources déclarées : 277 `actif: true`,
+> 33 `actif: false`). Le tableau ci-dessous n'est qu'un échantillon représentatif des
+> grandes familles techniques — il NE liste PAS les 277 ; ne pas s'y fier pour le compte.
+> Les vagues scraper-scout (2026-05/06) ont fait monter le parc de ~40 à 277.
+> Ajouts 2026-06-11 (scraper-scout round 1, reliquat validé, 0 fuite) : immo_diffusion,
+> viager_diffusion (prix=bouquet), rnc_notaires, notaires_gapais_legalldutertre_28,
+> lafoncieredupalais, cabinet_girard, le_partenaire (villes scrapées en parallèle).
 
 ### API REST (httpx, pas de Playwright)
 | Fichier | Site | Notes |

@@ -30,6 +30,8 @@ Interface utilitaire :
 """
 import asyncio
 import math
+import os
+import time
 import unicodedata
 import httpx
 
@@ -45,6 +47,12 @@ _OVERPASS_UNAVAILABLE = object()
 # Coupe-circuit : si Overpass échoue N fois d'affilée, on cesse de l'appeler pour
 # le reste du run (annotation bus non critique) → évite ~80 s perdues par bien.
 _BREAKER_THRESHOLD = 3
+# Budget temps GLOBAL pour toute l'étape bus (mur, secondes). Overpass public est
+# interrogé en quasi-séquentiel (Semaphore(1)) ; sur beaucoup de biens, des
+# réponses 200 *lentes* (jamais en échec → coupe-circuit inactif) peuvent étaler
+# l'étape indéfiniment. Passé ce budget, on cesse d'appeler Overpass pour les biens
+# restants (annotés « pas de bus ») et le pipeline continue. Surcharge : BUS_BUDGET_S.
+_DEFAULT_BUDGET_S = float(os.environ.get("BUS_BUDGET_S", "180"))
 GEO_API_URL = "https://geo.api.gouv.fr/communes"
 
 # UA honnête : overpass-api.de renvoie 406 sur un User-Agent qui usurpe un navigateur
@@ -190,7 +198,9 @@ async def _nearest_bus(
 # Enrichissement
 # ──────────────────────────────────────────────
 
-async def annotate_biens(biens: list[dict], rayon_km: float = 2.0) -> list[dict]:
+async def annotate_biens(
+    biens: list[dict], rayon_km: float = 2.0, budget_s: float | None = None
+) -> list[dict]:
     """
     Ajoute à chaque bien (in place) :
       - bus_proche (bool)        : un arrêt de bus est <= rayon_km
@@ -198,11 +208,17 @@ async def annotate_biens(biens: list[dict], rayon_km: float = 2.0) -> list[dict]
       - bus_distance_km (float)
     Utilise les coordonnées du bien si présentes (geoloc), sinon géocode la commune.
     Informatif uniquement : n'élimine aucun bien. Non-fatal en cas d'échec source.
+
+    Borné par un budget temps GLOBAL (mur) : passé `budget_s` secondes (défaut
+    _DEFAULT_BUDGET_S / env BUS_BUDGET_S), les biens non encore traités sont annotés
+    « pas de bus » sans appel Overpass — garantit que l'étape ne bloque pas le pipeline.
     """
     if not biens:
         return biens
 
     rayon_m = max(100, int(rayon_km * 1000))
+    budget = _DEFAULT_BUDGET_S if budget_s is None else budget_s
+    deadline = time.monotonic() + budget
 
     # Timeout borné : connect 8 s (un miroir mort échoue vite au lieu de hanger),
     # read 28 s (une requête Overpass chargée peut prendre jusqu'à ~25 s côté serveur).
@@ -213,6 +229,7 @@ async def annotate_biens(biens: list[dict], rayon_km: float = 2.0) -> list[dict]
         # quelques biens survivants annotés ici, le coût total reste faible.
         overpass_sem = asyncio.Semaphore(1)
         breaker = {"fails": 0, "dead": False}   # coupe-circuit Overpass
+        budget_state = {"expired": False}       # budget temps global dépassé
 
         async def coords_for(b: dict) -> tuple[float, float] | None:
             lat, lon = b.get("latitude"), b.get("longitude")
@@ -230,12 +247,24 @@ async def annotate_biens(biens: list[dict], rayon_km: float = 2.0) -> list[dict]
             b["bus_distance_km"] = None
 
         async def annotate_one(b: dict):
+            if breaker["dead"] or budget_state["expired"] or time.monotonic() >= deadline:
+                _no_bus(b)
+                return
             coords = await coords_for(b)
-            if not coords or breaker["dead"]:
+            if not coords or breaker["dead"] or budget_state["expired"]:
                 _no_bus(b)
                 return
             async with overpass_sem:
-                if breaker["dead"]:          # tombé entre-temps (accès séquentiel)
+                # Budget global / coupe-circuit ont pu tomber pendant l'attente du
+                # sémaphore (accès séquentiel) → on ne lance pas une requête de plus.
+                if breaker["dead"] or budget_state["expired"]:
+                    _no_bus(b)
+                    return
+                if time.monotonic() >= deadline:
+                    if not budget_state["expired"]:
+                        budget_state["expired"] = True
+                        print(f"[Bus] Budget temps ({budget:.0f}s) dépassé — annotation "
+                              f"bus arrêtée pour les biens restants (non critique)")
                     _no_bus(b)
                     return
                 res = await _nearest_bus(client, coords[0], coords[1], rayon_m)
