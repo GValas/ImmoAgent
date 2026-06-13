@@ -2,8 +2,10 @@
 config_loader.py — Parse criteria.md, source unique de vérité.
 """
 import re
-import yaml
 from pathlib import Path
+
+import yaml
+
 from models import CriteresRecherche
 
 CONFIG_DIR = Path(__file__).parent / "config"
@@ -22,6 +24,11 @@ DEFAULTS = {
     "photos_min":            0,      # nb minimal de photos exigé (0 = pas de filtre)
     "mots_obligatoires":     [],     # mots qui doivent TOUS figurer dans le texte (ET)
     "mots_interdits":        [],     # mots dont la présence exclut le bien
+    # ── Scheduler (bloc ## Scheduler) ──
+    "hunter_interval_hours":   4,
+    "discovery_interval_days": 7,
+    "builder_interval_days":   30,
+    "max_biens_suivi":         50,
 }
 
 
@@ -70,6 +77,10 @@ def load_criteria() -> CriteresRecherche:
         photos_min=int(get("photos_min")),
         mots_obligatoires=_coerce_mots(get("mots_obligatoires")),
         mots_interdits=_coerce_mots(get("mots_interdits")),
+        hunter_interval_hours=float(get("hunter_interval_hours")),
+        discovery_interval_days=float(get("discovery_interval_days")),
+        builder_interval_days=float(get("builder_interval_days")),
+        max_biens_suivi=int(get("max_biens_suivi")),
     )
 
 
@@ -114,6 +125,6 @@ def load_sources() -> list[dict]:
     sources_path = CONFIG_DIR / "sources.yaml"
     if not sources_path.exists():
         return []
-    with open(sources_path) as f:
+    with open(sources_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return [s for s in data.get("sources", []) if s.get("actif", False)]

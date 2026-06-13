@@ -33,6 +33,7 @@ import math
 import os
 import time
 import unicodedata
+
 import httpx
 
 # Miroir Overpass. (2026-06-10 : kumi.systems était mort et openstreetmap.fr est

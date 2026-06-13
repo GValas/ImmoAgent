@@ -4,11 +4,10 @@ Méthode : api_inoff (httpx) — API REST à api.eraimmobilier.com/api/v2
 Interface : async def search(criteres: dict) -> list[dict]
 Note : filtre par code_postal prefix (ex: "72" pour tout le dept 72) — 10 items/page
 """
-import re
 import asyncio
+import re
 
 import httpx
-
 
 API_BASE = "https://api.eraimmobilier.com/api/v2/annonces"
 SITE_BASE = "https://www.eraimmobilier.com"

@@ -20,12 +20,11 @@ Interface : async def search(criteres: dict) -> list[dict]
 POST-FILTRE par code_postal[:2] ∈ departements (sécurité 0 fuite — l'acteur peut
 retomber sur une recherche nationale si l'URL/geo-id est inattendu).
 """
+import asyncio
 import os
 import re
-import asyncio
 
 import httpx
-
 
 APIFY_ACTOR = "azzouzana~pap-fr-mass-products-scraper-by-search-url"
 APIFY_ENDPOINT = (

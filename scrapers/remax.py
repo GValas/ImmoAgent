@@ -10,7 +10,6 @@ import re
 
 import httpx
 
-
 BASE_URL = "https://www.remax.fr"
 API_URL = f"{BASE_URL}/api/Listing/PaginatedMultiMatchSearch"
 CDN_URL = "https://media.remax.fr"

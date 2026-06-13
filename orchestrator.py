@@ -8,30 +8,19 @@ Usage :
   python orchestrator.py --skip-build      # scrapers déjà générés
   python orchestrator.py --only-analyse    # re-filtre (a posteriori) + ré-analyse le dernier raw
 """
-import asyncio
 import argparse
+import asyncio
 import json
-import builtins as _builtins
 from datetime import datetime
 from pathlib import Path
 
 from config_loader import load_criteria, load_sources
-from workers import discovery, builder, hunter, analyst
+from core.filters import apply_posterior_filters
+from core.logging_setup import enable_timestamped_prints
+from workers import analyst, builder, discovery, hunter
 
-# ── Timestamps automatiques sur tous les prints [Worker] ──────────────────
-_orig_print = _builtins.print
-
-
-def _ts_print(*args, **kwargs):
-    if args and isinstance(args[0], str) and args[0].startswith("["):
-        ts = datetime.now().strftime("%H:%M:%S")
-        _orig_print(f"{ts} {args[0]}", *args[1:], **kwargs)
-    else:
-        _orig_print(*args, **kwargs)
-
-
-_builtins.print = _ts_print
-# ─────────────────────────────────────────────────────────────────────────
+# Horodatage automatique des logs `[Worker] …` (centralisé dans core.logging_setup).
+enable_timestamped_prints()
 
 
 async def run_pipeline(
@@ -47,7 +36,7 @@ async def run_pipeline(
 
     # ── Chargement des critères ──
     criteres = load_criteria()
-    print(f"\n📋 Critères chargés :")
+    print("\n📋 Critères chargés :")
     print(f"   Départements : {', '.join(criteres.departements)}")
     print(f"   Types        : {', '.join(criteres.types_bien)}")
     print(f"   Budget max   : {criteres.prix_max:,} €")
@@ -62,15 +51,12 @@ async def run_pipeline(
         print(f"⏭  Re-analyse de {raw_files[-1].name} ({len(biens_bruts)} biens)")
 
         # Ré-applique le filtrage A POSTERIORI (sur données déjà scrapées+enrichies)
-        # avec les critères COURANTS : structurel (prix/surface/pièces/DPE),
-        # mots-clés (obligatoires/interdits) et photos_min. Permet de répercuter un
-        # changement de criteria.md sur suivi_actif SANS re-scraper le web.
+        # avec les critères COURANTS : structurel (prix/surface/pièces/DPE), terrain
+        # depuis le texte, mots-clés (obligatoires/interdits) et photos_min — séquence
+        # unique partagée (core.filters). Répercute un changement de criteria.md sur
+        # suivi_actif SANS re-scraper le web.
         before = len(biens_bruts)
-        biens_bruts = hunter.filter_biens(biens_bruts, criteres)
-        biens_bruts = hunter.filter_mots_cles(biens_bruts, criteres)
-        pmin = getattr(criteres, "photos_min", 0)
-        if pmin:
-            biens_bruts = [b for b in biens_bruts if len(b.get("photos") or []) >= pmin]
+        biens_bruts = apply_posterior_filters(biens_bruts, criteres)
         print(f"⏪ Re-filtrage a posteriori : {len(biens_bruts)}/{before} biens conservés")
 
         if not biens_bruts:
@@ -99,7 +85,7 @@ async def run_pipeline(
         await builder.run(sources, criteres)
 
     # ── Worker 3 : Hunter ──
-    print(f"\n🏹 [3/4] Worker Hunter — lancement des recherches...")
+    print("\n🏹 [3/4] Worker Hunter — lancement des recherches...")
     biens_bruts = await hunter.run(sources, criteres)
 
     if not biens_bruts:
@@ -107,7 +93,7 @@ async def run_pipeline(
         return
 
     # ── Worker 4 : Analyst ──
-    print(f"\n📊 [4/4] Worker Analyst — enrichissement et agrégation...")
+    print("\n📊 [4/4] Worker Analyst — enrichissement et agrégation...")
     output = await analyst.run(biens_bruts, criteres)
 
     _print_done(start, output)

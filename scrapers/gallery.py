@@ -23,9 +23,9 @@ Conventions du repo : async/await, logs via print(f"[Gallery] ...").
 """
 from __future__ import annotations
 
-import re
 import html as _html
-from urllib.parse import urljoin, urlparse, parse_qs
+import re
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -821,8 +821,8 @@ if __name__ == "__main__":
     import glob
     import json
     import os
-    import sys
     import statistics
+    import sys
 
     sys.stdout.reconfigure(encoding="utf-8")
 

@@ -7,6 +7,7 @@ Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
 import re
+
 import httpx
 from bs4 import BeautifulSoup
 

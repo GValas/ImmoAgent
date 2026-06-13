@@ -9,6 +9,7 @@ URL: /immobilier-notaire-{region}.html?departement={code}
 
 import asyncio
 import re
+
 import httpx
 
 BASE = "https://www.immonot.com"

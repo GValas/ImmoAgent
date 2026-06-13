@@ -8,6 +8,7 @@ REST JSON API at /api/properties
 
 import asyncio
 import math
+
 import httpx
 
 BASE = "https://www.iadfrance.fr"

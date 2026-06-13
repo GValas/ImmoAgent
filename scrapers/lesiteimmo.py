@@ -9,13 +9,12 @@ Données : CollectionPage.mainEntity.itemListElement — 25 items/page
   - image : liste URLs photos
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
-import json
 import asyncio
+import json
+import re
 
 import httpx
 from bs4 import BeautifulSoup
-
 
 BASE_URL = "https://www.lesiteimmo.com"
 

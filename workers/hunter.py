@@ -4,12 +4,9 @@ Lance tous les scrapers en parallèle, déduplique les résultats,
 et sauvegarde les biens bruts en JSON dans data/raw/.
 """
 import asyncio
-import hashlib
 import importlib.util
 import io
 import json
-import re
-import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -17,7 +14,18 @@ from typing import Optional
 import httpx
 from PIL import Image
 
-from models import Bien, CriteresRecherche
+from core.dedup import dedup_hash
+
+# Filtres a posteriori centralisés dans core.filters (réexportés ici pour
+# compatibilité : orchestrator/scheduler référencent encore hunter.filter_biens…).
+from core.filters import (  # noqa: F401
+    extract_terrain_from_text,
+    filter_biens,
+    filter_mots_cles,
+    filter_photos_min,
+    refilter_terrain_from_text,
+)
+from models import CriteresRecherche
 
 SCRAPERS_DIR = Path(__file__).parent.parent / "scrapers"
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
@@ -30,35 +38,44 @@ GARE_RAYON_KM = 20.0
 BUS_RAYON_KM = 2.0
 
 
-async def run_scraper(source_id: str, criteres: CriteresRecherche) -> list[dict]:
-    """Importe dynamiquement et exécute un scraper."""
+def _criteres_to_dict(criteres: CriteresRecherche) -> dict:
+    """Dict passé à `scraper.search`. Inclut `prix_min` (lu par ~291 scrapers mais
+    jadis jamais transmis → valait toujours 0 en prod)."""
+    return {
+        "departements": criteres.departements,
+        "types_bien": criteres.types_bien,
+        "surface_min": criteres.surface_min,
+        "surface_max": criteres.surface_max,
+        "prix_min": getattr(criteres, "prix_min", 0),
+        "prix_max": criteres.prix_max,
+        "pieces_min": criteres.pieces_min,
+        "terrain_min": criteres.terrain_min,
+    }
+
+
+async def run_scraper(source_id: str, criteres: CriteresRecherche) -> Optional[list[dict]]:
+    """Importe dynamiquement et exécute un scraper.
+
+    Retourne la liste d'annonces (éventuellement vide = 0 résultat réel), ou `None`
+    si le scraper a planté/est introuvable — ce qui permet à `run()` de distinguer
+    « scraper cassé » de « scraper OK mais 0 annonce »."""
     scraper_path = SCRAPERS_DIR / f"{source_id}.py"
     if not scraper_path.exists():
         print(f"[Hunter] Scraper {source_id} introuvable — skip")
-        return []
+        return None
 
     try:
         spec = importlib.util.spec_from_file_location(source_id, scraper_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        criteres_dict = {
-            "departements": criteres.departements,
-            "types_bien": criteres.types_bien,
-            "surface_min": criteres.surface_min,
-            "surface_max": criteres.surface_max,
-            "prix_max": criteres.prix_max,
-            "pieces_min": criteres.pieces_min,
-            "terrain_min": criteres.terrain_min,
-        }
-
-        results = await module.search(criteres_dict)
+        results = await module.search(_criteres_to_dict(criteres))
         print(f"[Hunter] {source_id} → {len(results)} annonces récupérées")
         return results
 
     except Exception as e:
-        print(f"[Hunter] Erreur sur {source_id} : {e}")
-        return []
+        print(f"[Hunter] ⚠️  Erreur sur {source_id} (scraper cassé ?) : {e}")
+        return None
 
 
 # Champs à récupérer d'un doublon écarté vers le bien conservé (ne pas perdre les
@@ -90,10 +107,7 @@ def deduplicate(biens: list[dict]) -> list[dict]:
     """
     seen: dict[str, dict] = {}
     for bien in biens:
-        prix = bien.get("prix", "")
-        surface = bien.get("surface", "")
-        ville = str(bien.get("ville", "")).lower().strip()
-        key = hashlib.md5(f"{prix}-{surface}-{ville}".encode()).hexdigest()
+        key = dedup_hash(bien)
 
         if key not in seen:
             seen[key] = dict(bien)
@@ -319,151 +333,49 @@ async def deduplicate_by_photo(
     return [b for idx, b in enumerate(biens) if idx not in drop]
 
 
-def _normalize_text(s: str) -> str:
-    """Minuscules, sans accents — pour comparer du texte d'annonce aux mots-clés."""
-    s = unicodedata.normalize("NFKD", (s or "").lower())
-    return "".join(c for c in s if not unicodedata.combining(c))
+# Nombre de snapshots data/raw/ conservés (les plus anciens sont purgés à chaque run).
+RAW_RETENTION = 48
+HEALTH_FILE = RAW_DIR.parent / "scraper_health.json"
 
 
-# Marqueurs (texte normalisé) trahissant un mot mentionné sans qu'il soit RÉEL :
-#  - absence, JUSTE avant le mot (« sans piscine », « pas de piscine ») ;
-#  - souhait / potentiel, dans une fenêtre plus large avant (« on rêverait d'une
-#    piscine », « emplacement pour piscine », « possibilité de créer une piscine »).
-_ABSENCE_BEFORE = ("sans ", "pas de ", "pas d", "aucune ", "aucun ", "ni ", "ni de ")
-_WISH_BEFORE = (
-    "rever", "imagin", "possib", "emplacement", "creer", "creation", "constru",
-    "pourrait", "permet", "envisage", "projet", "prevoir",
-    "place pour", "espace pour", "ideal pour", "parfait pour", "pour une", "pour y",
-    "pour installer", "pour amenager", "pour accueillir", "potentiel", "amenageable",
-)
-_WISH_AFTER = (
-    "a creer", "a amenager", "a prevoir", "a construire", "possible", "envisageable",
-    "realisable", "en projet", "potentiel",
-)
+def _prune_old_raw(keep: int = RAW_RETENTION) -> None:
+    """Supprime les plus vieux snapshots data/raw/ pour borner la croissance disque
+    (~1 Mo/run). Conserve les `keep` plus récents. Best-effort (ne lève jamais)."""
+    try:
+        files = sorted(RAW_DIR.glob("biens_raw_*.json"))
+        for old in files[:-keep] if keep else []:
+            old.unlink(missing_ok=True)
+    except Exception as e:
+        print(f"[Hunter] Purge data/raw ignorée ({e})")
 
 
-def _present_affirmative(texte: str, mot: str) -> bool:
-    """True si `mot` apparaît au moins une fois en contexte AFFIRMATIF dans `texte`.
-
-    Écarte les mentions d'absence (« sans piscine ») ou de simple potentiel
-    (« on rêverait d'une piscine », « emplacement pour piscine »). `texte` et `mot`
-    sont supposés déjà normalisés (minuscules, sans accents)."""
-    start = 0
-    while True:
-        pos = texte.find(mot, start)
-        if pos == -1:
-            return False
-        before = texte[max(0, pos - 45):pos]
-        after = texte[pos + len(mot):pos + len(mot) + 25]
-        near_absence = any(before.endswith(a) or before.endswith(a + "la ")
-                           or before.endswith(a + "une ") or before.endswith(a + "grande ")
-                           for a in _ABSENCE_BEFORE)
-        if not near_absence \
-           and not any(w in before for w in _WISH_BEFORE) \
-           and not any(w in after for w in _WISH_AFTER):
-            return True                       # occurrence affirmative trouvée
-        start = pos + len(mot)
-
-
-def filter_mots_cles(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
-    """Filtre dur sur le TEXTE de l'annonce (titre + description COMPLÈTE).
-
-    Appliqué APRÈS l'enrichissement page détail (la description complète n'existe
-    qu'à ce moment), contrairement aux critères structurés qui filtrent au requêtage.
-      - mots_obligatoires : tous doivent figurer en contexte AFFIRMATIF (logique ET) —
-        une mention d'absence/souhait (« on rêverait d'une piscine ») ne compte pas ;
-      - mots_interdits    : un seul présent (sous-chaîne) ⇒ exclu.
-    Insensible à la casse/accents."""
-    mots_oblig = [_normalize_text(m) for m in getattr(criteres, "mots_obligatoires", []) or []]
-    mots_int = [_normalize_text(m) for m in getattr(criteres, "mots_interdits", []) or []]
-    if not (mots_oblig or mots_int):
-        return biens
-
-    kept = []
-    for b in biens:
-        texte = _normalize_text(f"{b.get('titre', '')} {b.get('description', '')}")
-        if any(m in texte for m in mots_int):
-            continue
-        if mots_oblig and not all(_present_affirmative(texte, m) for m in mots_oblig):
-            continue
-        kept.append(b)
-    return kept
-
-
-# Extraction du terrain depuis le TEXTE — fallback quand le scraper ne renseigne pas
-# surface_terrain (beaucoup de sources ne l'exposent que dans la description libre,
-# ex. bsk_immobilier qui met 0). Conservateur : ne retient qu'un nombre clairement
-# rattaché à « terrain »/« parcelle » et suivi de m²/m2, et prend la valeur MAX
-# trouvée (évite d'exclure à tort un bien dont on aurait capté un petit nombre annexe).
-_TERRAIN_NUM = r"(\d[\d  .,]*\d|\d)"
-_TERRAIN_RES = (
-    # « terrain de 412 m² », « parcelle d'environ 4 172 m² »
-    re.compile(r"(?:terrain|parcelle)[^.\n]{0,40}?" + _TERRAIN_NUM + r"\s*m(?:²|2)\b", re.IGNORECASE),
-    # « 4 292 m² de terrain », « 13210 m² de parcelle »
-    re.compile(_TERRAIN_NUM + r"\s*m(?:²|2)\s+(?:de\s+|d['’]\s*|environ\s+)*(?:terrain|parcelle)", re.IGNORECASE),
-)
-
-
-def extract_terrain_from_text(texte: str) -> Optional[float]:
-    """Surface de terrain (m²) déduite du texte, None si rien de fiable.
-
-    Best-effort, conservateur : un nombre doit être collé à « terrain »/« parcelle »
-    ET suivi de m². Retourne le MAX des valeurs plausibles (50 ≤ v ≤ 2 000 000)."""
-    if not texte:
-        return None
-    best = None
-    for rx in _TERRAIN_RES:
-        for m in rx.finditer(texte):
-            digits = re.sub(r"[  .,]", "", m.group(1))
-            if not digits.isdigit():
-                continue
-            val = float(digits)
-            if 50 <= val <= 2_000_000 and (best is None or val > best):
-                best = val
-    return best
-
-
-def filter_biens(biens: list[dict], criteres: CriteresRecherche) -> list[dict]:
-    """Applique les filtres d'exclusion durs (champs STRUCTURÉS, au requêtage)."""
-    filtered = []
-    for b in biens:
-        # DPE exclu
-        dpe = b.get("dpe", "")
-        if dpe and dpe.upper() in [d.upper() for d in criteres.dpe_exclus]:
-            continue
-
-        # Prix min / max
-        prix = b.get("prix")
-        if prix and prix > criteres.prix_max:
-            continue
-        if prix and getattr(criteres, 'prix_min', 0) and prix < criteres.prix_min:
-            continue
-
-        # Surface habitable min / max
-        surface = b.get("surface")
-        if surface and surface < criteres.surface_min:
-            continue
-        if surface and getattr(criteres, "surface_max", 0) and surface > criteres.surface_max:
-            continue
-
-        # Terrain min (surface_terrain) — un bien sans terrain renseigné n'est PAS exclu.
-        terrain = b.get("surface_terrain")
-        if terrain and getattr(criteres, "terrain_min", 0) and terrain < criteres.terrain_min:
-            continue
-
-        # Pièces min / max
-        pieces = b.get("pieces")
-        if pieces and getattr(criteres, "pieces_min", 0) and pieces < criteres.pieces_min:
-            continue
-        if pieces and getattr(criteres, "pieces_max", 0) and pieces > criteres.pieces_max:
-            continue
-
-        # NB : photos_min n'est PAS appliqué ici — la vue liste ne capte que 0-1 photo.
-        # Il l'est dans run(), APRÈS l'enrichissement galerie (page détail).
-
-        filtered.append(b)
-
-    return filtered
+def _save_scraper_health(sources: list[dict], results: list) -> None:
+    """Persiste, par source, le nb d'annonces du run et le nb de runs consécutifs à
+    0 (ou en échec) — pour repérer les scrapers morts à passer `actif: false`.
+    Best-effort (ne lève jamais)."""
+    try:
+        prev = {}
+        if HEALTH_FILE.exists():
+            prev = json.loads(HEALTH_FILE.read_text(encoding="utf-8")).get("sources", {})
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        health = {}
+        for s, res in zip(sources, results):
+            sid = s["id"]
+            count = -1 if res is None else len(res)            # -1 = scraper en échec
+            streak = prev.get(sid, {}).get("zero_streak", 0)
+            streak = streak + 1 if count <= 0 else 0
+            health[sid] = {"last_count": count, "zero_streak": streak, "last_run": ts}
+        dead = sorted(sid for sid, h in health.items() if h["zero_streak"] >= 5)
+        HEALTH_FILE.write_text(
+            json.dumps({"updated": ts, "muets_5runs": dead, "sources": health},
+                       ensure_ascii=False, indent=2),
+            encoding="utf-8")
+        if dead:
+            print(f"[Hunter] ⚠️  {len(dead)} scraper(s) muet(s) depuis ≥5 runs "
+                  f"(candidats actif:false) : {', '.join(dead[:10])}"
+                  + (" …" if len(dead) > 10 else ""))
+    except Exception as e:
+        print(f"[Hunter] Suivi santé scrapers ignoré ({e})")
 
 
 async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
@@ -477,12 +389,21 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     tasks = [run_scraper(s["id"], criteres) for s in sources]
     results_per_source = await asyncio.gather(*tasks)
 
-    # Flat list
+    # Flat list. run_scraper renvoie None si le scraper a planté (vs [] = 0 annonce
+    # réelle) → on compte les échecs séparément pour repérer les scrapers à réparer.
     all_biens = []
-    for biens in results_per_source:
-        all_biens.extend(biens)
+    n_crashed = n_empty = 0
+    for src, biens in zip(sources, results_per_source):
+        if biens is None:
+            n_crashed += 1
+        elif not biens:
+            n_empty += 1
+        else:
+            all_biens.extend(biens)
 
-    print(f"\n[Hunter] Total brut : {len(all_biens)} annonces")
+    print(f"\n[Hunter] Total brut : {len(all_biens)} annonces "
+          f"({len(sources)} sources, {n_empty} à 0 résultat, {n_crashed} en échec)")
+    _save_scraper_health(sources, results_per_source)
 
     # Déduplication
     deduped = deduplicate(all_biens)
@@ -500,9 +421,11 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     # Enrichissement galerie : récupère la galerie COMPLÈTE depuis la page détail
     # des survivants (la plupart des scrapers ne captent que 0-1 photo en vue liste).
     # Fait ici, sur ~les survivants, pour ne pas visiter 12000 pages détail.
-    import httpx as _httpx
     from collections import defaultdict as _dd
     from urllib.parse import urlparse as _up
+
+    import httpx as _httpx
+
     from scrapers.gallery import fetch_gallery, reset_breaker
     reset_breaker()   # coupe-circuit par domaine, neuf à chaque passe
     async with _httpx.AsyncClient(
@@ -601,6 +524,7 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     raw_path = RAW_DIR / f"biens_raw_{ts}.json"
     raw_path.write_text(json.dumps(filtered, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print(f"[Hunter] Sauvegardé → {raw_path}")
+    _prune_old_raw()   # borne la croissance de data/raw/
 
     return filtered
 

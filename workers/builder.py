@@ -24,6 +24,7 @@ Chaque scraper retourne une liste de dicts conformes au modèle Bien :
   pieces, chambres, dpe, prix, photos, date_publication, agence
 """
 from pathlib import Path
+
 from models import CriteresRecherche
 
 SCRAPERS_DIR = Path(__file__).parent.parent / "scrapers"
@@ -82,6 +83,7 @@ def list_scrapers() -> list[str]:
 
 if __name__ == "__main__":
     import asyncio
+
     from config_loader import load_criteria, load_sources
     criteres = load_criteria()
     sources = load_sources()

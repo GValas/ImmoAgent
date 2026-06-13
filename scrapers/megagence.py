@@ -5,12 +5,11 @@ URL : /acheter/maison/{slug-dept}/ — slug = nom département sans numéro (ex:
 Cards : li[class*='list-prop-li'] > a.list-prop-li-container[href]
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
 import asyncio
+import re
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-
 
 BASE_URL = "https://www.megagence.com"
 

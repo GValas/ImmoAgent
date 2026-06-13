@@ -34,7 +34,6 @@ import html as _html
 import re
 
 import httpx
-from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.lucilia-b-immobilier.fr"
 

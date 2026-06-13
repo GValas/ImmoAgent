@@ -1,0 +1,7 @@
+# Dépendances de développement (lint, tests, types) — pas nécessaires au runtime.
+#   pip install -r requirements-dev.txt
+-r requirements.txt
+
+ruff>=0.15.0
+pytest>=8.0.0
+mypy>=1.10.0

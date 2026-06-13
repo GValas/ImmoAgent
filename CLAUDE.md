@@ -30,31 +30,63 @@ Le pipeline peut tourner en continu via `scheduler.py`.
 ```
 orchestrator.py       Point d'entrée unique (pipeline à la demande)
 scheduler.py          Pipeline continu (boucle infinie, fréquences configurables)
-config_loader.py      Parse criteria.md → CriteresRecherche (source unique de vérité)
+config_loader.py      Parse criteria.md → CriteresRecherche (SOURCE UNIQUE, y compris
+                      les paramètres scheduler — plus de second parseur)
 models.py             Dataclasses : Bien, CriteresRecherche
+
+core/                 Utilitaires partagés (ex-logique dupliquée dans les workers)
+  dedup.py            Clé de déduplication unique (prix+surface+ville)
+  filters.py          Filtres a posteriori : apply_posterior_filters() + helpers
+                      (structurel/DPE, terrain depuis texte, mots-clés, photos_min)
+  excel_export.py     Writer Excel UNIQUE (registre de colonnes ; ex-2 writers)
+  dept_data.py        DEPT_NOMS / dept_nom / filter_by_dept
+  logging_setup.py    Horodatage centralisé des prints [Worker] (ex-monkeypatch ×2)
 
 workers/
   discovery.py        Worker 1 — charge sources.yaml, filtre par département
   builder.py          Worker 2 — vérifie scrapers disponibles, liste les manquants
   hunter.py           Worker 3 — scrape parallèle, déduplique, filtre structurel,
                       enrichit page détail (photos/DPE/description), filtre mots-clés,
-                      annote gare/bus/géoloc
+                      annote gare/bus/géoloc ; suit la santé des scrapers, purge data/raw
   analyst.py          Worker 4 — enrichit (DVF, alertes), résumé local, export Excel
   qualitative.py      Util analyst — match description_qualitative ↔ annonce via LLM local Ollama (conteneur dédié)
 
 scrapers/             277 scrapers actifs + 33 inactifs (source : sources.yaml)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
+  _base.py            Socle commun SSR : HEADERS, DEFAULT_DEPT_SLUGS, make_client +
+                      get_with_retry, helpers parse_*, driver run_dept_search,
+                      standalone_main. Pilote migré : le_tuc.py (≈150 l. vs 343).
+
+tests/                Tests pytest non-réseau (config_loader, dedup, filters, excel)
+                      + smoke-import des 277 scrapers (contrat async search()).
 
 config/
   criteria.md         SEUL fichier édité par l'utilisateur
   sources.yaml        Éditable manuellement ou via Claude Code — contient aussi la blacklist
 
 data/
-  raw/                JSON bruts par run (biens_raw_YYYYMMDD_HHMM.json)
+  raw/                JSON bruts par run (biens_raw_YYYYMMDD_HHMM.json ; purge > 48)
   output/             Excel final (resultats_*.xlsx, suivi_actif.xlsx)
   biens_vus.json      Hashes inter-runs pour dédup du scheduler
   scheduler_state.json  Timestamps dernières exécutions
+  scraper_health.json   Compteur d'annonces / source + scrapers muets ≥5 runs
 ```
+
+### Outillage qualité (ajouté 2026-06-13)
+- `pyproject.toml` : config **ruff** (lint+format) et **mypy** ciblé ; `requirements-dev.txt`
+  (`ruff`, `pytest`, `mypy`) ; `requirements.lock` (versions figées).
+- CI **GitHub Actions** (`.github/workflows/ci.yml`) : `ruff check .` + `pytest`
+  (le smoke-test importe les 277 scrapers → casse de syntaxe/contrat détectée).
+- Avant de committer : `ruff check . && pytest`. La longueur de ligne (E501) n'est
+  pas imposée ; `scrapers/*.py` tolèrent E701/F841 (gabarit compact).
+
+### Migrer un scraper vers `scrapers/_base.py`
+Un scraper SSR « standard » (boucle département + pagination) se réduit à : un patron
+d'URL `page_url(dept, slug, page)`, un `card_selector`, une fonction `parse_card(card,
+dept) -> dict|None`, et `run_dept_search(...)`. Voir `le_tuc.py` comme référence.
+Remplacer les helpers locaux `_parse_price`/`_parse_terrain`/… par ceux de `_base`.
+Migration **progressive, par vagues** (ne pas tout réécrire d'un coup ; tester chaque
+scraper via `python scrapers/xxx.py` après migration).
 
 ---
 

@@ -3,12 +3,11 @@ scrapers/ladresse.py — L'Adresse (réseau d'agences)
 Méthode : Playwright + parsing HTML (a.bien)
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
 import asyncio
+import re
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-
 
 BASE_URL = "https://www.ladresse.com"
 

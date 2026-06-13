@@ -8,7 +8,6 @@ import json
 
 import httpx
 
-
 BASE_URL = "https://www.bienici.com"
 API_URL = f"{BASE_URL}/realEstateAds.json"
 

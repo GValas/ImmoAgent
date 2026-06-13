@@ -13,12 +13,11 @@ User-Agent de l'app iOS SeLoger, list.htm repasse en 200 et sert la page SSR com
 Sans proxies résidentiels rotatifs, la couverture utile se limite à quelques CP/run.
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
 import asyncio
+import re
 
 import httpx
 from bs4 import BeautifulSoup
-
 
 BASE_URL = "https://www.seloger.com"
 SEARCH_URL = (

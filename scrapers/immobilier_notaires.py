@@ -4,11 +4,8 @@ Méthode : REST API httpx (pas de Playwright nécessaire)
 Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
-import json
-import re
 
 import httpx
-
 
 BASE_URL = "https://www.immobilier.notaires.fr"
 API_URL = f"{BASE_URL}/pub-services/inotr-www-annonces/v1/annonces"

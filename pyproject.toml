@@ -1,0 +1,51 @@
+# pyproject.toml — outillage qualité immo-agent
+#
+# Ce projet n'est pas packagé (pas de build) : ce fichier ne sert QUE de config
+# centralisée pour ruff (lint/format), pytest et mypy. Les dépendances runtime
+# restent dans requirements.txt ; les dépendances de dev dans requirements-dev.txt.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Le gros du parc (277 scrapers) suit un gabarit copié-collé ; on ne réécrit pas
+# tout. On cible les vraies erreurs (pyflakes) et on n'impose PAS la longueur de
+# ligne (E501 ≈ 930 occurrences héritées) ni un reformatage massif.
+extend-exclude = [".venv", "data", "logs", ".mypy_cache"]
+
+[tool.ruff.lint]
+# UP (pyupgrade) volontairement absent : moderniser ~40 annotations Optional du
+# parc hérité créerait du bruit sans rapport avec la logique. On vise les vraies
+# erreurs (pyflakes/bugbear).
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E501",   # line-too-long — non imposé (héritage massif)
+    "E741",   # noms ambigus (l/I/O) — tolérés dans les helpers de parsing
+    "B008",   # appels dans les valeurs par défaut — faux positifs fréquents
+    "B905",   # zip sans strict= — listes garanties de même longueur ici
+    "B007",   # variable de boucle inutilisée — toléré dans le parsing
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Le parc de 277 scrapers suit un gabarit copié-collé compact : on tolère les
+# one-liners `if x: y` (E701) et variables de parsing intermédiaires (F841) ICI,
+# tout en gardant ces règles actives sur core/ et workers/.
+"scrapers/*.py" = ["E402", "B007", "E701", "F841"]
+"scrapers/__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["models", "config_loader", "workers", "scrapers", "core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+pythonpath = ["."]
+
+[tool.mypy]
+# Type-check ciblé et indulgent : le pipeline fait circuler des dict, pas des
+# dataclasses, donc on ne vise que les modules à schéma stable.
+python_version = "3.12"
+files = ["models.py", "config_loader.py", "core"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = false

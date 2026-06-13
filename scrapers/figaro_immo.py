@@ -9,7 +9,6 @@ import re
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
-
 BASE_URL = "https://immobilier.lefigaro.fr"
 
 DEPT_SLUGS = {

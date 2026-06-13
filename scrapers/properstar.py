@@ -4,12 +4,11 @@ Méthode : scrape_simple (httpx) — SSR Angular, pas de Cloudflare
 Interface : async def search(criteres: dict) -> list[dict]
 Note : 20 annonces par département, post-filtrage Python
 """
-import re
 import asyncio
+import re
 
 import httpx
 from bs4 import BeautifulSoup
-
 
 BASE_URL = "https://www.properstar.fr"
 

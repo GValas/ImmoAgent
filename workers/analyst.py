@@ -3,14 +3,17 @@ workers/analyst.py — Worker 4 : Analyst
 Enrichit chaque bien (DVF, match qualitatif NLP, alertes), agrège dans un Excel final.
 (Le scoring pondéré a été retiré — à revoir plus tard.)
 """
-import json
 import asyncio
-from datetime import datetime
-from pathlib import Path
+import json
 
 # Import DVF scraper pour les prix de référence réels (CSV data.gouv.fr)
 import sys as _sys
+from datetime import datetime
+from pathlib import Path
+
 _sys.path.insert(0, str(Path(__file__).parent.parent))
+from core.dept_data import DEPT_NOMS, dept_nom  # noqa: F401 (réexport pour scheduler)
+from core.excel_export import RESULTATS_COLUMNS, write_listings_xlsx
 from scrapers.dvf import get_prix_m2_reference as _dvf_get_prix_m2
 
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "output"
@@ -146,154 +149,30 @@ def llm_summary(top_biens: list[dict]) -> str:
 # EXPORT EXCEL
 # ──────────────────────────────────────────────
 
-# Département (code INSEE) → nom en toutes lettres. Partagé avec scheduler.py.
-DEPT_NOMS = {
-    "01": "Ain", "02": "Aisne", "03": "Allier", "04": "Alpes-de-Haute-Provence",
-    "05": "Hautes-Alpes", "06": "Alpes-Maritimes", "07": "Ardèche", "08": "Ardennes",
-    "09": "Ariège", "10": "Aube", "11": "Aude", "12": "Aveyron",
-    "13": "Bouches-du-Rhône", "14": "Calvados", "15": "Cantal", "16": "Charente",
-    "17": "Charente-Maritime", "18": "Cher", "19": "Corrèze", "2A": "Corse-du-Sud",
-    "2B": "Haute-Corse", "21": "Côte-d'Or", "22": "Côtes-d'Armor", "23": "Creuse",
-    "24": "Dordogne", "25": "Doubs", "26": "Drôme", "27": "Eure", "28": "Eure-et-Loir",
-    "29": "Finistère", "30": "Gard", "31": "Haute-Garonne", "32": "Gers",
-    "33": "Gironde", "34": "Hérault", "35": "Ille-et-Vilaine", "36": "Indre",
-    "37": "Indre-et-Loire", "38": "Isère", "39": "Jura", "40": "Landes",
-    "41": "Loir-et-Cher", "42": "Loire", "43": "Haute-Loire", "44": "Loire-Atlantique",
-    "45": "Loiret", "46": "Lot", "47": "Lot-et-Garonne", "48": "Lozère",
-    "49": "Maine-et-Loire", "50": "Manche", "51": "Marne", "52": "Haute-Marne",
-    "53": "Mayenne", "54": "Meurthe-et-Moselle", "55": "Meuse", "56": "Morbihan",
-    "57": "Moselle", "58": "Nièvre", "59": "Nord", "60": "Oise", "61": "Orne",
-    "62": "Pas-de-Calais", "63": "Puy-de-Dôme", "64": "Pyrénées-Atlantiques",
-    "65": "Hautes-Pyrénées", "66": "Pyrénées-Orientales", "67": "Bas-Rhin",
-    "68": "Haut-Rhin", "69": "Rhône", "70": "Haute-Saône", "71": "Saône-et-Loire",
-    "72": "Sarthe", "73": "Savoie", "74": "Haute-Savoie", "75": "Paris",
-    "76": "Seine-Maritime", "77": "Seine-et-Marne", "78": "Yvelines",
-    "79": "Deux-Sèvres", "80": "Somme", "81": "Tarn", "82": "Tarn-et-Garonne",
-    "83": "Var", "84": "Vaucluse", "85": "Vendée", "86": "Vienne",
-    "87": "Haute-Vienne", "88": "Vosges", "89": "Yonne", "90": "Territoire de Belfort",
-    "91": "Essonne", "92": "Hauts-de-Seine", "93": "Seine-Saint-Denis",
-    "94": "Val-de-Marne", "95": "Val-d'Oise", "971": "Guadeloupe", "972": "Martinique",
-    "973": "Guyane", "974": "La Réunion", "976": "Mayotte",
-}
-
-
-def dept_nom(code) -> str:
-    """Nom du département en toutes lettres ('72' → 'Sarthe'). Repli : le code brut."""
-    if code is None:
-        return ""
-    return DEPT_NOMS.get(str(code).strip().zfill(2), str(code))
-
 
 def export_excel(biens: list[dict], resume: str) -> Path:
-    """Exporte les résultats scorés dans un fichier Excel."""
-    try:
-        import openpyxl
-        from openpyxl.styles import PatternFill, Font, Alignment
-        from openpyxl.utils import get_column_letter
-        from openpyxl.styles import numbers as xl_numbers
-    except ImportError:
-        raise ImportError("pip install openpyxl")
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    """Exporte les résultats dans data/output/resultats_<ts>.xlsx (writer partagé)."""
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     path = OUTPUT_DIR / f"resultats_{ts}.xlsx"
 
-    wb = openpyxl.Workbook()
+    def _resume_sheet(wb):
+        from openpyxl.styles import Alignment, Font
+        ws2 = wb.create_sheet("Résumé")
+        ws2["A1"] = "Résumé exécutif"
+        ws2["A1"].font = Font(bold=True, size=14)
+        ws2["A3"] = resume
+        ws2["A3"].alignment = Alignment(wrap_text=True)
+        ws2.column_dimensions["A"].width = 100
 
-    # ── Feuille 1 : Résultats ──
-    ws = wb.active
-    ws.title = "Résultats"
-
-    from scrapers.geolocate import rome2rio_url
-    headers = [
-        "Match qual.", "Source", "Titre", "Ville",
-        "Dép", "Département", "Gare", "Bus", "Accessibilité",
-        "Surface", "Terrain", "Pièces", "DPE",
-        "Prix (€)", "Prix/m²", "Prix/m² marché",
-        "Alertes", "Extrait qual.",
-        "Satellite", "Ortho+cadastre", "URL"
-    ]
-    header_fill = PatternFill("solid", fgColor="2C3E50")
-    header_font = Font(color="FFFFFF", bold=True)
-
-    for col, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
-
-    zebra_fill = PatternFill("solid", fgColor="F2F4F4")    # 1 ligne sur 2
-
-    # Colonnes affichées comme hyperliens : {index_1based: libellé du lien}
-    link_labels = {
-        headers.index("Accessibilité") + 1: "Paris ▸ train",
-        headers.index("Satellite") + 1: "Vue satellite",
-        headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
-        headers.index("URL") + 1: "Voir l'annonce",
-    }
-    price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché", "Terrain")}
-
-    for row, b in enumerate(biens, 2):
-        zebra = zebra_fill if row % 2 == 0 else None   # 1 ligne sur 2
-
-        values = [
-            b.get("match_qualitatif"),
-            b.get("source", ""),
-            b.get("titre", ""),
-            b.get("ville", ""),
-            b.get("departement", ""),
-            dept_nom(b.get("departement")),
-            (f"{b.get('gare_nom')} ({b.get('gare_distance_km')} km)"
-             if b.get("gare_nom") else ""),
-            (f"{b.get('bus_nom')} ({b.get('bus_distance_km')} km)"
-             if b.get("bus_proche") else ""),
-            b.get("rome2rio_url") or rome2rio_url(b.get("ville", ""), b.get("code_postal")),
-            b.get("surface"),
-            b.get("surface_terrain"),
-            b.get("pieces"),
-            b.get("dpe", ""),
-            b.get("prix"),
-            b.get("prix_m2_calcule"),
-            b.get("prix_m2_marche_dep"),
-            " | ".join(b.get("alerte", [])),
-            b.get("match_extrait", ""),
-            b.get("maps_satellite_url", ""),
-            b.get("geoportail_url", ""),
-            b.get("url", ""),
-        ]
-        for col, val in enumerate(values, 1):
-            if isinstance(val, (list, dict)):
-                val = str(val) if val else ""
-            cell = ws.cell(row=row, column=col, value=val)
-            # Fond : zébrage 1 ligne sur 2
-            if zebra is not None:
-                cell.fill = zebra
-            # Séparateur de milliers sur les prix
-            if col in price_cols and isinstance(val, (int, float)):
-                cell.number_format = "#,##0"
-            if col in link_labels and val:
-                cell.hyperlink = str(val)
-                cell.value = link_labels[col]
-                cell.style = "Hyperlink"  # style natif Excel → change de couleur après clic
-
-    # Largeurs colonnes
-    widths = [8, 12, 40, 20, 6, 18, 24, 22, 16, 9, 9, 8, 6, 12, 10, 14, 45, 40,
-              14, 26, 20, 14, 16, 16]
-    for col, w in enumerate(widths, 1):
-        ws.column_dimensions[get_column_letter(col)].width = w
-
-    ws.auto_filter.ref = ws.dimensions
-    ws.freeze_panes = "A2"
-
-    # ── Feuille 2 : Résumé ──
-    ws2 = wb.create_sheet("Résumé")
-    ws2["A1"] = "Résumé exécutif"
-    ws2["A1"].font = Font(bold=True, size=14)
-    ws2["A3"] = resume
-    ws2["A3"].alignment = Alignment(wrap_text=True)
-    ws2.column_dimensions["A"].width = 100
-
-    wb.save(path)
+    try:
+        write_listings_xlsx(
+            biens, path,
+            columns=RESULTATS_COLUMNS,
+            sheet_title="Résultats",
+            build_extra_sheet=_resume_sheet,
+        )
+    except ImportError as e:
+        raise ImportError("pip install openpyxl") from e
     print(f"[Analyst] Excel exporté → {path}")
     return path
 
@@ -339,6 +218,7 @@ async def run(biens_bruts: list[dict], criteres) -> Path:
 if __name__ == "__main__":
     import sys
     from pathlib import Path
+
     from config_loader import load_criteria
 
     raw_files = sorted(Path("data/raw").glob("*.json"))

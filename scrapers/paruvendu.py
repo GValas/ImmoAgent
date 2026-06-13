@@ -7,6 +7,7 @@ City/dept extracted from "Ville (dept_code)" pattern in stripped text.
 
 import asyncio
 import re
+
 import httpx
 
 BASE = "https://www.paruvendu.fr"

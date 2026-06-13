@@ -6,7 +6,7 @@ Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
 import re
-import json
+
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 

@@ -5,8 +5,9 @@ URL : /annonces/achat/maisons-villas/{slug}/  →  paginé avec ?page=N
 Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
-import re
 import json
+import re
+
 import httpx
 from bs4 import BeautifulSoup
 

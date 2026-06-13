@@ -29,7 +29,6 @@ Interface : async def search(criteres: dict) -> list[dict]
 import asyncio
 import re
 import unicodedata
-import urllib.parse
 
 import httpx
 from bs4 import BeautifulSoup

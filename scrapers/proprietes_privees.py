@@ -15,12 +15,11 @@ Localisation du BIEN (pas de l'agence) :
 
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
 import asyncio
+import re
 
 import httpx
 from bs4 import BeautifulSoup
-
 
 BASE_URL = "https://www.proprietes-privees.com"
 

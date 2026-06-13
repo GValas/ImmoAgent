@@ -3,12 +3,11 @@ scrapers/safti.py — SAFTI (réseau de mandataires)
 Méthode : Playwright + parsing HTML (article.tw-group)
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
 import asyncio
+import re
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-
 
 BASE_URL = "https://www.safti.fr"
 

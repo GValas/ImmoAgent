@@ -4,12 +4,11 @@ Méthode : scrape_simple (httpx) — SSR Symfony, données GTM dans les attribut
 Interface : async def search(criteres: dict) -> list[dict]
 Note : ~10-120 annonces/dept, pagination ?page=N — skip 72 et 36 (pas de page dédiée)
 """
-import re
 import asyncio
+import re
 
 import httpx
 from bs4 import BeautifulSoup
-
 
 BASE_URL = "https://www.laforet.com"
 

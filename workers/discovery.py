@@ -10,6 +10,7 @@ Claude Code peut enrichir sources.yaml en autonomie lors des sessions
 de maintenance (nouvelles sources, désactivation de sites cassés, etc.)
 """
 from pathlib import Path
+
 from config_loader import load_criteria, load_sources
 
 SOURCES_PATH = Path(__file__).parent.parent / "config" / "sources.yaml"
@@ -41,7 +42,7 @@ async def run(criteres=None) -> list[dict]:
 
     if not filtered:
         print("[Discovery] Aucune source active.")
-        print(f"[Discovery] Édite config/sources.yaml ou demande à Claude Code d'en ajouter.")
+        print("[Discovery] Édite config/sources.yaml ou demande à Claude Code d'en ajouter.")
 
     return filtered
 

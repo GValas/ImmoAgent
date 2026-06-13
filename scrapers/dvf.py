@@ -15,7 +15,7 @@ import csv
 import gzip
 import io
 import statistics
-from datetime import datetime
+
 import httpx
 
 BASE_URL = "https://files.data.gouv.fr/geo-dvf/latest/csv"

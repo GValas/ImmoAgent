@@ -20,6 +20,7 @@ Interface utilitaire :
 import asyncio
 import math
 import unicodedata
+
 import httpx
 
 SNCF_EXPORT_URL = (

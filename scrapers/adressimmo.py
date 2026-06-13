@@ -79,7 +79,7 @@ async def search(criteres: dict) -> list[dict]:
     # Agence locale 36/18 : si aucun dept cible n'est dans son périmètre,
     # inutile d'interroger le site.
     if departements and not (set(departements) & {"36", "18"}):
-        print(f"[Adressimmo] Aucun dept cible dans le périmètre 36/18 → skip")
+        print("[Adressimmo] Aucun dept cible dans le périmètre 36/18 → skip")
         return []
 
     results: list[dict] = []

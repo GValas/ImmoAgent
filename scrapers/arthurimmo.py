@@ -4,13 +4,12 @@ Méthode : scrape_simple (httpx) — Laravel + Livewire SSR, données dans div[w
 Interface : async def search(criteres: dict) -> list[dict]
 Note : ~13-30 annonces/dept, pagination ?page=N — skip 49 (0 annonces)
 """
-import re
-import json
 import asyncio
+import json
+import re
 
 import httpx
 from bs4 import BeautifulSoup
-
 
 BASE_URL = "https://www.arthurimmo.com"
 

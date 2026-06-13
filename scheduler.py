@@ -16,33 +16,22 @@ Usage :
   python scheduler.py --once     # un seul cycle complet puis stop
 """
 
-import asyncio
 import argparse
+import asyncio
 import json
-import re
-import hashlib
-import builtins as _builtins
-import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# ── Timestamps automatiques sur tous les prints [Worker] ──────────────────
-_orig_print = _builtins.print
-
-
-def _ts_print(*args, **kwargs):
-    if args and isinstance(args[0], str) and args[0].startswith("["):
-        ts = datetime.now().strftime("%H:%M:%S")
-        _orig_print(f"{ts} {args[0]}", *args[1:], **kwargs)
-    else:
-        _orig_print(*args, **kwargs)
-
-
-_builtins.print = _ts_print
-# ─────────────────────────────────────────────────────────────────────────
-
 from config_loader import load_criteria, load_sources
-from workers import discovery, builder, hunter, analyst
+from core.dedup import dedup_hash
+from core.dept_data import filter_by_dept
+from core.excel_export import SUIVI_COLUMNS, write_listings_xlsx
+from core.filters import apply_posterior_filters
+from core.logging_setup import enable_timestamped_prints
+from workers import builder, discovery, hunter
+
+# Horodatage automatique des logs `[Worker] …` (centralisé dans core.logging_setup).
+enable_timestamped_prints()
 
 DATA_DIR   = Path("data")
 RAW_DIR    = DATA_DIR / "raw"
@@ -51,38 +40,24 @@ STATE_FILE = DATA_DIR / "scheduler_state.json"
 SEEN_FILE  = DATA_DIR / "biens_vus.json"
 SUIVI_FILE = OUTPUT_DIR / "suivi_actif.xlsx"
 
-CRITERIA_MD = Path("config/criteria.md")
-
 
 # ──────────────────────────────────────────────
 # CONFIG SCHEDULER DEPUIS criteria.md
 # ──────────────────────────────────────────────
 
 def load_scheduler_config() -> dict:
-    """Lit les paramètres scheduler depuis criteria.md."""
-    defaults = {
-        "hunter_interval_hours":   4,
-        "discovery_interval_days": 7,
-        "builder_interval_days":   30,
-        "max_biens_suivi":         50,
+    """Paramètres scheduler, projetés depuis l'UNIQUE parseur (config_loader).
+
+    Auparavant criteria.md était re-parsé ici avec une regex distincte et un
+    `except: pass` silencieux — deux sources de vérité aux philosophies d'erreur
+    opposées. On lit désormais `CriteresRecherche` et on en extrait les 4 clés."""
+    c = load_criteria()
+    return {
+        "hunter_interval_hours":   c.hunter_interval_hours,
+        "discovery_interval_days": c.discovery_interval_days,
+        "builder_interval_days":   c.builder_interval_days,
+        "max_biens_suivi":         c.max_biens_suivi,
     }
-    try:
-        content = CRITERIA_MD.read_text(encoding="utf-8")
-        blocks = re.findall(r"```\s*([\s\S]*?)```", content)
-        for block in blocks:
-            for line in block.strip().splitlines():
-                line = line.split("#")[0].strip()
-                if ":" in line:
-                    key, val = line.split(":", 1)
-                    key = key.strip()
-                    if key in defaults:
-                        try:
-                            defaults[key] = yaml.safe_load(val.strip())
-                        except Exception:
-                            pass
-    except Exception:
-        pass
-    return defaults
 
 
 # ──────────────────────────────────────────────
@@ -123,10 +98,9 @@ def save_seen(seen: set):
 
 
 def bien_hash(b: dict) -> str:
-    # ville peut être None (scrapers sans ville exposée : proprietes_rurales,
-    # equidomain, horse_immo…) — `or ''` couvre clé absente ET valeur None.
-    key = f"{b.get('prix')}-{b.get('surface')}-{str(b.get('ville') or '').lower().strip()}"
-    return hashlib.md5(key.encode()).hexdigest()
+    # Clé de déduplication unique (cf. core.dedup) — partagée avec hunter.deduplicate
+    # et models.Bien.hash_dedup pour éviter toute divergence silencieuse.
+    return dedup_hash(b)
 
 
 def bien_identity(b: dict) -> str:
@@ -173,8 +147,9 @@ async def prune_dead_listings(biens: list[dict], concurrency: int = 8) -> tuple[
     404/410/451 ou un marqueur « plus disponible » explicite. Sur timeout, erreur
     réseau, 403 (anti-bot) ou 5xx → on GARDE (pas de suppression sur incertitude).
     Retourne (biens_vivants, nb_retirés)."""
-    import httpx
     from urllib.parse import urlparse
+
+    import httpx
     targets = [b for b in biens if str(b.get("url") or "").startswith("http")]
     if not targets:
         return biens, 0
@@ -242,17 +217,12 @@ async def update_suivi(new_biens: list[dict], cfg: dict):
     # Auto-nettoie les fuites historiques du suivi cumulatif (ex. bienici qui
     # renvoyait des biens 05/94 avant le post-filtre _bien_in_dept du scraper).
     try:
-        target = {str(d).strip().zfill(2) for d in load_criteria().departements}
+        departements = load_criteria().departements
     except Exception:
-        target = set()
-    if target:
-        def _dept_ok(b: dict) -> bool:
-            cp = str(b.get("code_postal") or "").strip()
-            if len(cp) >= 2 and cp[:2].isdigit():
-                return cp[:2] in target
-            return str(b.get("departement") or "").strip().zfill(2) in target
+        departements = []
+    if departements:
         before = len(merged)
-        merged = [b for b in merged if _dept_ok(b)]
+        merged = filter_by_dept(merged, departements)
         if before - len(merged):
             print(f"[Scheduler] Garde-fou dept : {before - len(merged)} bien(s) hors-zone écarté(s)")
 
@@ -319,35 +289,10 @@ def refilter_suivi():
     biens = json.loads(suivi_json.read_text(encoding="utf-8"))
     before = len(biens)
 
-    # Garde-fou département (offline)
-    target = {str(d).strip().zfill(2) for d in criteres.departements}
-    if target:
-        def _dept_ok(b: dict) -> bool:
-            cp = str(b.get("code_postal") or "").strip()
-            if len(cp) >= 2 and cp[:2].isdigit():
-                return cp[:2] in target
-            return str(b.get("departement") or "").strip().zfill(2) in target
-        biens = [b for b in biens if _dept_ok(b)]
-
-    # Mêmes filtres a posteriori que le Hunter, sur données déjà enrichies.
-    biens = hunter.filter_biens(biens, criteres)
-    # Re-filtre terrain depuis le texte (comme hunter.run) : surface_terrain n'est
-    # souvent que dans la description ; on l'extrait pour les biens sans terrain, puis
-    # on ré-applique terrain_min (les données du suivi sont déjà enrichies/détaillées).
-    _tmin = getattr(criteres, "terrain_min", 0)
-    if _tmin:
-        for b in biens:
-            if not b.get("surface_terrain"):
-                t = hunter.extract_terrain_from_text(b.get("description") or "")
-                if t:
-                    b["surface_terrain"] = t
-                    b["terrain_estime_texte"] = True
-        biens = [b for b in biens
-                 if not (b.get("surface_terrain") and b["surface_terrain"] < _tmin)]
-    biens = hunter.filter_mots_cles(biens, criteres)
-    pmin = getattr(criteres, "photos_min", 0)
-    if pmin:
-        biens = [b for b in biens if len(b.get("photos") or []) >= pmin]
+    # Mêmes filtres a posteriori que le Hunter, sur données déjà enrichies (séquence
+    # unique dans core.filters) : garde-fou dept → structurel/DPE → terrain depuis
+    # texte → mots-clés → photos_min. Aucune requête réseau.
+    biens = apply_posterior_filters(biens, criteres, dept_guard=True)
 
     # Ré-annotation qualitative (NLP) sur les survivants : répercute un changement
     # de description_qualitative et rafraîchit match_qualitatif avant le tri.
@@ -369,103 +314,24 @@ def refilter_suivi():
 
 
 def _write_suivi_excel(biens: list[dict]):
+    """Régénère suivi_actif.xlsx via le writer partagé (core.excel_export).
+    Colonnes SUIVI (= résultats + « Ajouté le ») + feuille « Infos »."""
+    def _infos_sheet(wb):
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        ws2 = wb.create_sheet("Infos")
+        ws2["A1"] = f"Dernière mise à jour : {ts}"
+        ws2["A2"] = f"Nombre de biens suivis : {len(biens)}"
+
     try:
-        import openpyxl
-        from openpyxl.styles import PatternFill, Font, Alignment
-        from openpyxl.utils import get_column_letter
+        write_listings_xlsx(
+            biens, SUIVI_FILE,
+            columns=SUIVI_COLUMNS,
+            sheet_title="Suivi actif",
+            build_extra_sheet=_infos_sheet,
+        )
     except ImportError:
         print("[Scheduler] openpyxl manquant — Excel non généré")
         return
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Suivi actif"
-
-    # Aligné sur l'export resultats_*.xlsx (workers/analyst.py) + colonne
-    # suivi-spécifique « Ajouté le ». Inclut géoloc et liens satellite/cadastre.
-    from scrapers.geolocate import rome2rio_url
-    headers = [
-        "Match qual.", "Ajouté le", "Source", "Titre",
-        "Ville", "Dép", "Département", "Gare", "Bus", "Accessibilité",
-        "Surface", "Terrain", "Pièces", "DPE",
-        "Prix (€)", "Prix/m²", "Prix/m² marché", "Alertes",
-        "Satellite", "Ortho+cadastre", "URL"
-    ]
-    hfill = PatternFill("solid", fgColor="2C3E50")
-    hfont = Font(color="FFFFFF", bold=True)
-    for col, h in enumerate(headers, 1):
-        c = ws.cell(row=1, column=col, value=h)
-        c.fill = hfill
-        c.font = hfont
-        c.alignment = Alignment(horizontal="center")
-
-    zebra_fill = PatternFill("solid", fgColor="F2F4F4")   # zébrage 1 ligne sur 2
-
-    # Colonnes affichées comme hyperliens : {index_1based: libellé}
-    link_labels = {
-        headers.index("Accessibilité") + 1: "Paris ▸ train",
-        headers.index("Satellite") + 1: "Vue satellite",
-        headers.index("Ortho+cadastre") + 1: "Ortho + cadastre",
-        headers.index("URL") + 1: "Voir l'annonce",
-    }
-    price_cols = {headers.index(h) + 1 for h in ("Prix (€)", "Prix/m²", "Prix/m² marché", "Terrain")}
-
-    for row, b in enumerate(biens, 2):
-        zebra = zebra_fill if row % 2 == 0 else None
-
-        vals  = [
-            b.get("match_qualitatif"),
-            (b.get("date_ajout_suivi") or "")[:10],
-            b.get("source", ""),
-            b.get("titre", ""),
-            b.get("ville", ""),
-            b.get("departement", ""),
-            analyst.dept_nom(b.get("departement")),
-            (f"{b.get('gare_nom')} ({b.get('gare_distance_km')} km)"
-             if b.get("gare_nom") else ""),
-            (f"{b.get('bus_nom')} ({b.get('bus_distance_km')} km)"
-             if b.get("bus_proche") else ""),
-            b.get("rome2rio_url") or rome2rio_url(b.get("ville", ""), b.get("code_postal")),
-            b.get("surface"),
-            b.get("surface_terrain"),
-            b.get("pieces"),
-            b.get("dpe", ""),
-            b.get("prix"),
-            b.get("prix_m2_calcule"),
-            b.get("prix_m2_marche_dep"),
-            " | ".join(b.get("alerte", [])),
-            b.get("maps_satellite_url", ""),
-            b.get("geoportail_url", ""),
-            b.get("url", ""),
-        ]
-        for col, v in enumerate(vals, 1):
-            if isinstance(v, (list, dict)):
-                v = str(v) if v else ""
-            c = ws.cell(row=row, column=col, value=v)
-            # Fond : zébrage 1 ligne sur 2
-            if zebra is not None:
-                c.fill = zebra
-            if col in price_cols and isinstance(v, (int, float)):
-                c.number_format = "#,##0"
-            if col in link_labels and v:
-                c.hyperlink = str(v)
-                c.value = link_labels[col]
-                c.style = "Hyperlink"
-
-    widths = [8, 12, 12, 40, 18, 6, 18, 24, 22, 16, 9, 9, 8, 6, 12, 10, 14, 35,
-              20, 14, 16, 16]
-    for col, w in enumerate(widths, 1):
-        ws.column_dimensions[get_column_letter(col)].width = w
-
-    ws.auto_filter.ref = ws.dimensions
-    ws.freeze_panes = "A2"
-
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    ws2 = wb.create_sheet("Infos")
-    ws2["A1"] = f"Dernière mise à jour : {ts}"
-    ws2["A2"] = f"Nombre de biens suivis : {len(biens)}"
-
-    wb.save(SUIVI_FILE)
     print(f"[Scheduler] Excel mis à jour → {SUIVI_FILE}")
 
 

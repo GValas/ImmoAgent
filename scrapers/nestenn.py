@@ -3,12 +3,11 @@ scrapers/nestenn.py — Nestenn (réseau d'agences)
 Méthode : Playwright + parsing HTML (div.bien_item)
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
 import asyncio
+import re
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-
 
 BASE_URL = "https://www.nestenn.com"
 

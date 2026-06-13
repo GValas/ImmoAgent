@@ -3,13 +3,11 @@ scrapers/logic_immo.py — Logic-Immo (SeLoger Group)
 Méthode : Playwright + interception réseau API JSON
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
-import json
 import asyncio
+import re
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-
 
 BASE_URL = "https://www.logic-immo.com"
 

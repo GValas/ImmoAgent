@@ -3,12 +3,11 @@ scrapers/foncia.py — Foncia Transaction (réseau national)
 Méthode : httpx pur — Angular SSR, filtre dept fonctionnel
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import re
 import asyncio
+import re
 
 import httpx
 from bs4 import BeautifulSoup
-
 
 BASE_URL = "https://www.foncia.com"
 

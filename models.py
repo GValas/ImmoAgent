@@ -2,9 +2,8 @@
 models.py — Modèles de données partagés entre tous les workers
 """
 from dataclasses import dataclass, field
-from typing import Optional
 from datetime import datetime
-import hashlib
+from typing import Optional
 
 
 @dataclass
@@ -49,10 +48,12 @@ class Bien:
     # Caractéristiques
     surface: Optional[float] = None       # m²
     surface_terrain: Optional[float] = None
+    terrain_estime_texte: Optional[bool] = None  # surface_terrain déduite de la description
     pieces: Optional[int] = None
     chambres: Optional[int] = None
     etage: Optional[int] = None
     dpe: Optional[str] = None             # A/B/C/D/E/F/G
+    has_pool: Optional[bool] = None       # piscine signalée par au moins une source
 
     # Prix
     prix: Optional[float] = None
@@ -62,18 +63,25 @@ class Bien:
     # Méta
     date_publication: Optional[datetime] = None
     date_scraped: datetime = field(default_factory=datetime.now)
+    date_ajout_suivi: Optional[str] = None     # date d'entrée dans suivi_actif (YYYY-MM-DD)
     photos: list[str] = field(default_factory=list)
     agence: Optional[str] = None
+
+    # Liens géo (remplis par scrapers/geolocate.py)
+    rome2rio_url: Optional[str] = None
+    geo_source: Optional[str] = None
 
     # Enrichissement Worker Analyst
     match_qualitatif: Optional[float] = None   # similarité NLP description ↔ annonce (0–100)
     match_extrait: Optional[str] = None        # phrase de l'annonce la plus proche
+    prix_m2_calcule: Optional[float] = None    # prix / surface
+    prix_m2_marche_dep: Optional[float] = None  # prix médian €/m² du département (DVF)
     alerte: list[str] = field(default_factory=list)   # anomalies détectées (prix, DPE…)
 
     def hash_dedup(self) -> str:
-        """Clé de déduplication basée sur prix + surface + ville."""
-        key = f"{self.prix}-{self.surface}-{self.ville.lower().strip()}"
-        return hashlib.md5(key.encode()).hexdigest()
+        """Clé de déduplication basée sur prix + surface + ville (cf. core.dedup)."""
+        from core.dedup import dedup_hash
+        return dedup_hash(self.to_dict())
 
     def prix_m2_calc(self) -> Optional[float]:
         if self.prix and self.surface and self.surface > 0:
@@ -104,3 +112,9 @@ class CriteresRecherche:
     photos_min: int = 0          # nb minimal de photos (0 = pas de filtre)
     mots_obligatoires: list[str] = field(default_factory=list)  # tous exigés dans le texte (ET)
     mots_interdits: list[str] = field(default_factory=list)     # exclu si l'un est présent
+
+    # ── Paramètres scheduler (## Scheduler dans criteria.md) ──
+    hunter_interval_hours: float = 4      # fréquence Hunter+Analyst (nouvelles annonces)
+    discovery_interval_days: float = 7    # fréquence Discovery (re-qualifier les sources)
+    builder_interval_days: float = 30     # fréquence Builder (scrapers à jour)
+    max_biens_suivi: int = 50             # plafond de biens conservés dans suivi_actif

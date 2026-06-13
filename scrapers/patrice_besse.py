@@ -9,6 +9,7 @@ Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
 import re
+
 import httpx
 from bs4 import BeautifulSoup
 
@@ -265,7 +266,7 @@ async def search(criteres: dict) -> list[dict]:
 
     async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=30) as client:
         # ── Étape 1 : page de listing principale ──────────────────────────
-        print(f"[PatriceBesse] Chargement de la page principale (~4 MB)...")
+        print("[PatriceBesse] Chargement de la page principale (~4 MB)...")
         try:
             r = await client.get(f"{BASE}/recherche-bien-immobilier-france/")
             if r.status_code != 200:

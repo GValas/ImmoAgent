@@ -13,11 +13,10 @@ Notes parsing :
 - DPE extrait du texte (fr_text) par regex.
 - Fiche : https://www.cimm.com/bien/{id}
 """
-import re
 import asyncio
+import re
 
 import httpx
-
 
 API_URL = "https://api.cimm.com/api/realties"
 SITE_BASE = "https://www.cimm.com"
