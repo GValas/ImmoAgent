@@ -4483,6 +4483,128 @@ sources:
       zone sous criteria prod (Beaumont-Pied-de-Bœuf 72, 448k €), 0 fuite, scraper fonctionnel.
       dernier_test 2026-06-14.'
 
+  # ── Ajouts 2026-06-14 (scraper-scout voies 6/7 : Netty/Win reverse-API + EPI) ──
+  - id: topaze_immobilier
+    nom: Topaze Immobilier (Tours, 37)
+    url_base: https://www.topaze-immobilier.com
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: 'Moteur Netty/Modelo (pages /vente et fiches React CSR → vides en httpx) MAIS le sitemap.xml
+      est SSR et liste toutes les fiches sous /vente/{type}-...-{ville}-{CP},{REF}. Socle scrapers/_netty.py.
+      Filtre dept = CP du slug, post-filtre STRICT CP[:2]. Enrichissement titre/description/photo
+      via og: du <head> SSR (CDN img.netty.immo) ; prix/surface absents du SSR (détail CSR). Test
+      standalone 2026-06-14 : 40 biens résidentiels, « Départements vus » = [''37''], 0 fuite. (Était
+      écarté CSR : débloqué.) dernier_test 2026-06-14.'
+  - id: royalfoncier
+    nom: Royal Foncier (Sainte-Maure-de-Touraine, 37)
+    url_base: https://www.royalfoncier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 1
+    note: 'Moteur Netty/Modelo, sitemap.xml SSR (socle scrapers/_netty.py). Profil IDÉAL : moulins
+      / manoirs / fermes / demeures de caractère en Touraine. Le site déborde sur le 86 (Vienne,
+      hors zone) → écarté par le post-filtre STRICT CP[:2]. Test standalone 2026-06-14 : 69 biens,
+      « Départements vus » = [''36'',''37''], 0 fuite (86 bien exclu). Enrichissement og: OK (titre/desc/photo
+      netty). (Était écarté CSR « sitemap = catégories seules » — FAUX : le sitemap contient bien
+      les fiches.) dernier_test 2026-06-14.'
+  - id: agencelorzimmobilier
+    nom: Agence Lorz Immobilier (Bourges, 18)
+    url_base: https://www.agencelorzimmobilier.com
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: 'Moteur Netty/Modelo, sitemap.xml SSR (socle scrapers/_netty.py). Fiches /vente/{type}-...-{ville}-{CP},{REF},
+      filtre dept CP[:2]. Test standalone 2026-06-14 : 47 biens résidentiels, « Départements vus
+      » = [''18''], 0 fuite. (Était écarté CSR : débloqué via sitemap.) dernier_test 2026-06-14.'
+  - id: cloixlumet
+    nom: Cloix & Lumet Immobilier (Bourges, 18)
+    url_base: https://www.cloixlumet.net
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: 'Moteur Netty/Modelo, sitemap.xml SSR (socle scrapers/_netty.py). Filtre dept CP[:2] du
+      slug. Test standalone 2026-06-14 : 54 biens résidentiels, « Départements vus » = [''18''],
+      0 fuite. (Était écarté CSR : débloqué via sitemap.) dernier_test 2026-06-14.'
+  - id: charny_immobilier
+    nom: Agence Charny Immobilier (Charny/Puisaye, 89/45)
+    url_base: https://charny-immobilier.com
+    methode: api_inoff
+    actif: true
+    priorite: 1
+    note: 'Moteur Win Immobilier (Consulog), routage par hash CSR #!/ (home SSR = ~10 vedettes seulement).
+      DÉBLOQUÉ via l''endpoint AJAX interne : POST https://charny-immobilier.com/ajax.listbien.php
+      (data ville="Toutes les villes") → ~1145 <article.annonces> en une requête, avec data-* exploitables
+      (data-prix, data-piece, data-surfhab, data-chambre) + itemprop name « {Type} - VILLE (CP)
+      ». Donc PRIX + SURFACE + PIÈCES + CHAMBRES extraits (contrairement aux Netty). Filtre dept
+      = CP du libellé, post-filtre STRICT CP[:2]. Non-résidentiel exclu. Test 2026-06-14 : 578 biens
+      résidentiels en zone (89=537, 45=41), « Départements vus » = [''89''(/45)], 0 fuite ; gros
+      volume rural (fermettes, granges, corps de ferme, propriétés). (Était écarté Win CSR « pas
+      d''endpoint JSON repéré » — trouvé.) dernier_test 2026-06-14.'
+  - id: lesagencesduloir
+    nom: Les Agences du Loir (Sarthe / Maine-et-Loire)
+    url_base: https://www.lesagencesduloir.com
+    methode: scrape_simple
+    actif: true
+    priorite: 1
+    note: 'Moteur Netty/Modelo, sitemap.xml SSR (socle scrapers/_netty.py). Couvre 72 + 49. Filtre
+      dept CP[:2] du slug. Test standalone 2026-06-14 : 101 biens résidentiels, « Départements vus
+      » = [''49'',''72''], 0 fuite. dernier_test 2026-06-14.'
+  - id: nca_immobilier
+    nom: NCA Immobilier (Indre-et-Loire, 37)
+    url_base: https://www.nca-immobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 1
+    note: 'Moteur Netty/Modelo, sitemap.xml SSR (socle scrapers/_netty.py). Filtre dept CP[:2].
+      Test standalone 2026-06-14 : 97 biens résidentiels, « Départements vus » = [''37''], 0 fuite.
+      dernier_test 2026-06-14.'
+  - id: arche_immobilier_gien
+    nom: Arche Immobilier (Gien, 45)
+    url_base: https://www.arche-immobilier-gien.com
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: 'Moteur Netty/Modelo, sitemap.xml SSR (socle scrapers/_netty.py). Secteur Gien (Loiret)
+      + marge Cher. Filtre dept CP[:2]. Test standalone 2026-06-14 : 94 biens résidentiels, « Départements
+      vus » = [''18'',''45''], 0 fuite. dernier_test 2026-06-14.'
+  - id: terres_de_sologne
+    nom: Terres de Sologne Immobilier (41/45)
+    url_base: https://www.terres-de-sologne.com
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: 'Moteur Netty/Modelo, sitemap.xml SSR (socle scrapers/_netty.py). Profil rural Sologne
+      (châteaux, propriétés). Filtre dept CP[:2]. Test standalone 2026-06-14 : 14 biens résidentiels,
+      « Départements vus » = [''41'',''45''], 0 fuite (faible volume mais zone). dernier_test 2026-06-14.'
+  - id: immobilier_epi
+    nom: Immobilier EPI (réseau Saumurois / Richelais)
+    url_base: http://www.immobilier-epi.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR WordPress (thème Avada + Ajax Load More). HTTP ONLY : le HTTPS redirige vers dev.immobilier-epi.com
+      en 503 et sert une version sans prix ; on force donc http:// pour le sitemap, mais les FICHES
+      /bien/ se lisent bien en https (302 http->https transparent, prix présent). La page liste
+      /jachete/ charge en AJAX (vide en httpx) -> on passe par le SITEMAP bien-sitemap.xml (~153
+      fiches SSR, slug = ville : /bien/{ville-slug}-{type}/{id}/). AUCUN code postal ni dans la
+      liste ni dans la fiche (seul le nom de commune apparaît) -> géocodage VILLE->CP/dept via l''API
+      publique BAN (api-adresse.data.gouv.fr, type=municipality) BIAISÉE sur le centre du réseau
+      (Saumur lat 47.26 lon -0.08) pour lever les homonymies (« Arçay » -> 86 près de Loudun, pas
+      le Cher 18). PRÉ-FILTRE : on ne fetch la fiche que si dept BAN ∈ cibles (économie requêtes)
+      ; POST-FILTRE STRICT code_postal[:2] ∈ cibles. Fiche : h1=ville, .prix_bien=prix HAI, surface
+      NN.Nm², DPE via .dpe-conso-en.lettre-X, photos /uploads/. Couverture zone cible : INDRE-ET-LOIRE
+      37 (Richelieu, Chinon, Saché, Rivière, Assay, Luzé…) et MAINE-ET-LOIRE 49 (Saumur, Montreuil-Bellay,
+      Fontevraud, Les Ulmes…) ; le reste du réseau (Thouars 79, Loudun 86) est hors zone et écarté.
+      Test 2026-06-14 : SANS bornes -> 75 biens (37=41, 49=34), 58 avec prix, 0 FUITE (Départements
+      vus = {37,49}). AVEC bornes du projet (300k-600k) -> 11 biens (le stock EPI est majoritairement
+      < 300k : Saumurois/Richelais bon marché -> 39k/74k/90k/97k…), surtout des biens sans prix
+      affiché qui passent le filtre. Scraper fonctionnel, l''amincissement vient du filtre prix
+      (comportement attendu), pas d''un bug. Limites : surface_terrain non extraite en liste (enrichie
+      en page détail par gallery.py) ; quelques prix bruts aberrants (terrains/parts) écartés par
+      prix_min. ruff OK. dernier_test 2026-06-14.'
+
+
 
 blacklist:
 
@@ -5161,36 +5283,6 @@ blacklist:
 
 
   # ── Ajouts 2026-06-14 (scraper-scout — sites explorés et écartés CSR/anti-bot/down) ──
-  - id: cloixlumet
-    nom: Cloix & Lumet (Bourges, 18)
-    url_base: https://www.cloixlumet.net
-    raison: 'CSR pur (Vue/React, BunnyCDN, ~770 ko). /vente, /vente/maison rendent 200 mais 0 prix
-      / 0 référence / aucune carte dans le HTML brut (pas de __NUXT__/__INITIAL_STATE__, aucun /api
-      repérable). Seuls des liens de navigation par ville/CP (/vente/maison/bourges/18000). Réactivation
-      : Playwright ou reverse-engineering de l''endpoint JSON.'
-    dernier_test: '2026-06-14'
-  - id: topaze_immobilier
-    nom: Topaze Immobilier (Tours, 37)
-    url_base: https://www.topaze-immobilier.com
-    raison: 'CSR (CMS Netty/Modelo, BunnyCDN, ~1 Mo, prix=0 dans le HTML, __SSR_TEMPLATE_READY).
-      Les annonces sont templatées côté client. Même famille que royalfoncier / aisling / agencelorzimmobilier
-      (tous Netty/Modelo, non scrapables en httpx pur). /acheter = 404. Réactivation : Playwright.'
-    dernier_test: '2026-06-14'
-  - id: royalfoncier
-    nom: Royal Foncier (Sainte-Maure-de-Touraine, 37)
-    url_base: https://www.royalfoncier.fr
-    raison: 'CSR (CMS Netty/Modelo, BunnyCDN, ~1 Mo, prix=0, __SSR_TEMPLATE_READY). /vente et /vente/maison
-      ne contiennent que des liens de navigation par ville (/vente/maison/{ville}/{cp}), aucune
-      carte d''annonce SSR, aucun /api ni JSON embarqué. Type de biens pourtant idéal (moulins/manoirs/longères).
-      Sitemap = pages catégories seulement (pas de fiches). Réactivation : Playwright / API Netty.'
-    dernier_test: '2026-06-14'
-  - id: agencelorzimmobilier
-    nom: Agence Lorz Immobilier (Bourges, 18)
-    url_base: https://www.agencelorzimmobilier.com
-    raison: 'CSR (Netty/Modelo, BunnyCDN, prix=0 SSR). Le sitemap.xml ne liste que des pages catégories/villes
-      (/vente/maison/bourges/18000), pas de fiches détail individuelles → annonces rendues en JS.
-      Réactivation : Playwright.'
-    dernier_test: '2026-06-14'
   - id: immobiliere_saint_amandoise
     nom: Immobilière Saint-Amandoise (Saint-Amand-Montrond, 18)
     url_base: https://www.immobiliere-saint-amandoise.fr
@@ -5265,15 +5357,6 @@ blacklist:
       : Playwright ou endpoint API à reverse-engineer.'
     dernier_test: '2026-06-14'
     alternative: actimmo58 (Nevers, déjà en base), bienici
-  - id: charny_immobilier
-    nom: Agence Charny Immobilier
-    url_base: https://charny-immobilier.com
-    raison: 'Win Immobilier en routage par hash CSR (#!/annonces-immobilieres-...) : les ~587 annonces
-      (Charny/Puisaye 89 + marge Loiret 45) sont rendues côté client, le HTML brut httpx ne contient
-      ni cartes ni prix exploitables. Pas d''endpoint JSON SSR repéré. Réactivation : Playwright
-      ou flux XML Win Immobilier si exposé.'
-    dernier_test: '2026-06-14'
-    alternative: agencefavart, ordim_immo (déjà en base)
   - id: habitat_morvan
     nom: Habitat Morvan (Vermenton/Avallon)
     url_base: https://www.habitat-morvan.fr
@@ -5291,3 +5374,37 @@ blacklist:
       Avallon/Vézelay/Noyers (89), ~180 biens — candidat à re-tester au prochain run.
     dernier_test: '2026-06-14'
     alternative: immotransactions, vivre_en_morvan
+
+  # ── Ajouts 2026-06-14 (scraper-scout voies 6/7 — écartés CSR/IP-block/dead) ──
+  - id: immobiliertissiersa
+    nom: Immobilier Tissier (Nevers, 58)
+    url_base: https://www.immobiliertissiersa.com
+    raison: Moteur Modelo mais format d'URL de fiche SANS code postal dans le slug (délimiteur +id)
+      → filtre département possible seulement par nom de ville (non fiable, risque de fuite). Écarté
+      du périmètre VOIE 6 (sitemap CP-fiable).
+    dernier_test: '2026-06-14'
+  - id: pierres_et_demeures_36
+    nom: Pierres et Demeures (Indre, 36)
+    url_base: https://www.pierres-et-demeures.com
+    raison: 'Idem : moteur Modelo, fiche sans CP dans le slug → pas de filtre dept fiable par CP[:2].
+      Écarté du périmètre VOIE 6.'
+    dernier_test: '2026-06-14'
+  - id: divers_hardblock_2026_06_14
+    nom: Lot candidats Netty/CMS — IP datacenter bloquée / autre CMS
+    url_base: n/a
+    raison: 'Sondés VOIE 6, écartés : hard-block IP/timeout httpx (à retenter via proxy résidentiel)
+      — guedon-immobilier.com (53), cote-loire.com (37), lh-immobilier.fr (53), agence-anjou.com
+      (49), conceptimmo.net, sancerre-immo.com ; autre CMS sans fiche Netty/Win (bj-immobilier.fr
+      53, pvh-immobilier.com 28, hanches/maintenon 28 immo-facile, agencecbi.com 41) ; 403/SSL (immobiliernogentlerotrou.fr,
+      joigny-immobilier.com). Aucune voie httpx/API fiable identifiée pour ces sites. Dépts 28,
+      53, 58 restent peu couverts par les moteurs Netty/Win.'
+    dernier_test: '2026-06-14'
+  - id: stanislascalmel_immobilier
+    nom: Stanislas Calmel Immobilier
+    url_base: http://stanislascalmel-immobilier.fr
+    raison: 'DOMAINE MORT / PAGE PARKING. L''apex résout (IONOS 217.160.0.3) et répond 200 en http,
+      mais le contenu est la page de parking IONOS allemande (« Diese Domain ist bereits registriert
+      ») : 605 KB de boilerplate, title vide, 0 annonce, liens uniquement vers ionos.de. www.* =
+      NXDOMAIN. Aucune donnée immobilière. Ne pas re-tenter sans preuve que le site a été remis
+      en ligne.'
+    dernier_test: '2026-06-14'

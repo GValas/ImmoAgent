@@ -16,6 +16,7 @@ SCRAPERS_DIR = Path(__file__).parent.parent / "scrapers"
 # (bus/gares/geolocate/dvf exposent un search() -> [] et restent dans le smoke-test.)
 _UTILS = {
     "gallery", "_base", "_ac3_immo", "_geo_resolve", "_geo_resolver", "_notaires_genapi",
+    "_netty",
 }
 
 SCRAPER_FILES = sorted(
