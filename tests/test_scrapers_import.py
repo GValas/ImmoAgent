@@ -1,6 +1,6 @@
 """Smoke-test : tous les scrapers s'importent et exposent `async def search`.
 
-C'est le garde-fou clé pour 277 scrapers fragiles : il attrape une erreur de
+C'est le garde-fou clé pour 340 scrapers fragiles : il attrape une erreur de
 syntaxe ou un contrat cassé (search absent / non-coroutine) sans toucher au réseau.
 """
 import asyncio

@@ -51,14 +51,14 @@ workers/
   analyst.py          Worker 4 — enrichit (DVF, alertes), résumé local, export Excel
   qualitative.py      Util analyst — match description_qualitative ↔ annonce via LLM local Ollama (conteneur dédié)
 
-scrapers/             277 scrapers actifs + 33 inactifs (source : sources.yaml)
+scrapers/             295 scrapers actifs + 42 inactifs (source : sources.yaml)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
   _base.py            Socle commun SSR : HEADERS, DEFAULT_DEPT_SLUGS, make_client +
                       get_with_retry, helpers parse_*, driver run_dept_search,
                       standalone_main. Pilote migré : le_tuc.py (≈150 l. vs 343).
 
 tests/                Tests pytest non-réseau (config_loader, dedup, filters, excel)
-                      + smoke-import des 277 scrapers (contrat async search()).
+                      + smoke-import des 340 scrapers (contrat async search()).
 
 config/
   criteria.md         SEUL fichier édité par l'utilisateur
@@ -76,7 +76,7 @@ data/
 - `pyproject.toml` : config **ruff** (lint+format) et **mypy** ciblé ; `requirements-dev.txt`
   (`ruff`, `pytest`, `mypy`) ; `requirements.lock` (versions figées).
 - CI **GitHub Actions** (`.github/workflows/ci.yml`) : `ruff check .` + `pytest`
-  (le smoke-test importe les 277 scrapers → casse de syntaxe/contrat détectée).
+  (le smoke-test importe les 340 scrapers → casse de syntaxe/contrat détectée).
 - Avant de committer : `ruff check . && pytest`. La longueur de ligne (E501) n'est
   pas imposée ; `scrapers/*.py` tolèrent E701/F841 (gabarit compact).
 
@@ -90,15 +90,19 @@ scraper via `python scrapers/xxx.py` après migration).
 
 ---
 
-## Scrapers actifs (277 + DVF)
+## Scrapers actifs (295 + DVF)
 
-> Source de vérité : `config/sources.yaml` (310 sources déclarées : 277 `actif: true`,
-> 33 `actif: false`). Le tableau ci-dessous n'est qu'un échantillon représentatif des
-> grandes familles techniques — il NE liste PAS les 277 ; ne pas s'y fier pour le compte.
+> Source de vérité : `config/sources.yaml` (337 sources déclarées : 295 `actif: true`,
+> 42 `actif: false`). Le tableau ci-dessous n'est qu'un échantillon représentatif des
+> grandes familles techniques — il NE liste PAS les 295 ; ne pas s'y fier pour le compte.
 > Les vagues scraper-scout (2026-05/06) ont fait monter le parc de ~40 à 277.
 > Ajouts 2026-06-11 (scraper-scout round 1, reliquat validé, 0 fuite) : immo_diffusion,
 > viager_diffusion (prix=bouquet), rnc_notaires, notaires_gapais_legalldutertre_28,
 > lafoncieredupalais, cabinet_girard, le_partenaire (villes scrapées en parallèle).
+> Ajouts 2026-06-13/14 (scraper-scout, 5 agents // ; 277→295 actifs) : notaires_bourges
+> (18/36/58), idimmo, drouot_immo, encheres_immo, viager_europe, notaires_arn_72,
+> immobilier_center, lieux_uniques, indicateur_vendomois_41, nemrod_immo_41, laplacette,
+> segre_immobilier… + 9 inactifs (Corrèze/Limousin hors zone ou prestige national).
 
 ### API REST (httpx, pas de Playwright)
 | Fichier | Site | Notes |

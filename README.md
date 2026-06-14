@@ -1,7 +1,8 @@
 # Immo-Agent 🏠
 
-Système multi-workers de recherche immobilière automatisée. Il scrape des dizaines de
-sites d'annonces français, filtre les biens sur des critères structurés (prix, surface,
+Système multi-workers de recherche immobilière automatisée. Il scrape ~295 sources
+d'annonces françaises actives (337 déclarées dans `config/sources.yaml`), filtre les
+biens sur des critères structurés (prix, surface,
 terrain, pièces, DPE), applique un filtre mots-clés, enrichit (DVF, géoloc, gare/bus),
 **évalue la correspondance qualitative via un LLM local (Ollama)** et produit un Excel de
 suivi trié par pertinence.
