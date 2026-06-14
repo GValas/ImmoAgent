@@ -1,0 +1,1458 @@
+{
+  "updated": "2026-06-13 22:40",
+  "muets_5runs": [
+    "actimmo58",
+    "agence_du_perigord",
+    "agence_du_soleil",
+    "agencecim",
+    "agencecotedopale",
+    "anthouard_immobilier",
+    "barnes_proprietes_chateaux",
+    "beauxvillages",
+    "beemmo",
+    "bellespierres",
+    "berrissimmo",
+    "bias_immobilier",
+    "bm_finance",
+    "c_limmo_89",
+    "carmin_immobilier",
+    "century21",
+    "colbert_immobilier89",
+    "cotefranceimmo",
+    "declic_immo",
+    "demeuresdugrandsud",
+    "demeuresenperigord",
+    "dvf",
+    "effectimmo",
+    "globalimmobilier",
+    "groupe_sab_immobilier",
+    "guenno",
+    "guignard_immobilier",
+    "hectaresetpatrimoine",
+    "herreman_charles",
+    "immobilier_amo",
+    "immobilier_finistere",
+    "immobilier_occitan",
+    "immobiliere_normandie",
+    "immosquare",
+    "info_encheres",
+    "inova_immo",
+    "issoudun_immobilier",
+    "la_francaise_immobiliere",
+    "labadie_immobilier",
+    "laflecheimmo",
+    "lapetite_agence",
+    "lavallard_immobilier",
+    "limmobiliere_normande",
+    "maisons_de_bretagne",
+    "maisonsenperigord",
+    "nb_immobilier",
+    "neos_immo",
+    "nord_aveyron_immo",
+    "notaires_fruchon_36",
+    "notaires_odin_89",
+    "occitanie_immo",
+    "occitanie_immobilier",
+    "portail_immo",
+    "promptimmo_walter",
+    "properstar",
+    "remiserais_immobilier",
+    "ribemont_immobilier",
+    "sc_equestre",
+    "seloger",
+    "sogesim53",
+    "startgoimmo",
+    "terresetdemeuresdenormandie",
+    "tissier_immobilier",
+    "tower_immobilier",
+    "trackstone",
+    "vench"
+  ],
+  "sources": {
+    "lesiteimmo": {
+      "last_count": 142,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bienici": {
+      "last_count": 2109,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobilier_notaires": {
+      "last_count": 713,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "iad": {
+      "last_count": 4814,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "dvf": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "orpi": {
+      "last_count": 154,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "nestenn": {
+      "last_count": 41,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "safti": {
+      "last_count": 28,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "ladresse": {
+      "last_count": 407,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "figaro_immo": {
+      "last_count": 42,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "proprietes_privees": {
+      "last_count": 147,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "optimhome": {
+      "last_count": 49,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "remax": {
+      "last_count": 28,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "megagence": {
+      "last_count": 56,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "citya": {
+      "last_count": 40,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "foncia": {
+      "last_count": 196,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "squarehabitat": {
+      "last_count": 27,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "seloger": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "properstar": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "laforet": {
+      "last_count": 37,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "arthurimmo": {
+      "last_count": 14,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "era": {
+      "last_count": 138,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "entreparticuliers": {
+      "last_count": 47,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immonot": {
+      "last_count": 41,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "paruvendu": {
+      "last_count": 1216,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "greenacres": {
+      "last_count": 57,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "patrice_besse": {
+      "last_count": 10,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "cabinet_le_nail": {
+      "last_count": 4,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "terresetdemeuresdefrance": {
+      "last_count": 12,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "architecturedecollection": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "french_property": {
+      "last_count": 59,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "emile_garcin": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "groupe_mercure": {
+      "last_count": 10,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "drhouse": {
+      "last_count": 73,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "exp_france": {
+      "last_count": 35,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "webimmo123": {
+      "last_count": 20,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "meilleursbiens": {
+      "last_count": 38,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "imkiz": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "liberkeys": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "cimm": {
+      "last_count": 30,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "le_tuc": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "transaxia": {
+      "last_count": 11,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobilierfranceouest": {
+      "last_count": 19,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "hectaresetpatrimoine": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "equidomain": {
+      "last_count": 7,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "mapropriete": {
+      "last_count": 10,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "groupementimmo": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "proprietes_rurales": {
+      "last_count": 72,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "horse_immo": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "noovimo": {
+      "last_count": 30,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "declic_immo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "coldwellbanker": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_valdeloire": {
+      "last_count": 150,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_berrynivernais": {
+      "last_count": 15,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_yonne": {
+      "last_count": 9,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "equirodi": {
+      "last_count": 8,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "clefrance": {
+      "last_count": 17,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "iii_immobilier": {
+      "last_count": 0,
+      "zero_streak": 1,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sergic": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "maisons_bourgogne": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immodefrance": {
+      "last_count": 11,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "my_french_house": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "valdeloire_sothebys": {
+      "last_count": 25,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "cabinet_chevillon": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "metais_immobilier": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "72immobilier": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lavisite": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "nicole_joubert": {
+      "last_count": 28,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "anou_immobilier": {
+      "last_count": 8,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "aviron_immo": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "mdi_anjoumaine": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lucilia_b": {
+      "last_count": 4,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immomans": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "fnaim": {
+      "last_count": 82,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "century21": {
+      "last_count": 0,
+      "zero_streak": 14,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immo_reseau": {
+      "last_count": 8,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bj_immobilier": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immo_entre_particuliers": {
+      "last_count": 54,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "chateauxetpatrimoine": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "stonimmo": {
+      "last_count": 220,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "vente37": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bcvimmobilier": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "blois_immo": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sogesim53": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "adressimmo": {
+      "last_count": 15,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "auxerreimmobilier": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "latelier_immo": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "ordim_immo": {
+      "last_count": 12,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "groupe_123_immo": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immorevente": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "giboire": {
+      "last_count": 0,
+      "zero_streak": 2,
+      "last_run": "2026-06-13 22:40"
+    },
+    "guenno": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agence_du_perigord": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "demeuresenperigord": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agence_du_soleil": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "domaines_chateaux_immobilier": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immotourisme": {
+      "last_count": 12,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "danielfeau": {
+      "last_count": 4,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "domaine_de_chasse": {
+      "last_count": 42,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "trackstone": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "abriculteurs": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "costes_viager": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "encheres_publiques": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "info_encheres": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bm_finance": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "goodshowcase": {
+      "last_count": 93,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agentmandataire": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lesportecles": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobilier_entre_particuliers": {
+      "last_count": 23,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "tower_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lf_immo": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "etreproprio": {
+      "last_count": 69,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "damoiseau": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "actimmo58": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "carre_mans": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "av_transaction": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bias_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "limmobiliere_normande": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "labadie_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "la_francaise_immobiliere": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "terresetdemeuresdenormandie": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "ribemont_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "anthouard_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "maisonsenperigord": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agencecim": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immosquare": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sc_equestre": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "chateauxpourtous_rustique": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "globalimmobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "portail_immo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bsk_immobilier": {
+      "last_count": 19,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "winkey": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "cotefranceimmo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobiliere_remangeon": {
+      "last_count": 17,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "laflecheimmo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "conceptimmo": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bourjois_immobilier": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "fnaim_beugnot": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sancerre_immo": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "maisons_de_bretagne": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "remiserais_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobilier_finistere": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "inova_immo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "demeuresdugrandsud": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "domaines_forets": {
+      "last_count": 16,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "amn_notaires": {
+      "last_count": 4,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "vench": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "berrissimmo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobiliercoteloire": {
+      "last_count": 22,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobilier_amo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "visiteandsmile": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "maisonblanche": {
+      "last_count": 7,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "demeuresdecampagne": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "colbert_immobilier89": {
+      "last_count": -1,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobiliere_normandie": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lavallard_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "beauxvillages": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobilier_occitan": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "occitanie_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "occitanie_immo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "cabinetderocquigny": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "avoventes": {
+      "last_count": 13,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immo_interactif": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "proprietes_sologne": {
+      "last_count": 15,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "cote_loire": {
+      "last_count": -1,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobilier_france": {
+      "last_count": 42,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "guedon_immobilier": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lapetite_agence": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "beemmo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "effectimmo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "univers_viager": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agencecotedopale": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "groupe_sab_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "herreman_charles": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "nord_aveyron_immo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "startgoimmo": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sologne_conseil": {
+      "last_count": 23,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sologne_immobilier": {
+      "last_count": 4,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lamy_immobilier": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immo_montargis": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "griffon_choloux": {
+      "last_count": 18,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "ocoeur_immo": {
+      "last_count": 9,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobiens": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sorin_immobilier": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "partnerhabitat": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "mb_immobilier53": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sens_immobilier": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "guignard_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "vierzon_immobilier": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "village_immobilier": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "privilegeimmo": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "morvan_immobilier": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agence_milleetangs": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "tissier_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "coteimmobilier": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "afico": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "gautard_immobilier": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immoa2": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "moure_immobilier": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "issoudun_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "decizeimmo": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "imm_blois": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lagenceauxerroise": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agence_rousseaux": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "c_immobilier": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "nb_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "weelodge": {
+      "last_count": 4,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "neos_immo": {
+      "last_count": 0,
+      "zero_streak": 5,
+      "last_run": "2026-06-13 22:40"
+    },
+    "anov_immo": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "comptoir_immo_france": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "promptimmo_walter": {
+      "last_count": 0,
+      "zero_streak": 8,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bonne_etoile": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immoforfait": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_rnc_sarthe": {
+      "last_count": 10,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_lccbn_sarthe": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_tiercelin_41": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_odin_89": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_notagroup_37": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_fruchon_36": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_cauet_36": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_luthier_36": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_notacoeur_18": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_euridis_28": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_norial_45": {
+      "last_count": 7,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_ciangers_ventes": {
+      "last_count": 47,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "proprietes_territoires_sologne": {
+      "last_count": 18,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lys_temeraire": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immobilier_bourgogne_biz": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lelievre_immobilier": {
+      "last_count": 15,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "luxuryestate": {
+      "last_count": 332,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "barnes_proprietes_chateaux": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "leggett_prestige": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "c_immobilier_72": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "reseau_expertimo": {
+      "last_count": 0,
+      "zero_streak": 4,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agence_simon_amboise_37": {
+      "last_count": 24,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agenceduterroir_41": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agencesramos_89": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "agencimo_89": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "antoine_immobilier_49": {
+      "last_count": 0,
+      "zero_streak": 1,
+      "last_run": "2026-06-13 22:40"
+    },
+    "c_limmo_89": {
+      "last_count": 0,
+      "zero_streak": 8,
+      "last_run": "2026-06-13 22:40"
+    },
+    "casadici": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "ikami": {
+      "last_count": 17,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lgm_immobilier": {
+      "last_count": 13,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lochois_immo_37": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "myfrenchagent": {
+      "last_count": 17,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "reseau_bonaparte": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "weinvest": {
+      "last_count": 32,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "power_immo": {
+      "last_count": 17,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immo_du_centre_28": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "durand_montouche": {
+      "last_count": 14,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "chevalannonce": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "viagimmo": {
+      "last_count": 0,
+      "zero_streak": 3,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lesclesdumidi": {
+      "last_count": 140,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immo_laberrichonne": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "advicim": {
+      "last_count": 8,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "timmonivernais": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "sud_loire_immobilier": {
+      "last_count": 21,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "francepropertyshop": {
+      "last_count": 66,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immo_sarthois": {
+      "last_count": 7,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "village_notaires": {
+      "last_count": 47,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "equestrian_immobilier": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "officeduviager": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "maisonduparticulier": {
+      "last_count": 4,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "carmin_immobilier": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "repimmo": {
+      "last_count": 73,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "fraudin_immobilier": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "karacterre": {
+      "last_count": 40,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bourreau_immobilier": {
+      "last_count": 5,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "ajp_immobilier": {
+      "last_count": 6,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "bellespierres": {
+      "last_count": 0,
+      "zero_streak": 15,
+      "last_run": "2026-06-13 22:40"
+    },
+    "immo_diffusion": {
+      "last_count": 29,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "viager_diffusion": {
+      "last_count": 8,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "rnc_notaires": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "notaires_gapais_legalldutertre_28": {
+      "last_count": 2,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "lafoncieredupalais": {
+      "last_count": 3,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "cabinet_girard": {
+      "last_count": 1,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    },
+    "le_partenaire": {
+      "last_count": 853,
+      "zero_streak": 0,
+      "last_run": "2026-06-13 22:40"
+    }
+  }
+}
