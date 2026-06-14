@@ -35,7 +35,6 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "anthropic.claude-code",
         "ms-python.python",
         "ms-python.vscode-pylance",
         "ms-python.debugpy",
