@@ -36,7 +36,7 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
-from scrapers._base import HEADERS, DEFAULT_DEPT_SLUGS, parse_price
+from scrapers._base import DEFAULT_DEPT_SLUGS, HEADERS, parse_price
 
 BASE_URL = "https://www.maisonsetappartements.fr"
 HUB_URL = BASE_URL + "/fr/maison-appartement-{slug}-{dept}.html"

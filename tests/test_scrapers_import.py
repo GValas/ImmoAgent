@@ -11,9 +11,12 @@ import pytest
 
 SCRAPERS_DIR = Path(__file__).parent.parent / "scrapers"
 # Modules utilitaires de scrapers/ qui ne sont PAS des sources : gallery n'expose
-# pas search() ; _base est le socle commun. (bus/gares/geolocate/dvf exposent un
-# search() -> [] et restent donc dans le smoke-test.)
-_UTILS = {"gallery", "_base"}
+# pas search() ; _base est le socle commun ; _ac3_immo / _geo_resolve(r) /
+# _notaires_genapi sont des socles de parsing partagés (préfixe _, pas de search()).
+# (bus/gares/geolocate/dvf exposent un search() -> [] et restent dans le smoke-test.)
+_UTILS = {
+    "gallery", "_base", "_ac3_immo", "_geo_resolve", "_geo_resolver", "_notaires_genapi",
+}
 
 SCRAPER_FILES = sorted(
     p for p in SCRAPERS_DIR.glob("*.py")

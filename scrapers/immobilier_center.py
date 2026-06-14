@@ -25,8 +25,9 @@ Interface : async def search(criteres: dict) -> list[dict]
 import asyncio
 import re
 
-from scrapers._base import get_with_retry, make_client, parse_price
 from bs4 import BeautifulSoup
+
+from scrapers._base import get_with_retry, make_client, parse_price
 
 BASE_URL = "https://immobilier-center.fr"
 SOURCE = "immobilier_center"

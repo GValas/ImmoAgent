@@ -4012,6 +4012,478 @@ sources:
       Post-filtre strict code_postal[:2]. 0 fuite vérifié (depts vus : 49 ⊂ cibles ;
       4 biens en zone). dernier_test 2026-06-13.
 
+  # ── Ajouts 2026-06-14 (scraper-scout scout_lane_1) ──
+  - id: immobilierpassion49
+    nom: Immobilier Passion (Angers, 49)
+    url_base: https://www.immobilierpassion49.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'Agence familiale indépendante d''Angers. SSR httpx pur (CMS data-db-items). Page liste
+      UNIQUE /acheter.html (~22 annonces, pas de pagination ni de slug dept). Cartes a[data-item=''bien'']
+      : .name (titre), .state « Angers (49) » (ville + code DÉPARTEMENT entre parenthèses), .datas
+      (surface/terrain/pièces/chambres), .price .now. Mono-département 49 → on ne sert que si 49
+      ∈ cibles ET re-vérifie le « (49) » de chaque carte → 0 fuite par construction. Le CP complet
+      n''est pas en liste (departement renseigné, code_postal=None → gallery.py/geolocate.py complètent
+      en page détail). Stock zone (test 2026-06-14, criteria prod) : 49 → 5 maisons. dernier_test
+      2026-06-14.'
+  - id: indepimmo
+    nom: Indep'Immo (Cholet & St-Macaire, 49)
+    url_base: https://www.indepimmo.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'Agence indépendante de Cholet/Mauges. SSR httpx pur. Listing /vente/ + /vente/page-{N}.html
+      (3 pages réelles). Cartes div.short_product : prix .info_prix .prix, titre+CP h2.titre («
+      ... TREMENTINES (49340) » → CODE POSTAL COMPLET), réf, desc. L''agence est à cheval 49/44
+      (Nantes) → POST-FILTRE STRICT code_postal[:2] ∈ cibles → 0 fuite vérifié (44 rejeté). Stock
+      zone (test 2026-06-14, criteria prod) : 49 → 6 maisons. dernier_test 2026-06-14.'
+  - id: notaires_barre_saumur_49
+    nom: Office notarial Barré-Malineau-Montanier (Saumur, 49)
+    url_base: https://barre-malineau-montanier-saumur.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (gabarit UIkit « uk-card »). /annonces-immobilieres/ (~29 annonces, secteur
+      saumurois 49 + qq 37 limitrophes). Cartes a.uk-card : l''alt/title de l''img encode TYPE-PIECES-SURFACE-VILLE
+      + CODE POSTAL COMPLET « ... A SAUMUR (49400) » ; .el-meta (prix), .el-content (ville). POST-FILTRE
+      STRICT code_postal[:2] → 0 fuite. Stock zone (test 2026-06-14, criteria prod) : 49 → 4 maisons
+      (303/282/195/186 m², 345-518k). dernier_test 2026-06-14.'
+  - id: notaires_lecomte_connerre_72
+    nom: Office notarial Lecomte-Chérubin-Rivierre (Connerré/Sargé, 72)
+    url_base: https://www.lecomte-cherubin-rivierre-connerre-sarge.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (gabarit Realfusio « ns-property-card » récent). /annonces-immobilieres/
+      recherche.html (~24 annonces, Est-manceau 72). Cartes div.ns-property-card : le slug du lien
+      détail encode tout — {type}-a-vendre-{ville}-{CP}-{S}m2-{P}pieces.html ; .c__location « Le
+      Mans - 72000 » recoupe le CP ; .c__price b (prix). POST-FILTRE STRICT code_postal[:2] → 0
+      fuite. Stock zone (test 2026-06-14, criteria prod) : 72 → 2 maisons (Changé 172m² 362k, St-Saturnin
+      204m² 445k) ; 16 maisons hors-prix. dernier_test 2026-06-14.'
+  - id: notaires_gourlay_lemans_72
+    nom: Office notarial Gourlay & Aveline (Le Mans, 72)
+    url_base: https://www.gourlay-aveline.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (gabarit WordPress « article.property »). /annonces-immobilieres/ (~18
+      annonces, Le Mans 72). Cartes article.property : data-url/slug terminé par le CODE POSTAL
+      COMPLET (…-{ville}[-sarthe]-72000/) ; .property-type, .property-price, .property-size, .property-nbrooms,
+      .property-location. POST-FILTRE STRICT code_postal[:2] → 0 fuite. Stock zone (test 2026-06-14,
+      criteria prod) : 72 → 1 maison (Rouillon 174m² 357k) ; plusieurs maisons hors bornes. dernier_test
+      2026-06-14.'
+  - id: notaires_monassier_cholet_49
+    nom: Groupe Monassier — étude de Cholet (49)
+    url_base: https://www.groupemonassier-cholet.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (gabarit immonot « builder-equipe-item »). /annonces-immobilieres/ (~12
+      annonces, Cholet 49 + qq 44 limitrophes). Cartes div.builder-equipe-item : .immo-title («
+      Maison 6 pièces 193.0 m² »), .immo-adress « CHOLET (49) ... » (ville + code DÉPARTEMENT entre
+      parenthèses), .immo-price. POST-FILTRE STRICT sur le code des () → 0 fuite (44 Nantes rejeté).
+      Stock zone (test 2026-06-14, criteria prod) : 49 → 2 maisons (Cholet 193m² 469k, 158m² 323k)
+      ; 9 maisons au total. dernier_test 2026-06-14.'
+  - id: notaires_caractere_authentique_53
+    nom: Office Notarial Caractère Authentique (Château-Gontier, 53)
+    url_base: https://caractere-authentique-chateau-gontier.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (gabarit immobilier.notaires.fr/Genapi « div.bloc-annonce » ; parsing factorisé
+      scrapers/_notaires_genapi.py). /annonces-immobilieres.html (petit office Mayenne 53). .titre
+      « CHATEAU GONTIER (53) » (ville+dept) + URL détail immobilier. notaires.fr (dept recoupé).
+      POST-FILTRE STRICT → 0 fuite. CP exact en page détail. Stock zone (test 2026-06-14, criteria
+      prod) : 53 → 1 maison (St-Sulpice 232m² 446k). dernier_test 2026-06-14.'
+  - id: notaires_josset_53
+    nom: Étude de Me Fabien Josset (Château-Gontier, 53)
+    url_base: https://josset-chateau-gontier.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: SSR httpx pur (même gabarit Genapi « div.bloc-annonce » que caractere_authentique_53 ;
+      scrapers/_notaires_genapi.py). /annonces-immobilieres.html (petit office, Mayenne 53). Filtre
+      dept STRICT (code des () de .titre + URL détail) → 0 fuite (4 maisons, toutes 53). Sous criteria
+      prod (surface_min 150, prix_min 300000) → 0 bien actuellement (maisons 41-125m², 69-240k),
+      mais SCRAPER FONCTIONNEL → actif:true, matchera dès qu'un bien plus grand entre au stock.
+      dernier_test 2026-06-14.
+  - id: notaires_garban_lafleche_72
+    nom: Office notarial Garban, Hervé & Boutet (La Flèche, 72)
+    url_base: https://garban-herve-boutet-lafleche.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: SSR httpx pur (gabarit Genapi « div.bloc-annonce » ; scrapers/_notaires_genapi.py). /annonces-immobilieres.html
+      (office Sud-Sarthe 72). Filtre dept STRICT (.titre « LA FLECHE (72) » + URL détail immobilier.notaires.fr)
+      → 0 fuite (4 maisons, toutes 72). Sous criteria prod → 0 bien actuellement (surfaces/prix
+      sous les bornes), mais SCRAPER FONCTIONNEL → actif:true. dernier_test 2026-06-14.
+  - id: notaires_bm_mamers_72
+    nom: Étude BM Notaires (Bonnétable / Mamers, 72)
+    url_base: https://www.bm-notaires-bonnetable-mamers.notaires.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: 'SSR httpx pur (gabarit Realfusio « ns-property-card » classique). /annonces-immobilieres-
+      sarthe.html (office à cheval Sarthe 72 / Orne 61). Cartes div.ns-property-card : .c__type,
+      .c__location, .c__price, slug détail « vente-{type}-{dept-slug}-{ville}.html » (nom de dept
+      dans le slug → mappé en code). .c__quickinfos bulles = surface/pièces/ chambres. POST-FILTRE
+      STRICT sur le code dept du slug → 0 fuite (Orne 61 rejeté ; 5 maisons toutes 72). Sous criteria
+      prod → 0 bien (maisons <300k), mais SCRAPER FONCTIONNEL → actif:true. dernier_test 2026-06-14.'
+
+  # ── Ajouts 2026-06-14 (scraper-scout scout_lane_2) ──
+  - id: pvh_immobilier
+    nom: Perche Val d'Huisne Immobilier (Nogent-le-Rotrou, 28)
+    url_base: https://www.pvh-immobilier.com
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: 'SSR httpx pur. Liste maisons /immobilier.php?recherche_type_bien[]=maison (une page,
+      ~44 cartes a.property-card). CP en clair sur la carte (.lieux « VILLE - CP » + slug d''URL)
+      → post-filtre strict code_postal[:2]. Couvre le sud 28 (Nogent-le-Rotrou) + déborde 72 (cible)
+      et 61 (Orne, ÉCARTÉ). 0 fuite vérifié (depts vus : 28, 72 ⊂ cibles ; 8 biens en zone prod,
+      dont Nogent 158-340 m² 340-479 k€). Surface/terrain/pièces/chambres en carte. dernier_test
+      2026-06-14.'
+  - id: bannier_immobilier
+    nom: Bannier Immobilier (Orléans & Sologne, 45)
+    url_base: https://www.bannier-immobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (WordPress, thème RealHomes/Homez). Liste /property-status/vente/?paged=N,
+      cartes article.property-item (prix, titre « … à VILLE », pièces/chambres/m², data-lat/lon).
+      Carte SANS code postal → ville résolue en dept/CP via geo.api.gouv.fr (scrapers/_geo_resolve.py)
+      puis post-filtre strict. On ne garde que maison/villa. 0 fuite vérifié (depts vus : 45, 41
+      ⊂ cibles ; 21 maisons brut, 2 en zone prod). dernier_test 2026-06-14.'
+  - id: maintenon_immobilier
+    nom: L'Immobilière de Maintenon (28)
+    url_base: https://www.maintenonimmobilier.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur, CMS AC3/immo-facile (socle scrapers/_ac3_immo.py). Liste /annonces/transaction/Vente.html
+      (+ pagination _____{N}), cartes div.cell-product. CP en clair sur la carte (.product-localisation
+      « VILLE (28xxx) ») → post-filtre strict code_postal[:2]. Couvre Maintenon / Épernon / Gallardon
+      / Nogent-le-Roi (28). 0 fuite vérifié (depts vus : 28 ⊂ cibles ; ~70 biens brut, 9 en zone
+      prod). dernier_test 2026-06-14.'
+  - id: la_chaumiere
+    nom: Agence La Chaumière (Maintenon, 28)
+    url_base: https://www.la-chaumiere.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur, CMS AC3 (variante ANCIENNE sans .product-localisation — socle scrapers/_ac3_immo.py).
+      Liste /annonces/transaction/Vente.html (+ pagination _____{N}, ~8 pages), cartes div.cell-product.
+      La carte n''a PAS de CP : la ville est suffixée au titre (« …136 m² , Maintenon ») → résolue
+      en dept/CP via geo.api.gouv.fr puis post-filtre strict. Secteur Maintenon / Épernon / Dreux
+      sud (28). 0 fuite vérifié (depts vus : 28 ⊂ cibles ; 27 biens en zone prod). dernier_test
+      2026-06-14.'
+  - id: alain_pally
+    nom: Alain Pally - Val du Loir Immobilier (Châteaudun, 28)
+    url_base: https://www.apally.com
+    methode: scrape_simple
+    actif: false
+    priorite: 4
+    note: 'SSR httpx pur, CMS AC3 variante ancienne (socle scrapers/_ac3_immo.py), ville suffixée
+      au titre → résolue via geo.api.gouv.fr, post-filtre strict. Secteur Châteaudun / Cloyes /
+      Bonneval (28) + déborde 41. FONCTIONNEL et 0 fuite (depts vus : 28, 41 ⊂ cibles ; 65 biens
+      brut) MAIS 0 bien dans la fenêtre prod (surface_min 150 & prix 300-600 k€) : marché Châteaudun
+      trop bas (le plus proche : Cloyes 151 m² / 299 250 €). actif:false (code conservé, réactiver
+      si les critères baissent). dernier_test 2026-06-14.'
+  - id: girard_romo_immobilier
+    nom: Girard Immobilier / Romo Immobilier (Romorantin, 41)
+    url_base: https://girard-immobilier.com
+    methode: scrape_simple
+    actif: false
+    priorite: 4
+    note: 'SSR httpx pur. Liste /maisons-a-vendre.html (une page), cartes div.property-listing (titre,
+      .listing-location VILLE sans CP, surface « N m² hab. », prix). DISTINCT de cabinet_girard
+      (Nevers, 58 ; autre domaine). Ville résolue en dept/CP via geo.api.gouv.fr → post-filtre strict.
+      Secteur Romorantin / Selles-sur-Cher (41) + déborde 36 (La Vernelle, cible). FONCTIONNEL et
+      0 fuite (depts vus : 41, 36 ⊂ cibles ; 4 maisons brut) MAIS 0 bien en zone prod (tous < 300
+      k€). actif:false. dernier_test 2026-06-14.'
+  - id: tradim_immobilier
+    nom: Tradim Immobilier (Gien, 45)
+    url_base: https://www.tradim-immobilier.com
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: 'SSR httpx pur (CMS eZ Platform). Liste /Acheter (une page), cartes div.property-details-full
+      (.ezstring-field VILLE sans CP, p.orange titre, .price). Ville résolue via geo.api.gouv.fr
+      → post-filtre strict (écarte d''office une villa en Thaïlande). Petite agence Gien / Montargis
+      (45), faible stock. 0 fuite vérifié (depts vus : 45 ⊂ cibles ; 5 biens brut, 1 en zone prod
+      : demeure Gien 400 m² / 383 k€). dernier_test 2026-06-14.'
+  - id: loire_et_charme
+    nom: Loire et Charme (Blois / Vendôme, 41)
+    url_base: https://www.loireetcharme.com
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: 'SSR httpx pur (Drupal, données Poliris). Liste /recherche-de-bien-immobilier (une page,
+      ~78 cartes article.node--type-bien-immobilier) avec champs structurés (prix « 174.000€ » point=millier,
+      surface, terrain, chambres, référence). Spécialiste demeures de caractère / maisons anciennes
+      / longères. Pas de CP : ville extraite du titre (token majuscule le plus long) → résolue via
+      geo.api.gouv.fr, post-filtre strict ; appartements exclus. 0 fuite vérifié (depts vus : 41,
+      45 ⊂ cibles ; 24 biens en zone prod, secteur Blois/Vendôme). dernier_test 2026-06-14.'
+  - id: jargeau_immobilier
+    nom: Jargeau Immobilier (Jargeau, 45)
+    url_base: https://www.jargeau-immobilier.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (WordPress). Liste /biens/?_statut_du_bien=vente (une page, ~34 cartes
+      article.portefeuille__item). .localisation = VILLE sans CP → résolue via geo.api.gouv.fr,
+      post-filtre strict. Surface DÉDUITE de prix ÷ (€/m² du span « soit X €/m² ») — fiable. Secteur
+      est-orléanais : Jargeau / Châteauneuf-sur-Loire / St-Denis-de-l''Hôtel (45). Appartements/
+      terrains exclus. 0 fuite vérifié (depts vus : 45 ⊂ cibles ; 21 biens brut, 5 en zone prod).
+      dernier_test 2026-06-14.'
+  - id: agence_du_chateau_45
+    nom: Agence du Château (Sully-sur-Loire, 45)
+    url_base: https://www.agenceduchateau.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (CMS estate_i18n). Liste /immobilier/type/maison?page=N (9/page), cartes
+      div.bienAccueil. CP en clair sur la carte (.localisation « VILLE (45600) ») → post-filtre
+      strict code_postal[:2], sans appel externe ; locations (« €/mois ») écartées. Secteur Val
+      de Sully (45) + déborde 41. 0 fuite vérifié (depts vus : 45 ⊂ cibles ; 52 maisons brut, 6
+      en zone prod dont St-Benoît 402 m² / 332 k€). dernier_test 2026-06-14.'
+
+  # ── Ajouts 2026-06-14 (scraper-scout scout_lane_3) ──
+  - id: beranger
+    nom: Béranger Immobilier (Tours, 37)
+    url_base: https://www.beranger-immobilier.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (CMS maison « hosproduction », status 200, aucun anti-bot). Agence indépendante
+      MONO-DÉPARTEMENT Tours / Indre-et-Loire (Tours, Fondettes, Amboise, Saint-Cyr, Rochecorbon…).
+      URL liste unique /acheter/ (catalogue complet ~36 biens sur une page ; /acheter/page-N.html
+      renvoie la même liste → pas de pagination réelle). Cartes div.col1 : titre+url h3 a.LinkIn[title]
+      (href /acheter/{id}-slug.html), référence .reference, localité .localisation (LIBELLÉ de quartier,
+      ex « Tours Centre », « Tours Halles » → normalisé en commune), description .description, prix
+      .prixfai (« 2390000 € HAI »). PARTICULARITÉ : pas de code postal ni de surface en vue liste
+      → agence locale, donc résolution commune → CP via l''API BAN officielle (api-adresse.data.gouv.fr,
+      type=municipality), POST-FILTRE STRICT code_postal[:2] ∈ departements. 0 fuite vérifiée (départements
+      vus = [''37''], 3 biens en fourchette prix 300-600k). Guard : skip si aucun dept cible ∈ {37,41}.
+      Surface récupérée ensuite en page détail (gallery.py). dernier_test 2026-06-14.'
+  - id: delta_immobilier
+    nom: Delta Immobilier (Mehun-sur-Yèvre, Cher 18)
+    url_base: https://www.deltaimmobilier-mehun.com
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR httpx pur (appli Tailwind rendue serveur, status 200, aucun anti-bot). Agence indépendante
+      couvrant Mehun-sur-Yèvre / Bourges / Vierzon — tout l''inventaire (~39 biens, ~29 maisons)
+      est dans le Cher (18). URL liste unique /acheter (catalogue complet sur une page, pas de pagination
+      ; pas de filtre dept serveur → POST-FILTRE STRICT CP[:2]). Cartes : div.rounded-lg contenant
+      a[href^=''/bien/{id}'']. Champs : titre h3, localisation « VILLE (CP) » → ville + CODE POSTAL
+      présents dans CHAQUE carte (filtre fiable), bloc stats div.border-t.border-b (enfants « N
+      pcs / chambres / sdb / NNN m² » — surface HABITABLE lue sur les enfants directs pour ne pas
+      confondre avec le terrain cité dans le titre type « jardin de 1914 m² »), DPE « DPE X », prix
+      .text-primary. 0 fuite vérifiée (départements vus = [''18''] ; 29 biens 18 sans filtre, 1
+      en fourchette prod stricte — stock 18 réel). dernier_test 2026-06-14.'
+  - id: sifex
+    nom: SIFEX Ltd (agence anglophone, propriétés de prestige France)
+    url_base: https://www.sifex.co.uk
+    methode: scrape_simple
+    actif: false
+    priorite: 4
+    note: 'SCRAPER FONCTIONNEL mais 0 stock dans la fourchette de prix → actif:false (pas de blocage
+      : SSR httpx pur, site PHP « siteweb65 », status 200, header cloudflare mais PAS de challenge).
+      Agence anglophone listant des propriétés françaises avec FILTRE DÉPARTEMENT CÔTÉ SERVEUR via
+      slug nom+numéro (/french-property/sales/department/{Nom-Dept}/{NN} ; testé Indre-et-Loire/37,
+      Cher/18, Indre/36 → 9/7/4 biens, 0 fuite). Cartes div.propbox : type h5 b (Castle/Manor House/Country
+      House/Water Mill…), CP+ville dans img[alt] (« Castle For Sale, TOURS, 37000, FRANCE »), prix
+      « € N,NNN,NNN », Ref:, Bedrooms:, Land: N ha (→ surface_terrain m²), description .prop_panel_desc.
+      Post-filtre STRICT CP[:2]. PROBLÈME : inventaire 100 % PRESTIGE (châteaux/ manoirs Loire Valley),
+      prix mini observé dans la zone = 667 000 € — tout l''inventaire 37/18/36 dépasse prix_max=600000
+      → 0 bien sous critères prod. Code conservé, réactiver si la fourchette prix monte ou pour
+      une recherche prestige. 20 biens captés sans filtre prix, 0 fuite. dernier_test 2026-06-14.'
+
+  # ── Ajouts 2026-06-14 (scraper-scout scout_lane_4) ──
+  - id: vivre_en_morvan
+    nom: Vivre en Morvan
+    url_base: https://www.vivre-en-morvan.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'Agence rurale indépendante d''Anost (Morvan), niche longères/fermes/propriétés de caractère.
+      SSR httpx pur (Apache, pas d''anti-bot). Liste UNIQUE /acheter/ (~51 cartes, pas de pagination
+      serveur ; ?page=N inopérant). Cartes <article> Tailwind : prix, « Ville (CP) », Surface, Nb
+      pièces, Nb chambres, Terrain. Aucun filtre dept serveur (le Morvan déborde sur 71/21) → post-filtre
+      STRICT code_postal[:2] (extrait de chaque carte). Biens VENDU/sous-compromis exclus. Test
+      standalone (criteria.md) : 2 biens en 58 (339k/223m², 430k/412m²), « Départements vus » =
+      [''58''], 0 fuite. dernier_test 2026-06-14.'
+  - id: agencefavart
+    nom: Agence Favart (Joigny)
+    url_base: https://www.agencefavart.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'Agence indépendante de Joigny (nord-Yonne : Joigny, Migennes, Saint-Florentin, Aillant-sur-Tholon).
+      SSR httpx (plateforme Septeo). Liste paginée /fr/ventes puis /fr/ventes/{N} (12/page). Cartes
+      article.minifiche2 : .cp (89300), .commune, .color_titre_minifiche2 (type+pièces), .prix,
+      .reference ; CP aussi dans l''URL détail /fr/vente/{type}-{N}-pieces-{ville}-{CP}/{ID}. Post-filtre
+      STRICT code_postal[:2] (le secteur Joigny touche l''Aube 10). Surface absente en liste (enrichie
+      en page détail par gallery.py). Test standalone : 2 biens en 89 (Joigny 349k, La Celle-St-Cyr
+      340k), « Départements vus » = [''89''], 0 fuite. dernier_test 2026-06-14.'
+  - id: vip_bourgogne_immobilier
+    nom: VIP Bourgogne Immobilier (Clamecy/Varzy)
+    url_base: https://www.vip-bourgogne-immobilier.com
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: 'Agence WordPress (thème RealHomes) du nord-Nièvre / sud-Yonne (Clamecy, Varzy, Tannay,
+      Corbigny, Coulanges-sur-Yonne…). API WP REST exploitable : /wp-json/wp/v2/property?per_page=50&page=N
+      (JSON ; un plugin injecte 2 <link> avant le tableau → find(''[{'')). property_meta donne prix/size/lot_size/bedrooms.
+      Adresse & lat/long INUTILISABLES (vides/placeholder agence) → département résolu via la taxonomie
+      property-city (CANTONS) + mapping CANTON_DEPT codé en dur (Clamecy/Varzy/Tannay/Corbigny…→58
+      ; Coulanges-sur-Yonne/Lichères/Vézelay→89 ; « Bourgogne » seul → écarté). Post-filtre dept
+      STRICT. Test : 77 biens bruts, « Départements vus » = {58, 89} ⊆ cibles, 0 fuite ; 3 biens
+      sous critères stricts (300k-600k/150m²+ — stock prestige mince, biens souvent <300k). code_postal
+      = None (résolution au canton). dernier_test 2026-06-14.'
+  - id: richmond_immobilier
+    nom: Groupe Richmond Immobilier (Nevers/Fourchambault)
+    url_base: https://www.richmondimmobilier-nevers-fourchambault.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: 'Agence familiale Nevers/Fourchambault (Nièvre 58 + marge Cher 18). SSR httpx (CMS catalog
+      office20). Liste UNIQUE /catalog/annonce.php (~11 cartes, pas de pagination). Cartes div.item-product
+      (.products-name/.products-desc/.products-ref/ .products-price, lien /fiches/..._{id}/). CP
+      absent des cartes → résolu via le <select name="ville"> de la page (option « 58000 NEVERS
+      », « 18150 LA GUERCHE SUR L AUBOIS »…) : index ville_normalisée→(CP,dept), ville lue dans
+      le titre, repli regex CP dans la description ; sinon bien écarté (prudence). Post-filtre STRICT.
+      Test : 5 biens résidentiels bruts, « Départements vus » = {18, 58} ⊆ cibles, 0 fuite ; 0 bien
+      sous critères stricts (biens 97k-249k, petites surfaces) → scraper fonctionnel, filtre dept
+      prouvé. dernier_test 2026-06-14.'
+  - id: immotransactions
+    nom: Immo Transactions (Avallon/Saulieu)
+    url_base: https://www.immotransactions.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: 'Agence Avallonnais/Auxois-Morvan (Yonne 89 : Avallon, Quarré ; déborde sur la Côte-d''Or
+      21 : Saulieu/Époisses — HORS ZONE). SSR httpx (Joomla AdsManager). Liste paginée /nos-biens-en-vente.html?start=N
+      (tranche 60, ~95 biens). Cartes <tr.adsmanager_table_description> ; lien /nos-biens-en-vente/{cat}/{id}-{ville}.html.
+      Pas de CP en liste → commune extraite du titre/slug (ancres de lieu) et résolue via scrapers/_geo_resolver.py
+      (geo.api.gouv.fr, restreint cibles) → Saulieu/21 renvoie (None,None) et est ÉCARTÉ. Post-filtre
+      dept STRICT. Test : 63 biens maisons ; « Départements vus » = {58, 89} (et hors filtre prix
+      {18,28,58,89}), 0 fuite, 6 biens Saulieu/Époisses (21) EXCLUS (vérifié). Limite : quelques
+      homonymies INTRA-zone (Précy-sous-Thil→18, Beauvilliers→28) corrigées par le CP réel en page
+      détail ; prix/surface souvent None en liste (enrichis par gallery). dernier_test 2026-06-14.'
+  - id: xavierm_immobilier
+    nom: Xavier M Immobilier (Marzy/Nevers)
+    url_base: https://www.xaviermimmobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: 'Agence indépendante Marzy/Nevers (Nièvre 58 + Cher 18, secteur ~50 km). La plateforme
+      « Modelo/Netty » rend les pages /vente en React CSR (HTML brut sans cartes/prix) → source
+      SSR fiable = le SITEMAP /sitemap.xml, qui liste toutes les annonces sous /vente/{type}-...-{N}-pieces-{ville}-{CP},{REF}.
+      CP = avant-dernier segment du slug → filtre dept 100% fiable (post-filtre STRICT CP[:2]).
+      Détail fetché en best-effort plafonné (head react-helmet : og:title/description/image CDN
+      netty). Non-résidentiel exclu sur le 1er segment du slug. Test : 85 biens, « Départements
+      vus » = {18, 58} ⊆ cibles, 0 fuite (58:67, 18:18). Limite : prix et surface restent None (rendus
+      côté client uniquement) → biens candidats localisés fiablement, filtres prix/surface ignorant
+      les champs manquants ; Playwright requis si prix/surface deviennent nécessaires. dernier_test
+      2026-06-14.'
+  - id: maryimmobilier
+    nom: Mary Immobilier (Saint-Amand-en-Puisaye)
+    url_base: http://maryimmobilier.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: 'Agence indépendante de Saint-Amand-en-Puisaye (Puisaye, Nièvre 58 ; limite 89/45/18).
+      SSR httpx (WordPress thème wpcasa/casanova ; HTTP simple, pas de TLS). Archive UNIQUE /property/
+      (~12 cartes, pas de pagination). Cartes div.property : .post-title (« Réf 2347 SAINT AMAND
+      EN PUISAYE »), classe CSS location-{slug} (commune), property-type-{type}, property-category-{N}-pieces,
+      .listing-details-1 (chambres) / -3 (terrain), .listing-price-value, .post-teaser (surface).
+      Pas de CP → commune (location-, st→saint) résolue via scrapers/_geo_resolver.py → post-filtre
+      dept STRICT. Test : 12 biens résolus, TOUS en 58 (Saint-Amand-en-Puisaye + Donzy), 0 fuite.
+      0 bien sous critères stricts (stock 59k-299k, juste sous prix_min 300k) → scraper fonctionnel,
+      vrai stock en zone. dernier_test 2026-06-14.'
+
+  # ── Ajouts 2026-06-14 (scraper-scout scout_lane_5) ──
+  - id: rightmove_overseas
+    nom: Rightmove (section Overseas, biens en France)
+    url_base: https://www.rightmove.co.uk
+    methode: scrape_simple
+    actif: true
+    priorite: 1
+    note: 'SSR via __NEXT_DATA__ (JSON Next.js inline dans le HTML, pas de Playwright). Portail
+      UK n°1, agrège des centaines d''agences anglophones vendant en France. URL /overseas-property-for-sale/find.html?locationIdentifier=WORLD_REGION^{id}
+      &index={N} : un identifiant WORLD_REGION DÉDIÉ par département (filtre serveur, 0 fuite vérifiée
+      sur les 11 depts cibles), pagination par index (25/page). Données props.pageProps.searchResults.properties[]
+      : displayAddress (CP 5 chiffres souvent présent → post-filtre strict CP[:2]), price.amount
+      EUR + displayPrices €, propertySubType (filtre House/Property), bedrooms, et location.latitude/longitude
+      EXACTES (bonus géoloc). Surface (displaySize) souvent absente → None. Test 2026-06-14 sous
+      criteria prod : 86 biens sur les 11 depts (53:17, 72:16, 49:11, 37:11, 36:7, 45:6, 41:7, 28:5,
+      89:3, 18:2, 58:1), 0 fuite. dernier_test 2026-06-14.'
+  - id: safer_annonces
+    nom: SAFER (propriétés agricoles / rurales, régionaux)
+    url_base: https://pays-de-la-loire.annonces-safer.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: 'SSR httpx (moteur netty.immo). Sous-domaines régionaux de annonces-safer.fr : pays-de-la-loire
+      (49/53/72) et bourgogne-franche-comte (58/89) — un seul scraper paramétrable (DEPT_CONF).
+      URL /vente-propriete-agricole/{region}/ {dept-slug},{NN} → filtre dept CÔTÉ SERVEUR (code
+      dans l''URL), pagination ?page={N}. Cartes div.res_div1[itemprop=offers] : h2 a (titre+url
+      détail *_VN....htm), prix fiable via attribut content de div.res_tbl_value, terrain en ha/a/ca
+      (b.safer_land_value) converti en m² → surface_terrain (colle au terrain_min≥3000 du projet).
+      Biens RURAUX/agricoles (exploitations, propriétés, étangs, forêts). Pas de CP en liste → pseudo
+      CP NN000, dept verrouillé par la boucle (0 fuite). SAFER Centre (18/36/37/41/45/28) : sous-domaine
+      non résolu au sondage, à ajouter si confirmé. Test 2026-06-14 : 26 biens (53:9, 72:6, 49:5,
+      58:4, 89:2), 0 fuite. dernier_test 2026-06-14.'
+  - id: agorastore
+    nom: Agorastore (ventes immobilières des collectivités / État)
+    url_base: https://www.agorastore.fr
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: 'SSR : objets produit en JSON INLINE dans le HTML (les pages régionales /ventes-immobilieres/{region}
+      redirigent 301 vers agorastore-immo.fr mais servent le même HTML SSR avec le JSON). On parcourt
+      les régions couvrant la zone (centre-val-de-loire, pays-de-la-loire, bourgogne-franche-comte)
+      puis POST-FILTRE strict sur le code dept (NN) extrait du productName « {Type} - {Surface}
+      m² - {Ville} (NN) ». currentPrice = enchère courante, productPageUrl = détail. Ventes aux
+      enchères de biens publics → stock zone MODESTE (souvent immeubles/terrains exclus par _KEEP_TYPE,
+      prix d''enchère bas souvent < prix_min). Test 2026-06-14 : 1 carte zone (Maison 152 m² Rueil-la-Gadelière
+      28, exclue par prix_min=300k) → 0 bien sous criteria prod mais scraper fonctionnel et 0 fuite.
+      Réactiver l''intérêt si recherche de biens bon marché / enchères. CP exact seulement en page
+      détail. dernier_test 2026-06-14.'
+  - id: etude_lodel
+    nom: Étude Lodel / Viager Lodel (viager national)
+    url_base: https://www.etudelodel.com
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: 'SSR httpx (moteur netty.immo). VIAGER national : catalogue page unique /nos-biens-viager
+      (24 cartes div.res_div1), pas de filtre dept serveur → POST-FILTRE strict sur le code dept
+      (NN) du titre/description (pseudo CP NN000). prix = BOUQUET (div.res_tbl_value[itemprop=price]),
+      rente en plus (div.viager_rent) — comme les autres scrapers viager (costes_viager, viagimmo).
+      Bouquet bas → prix_min/max NON appliqués (sinon tout exclu) ; seul surface_min l''est. NB
+      : « viager » est dans mots_interdits du criteria prod → ces biens seront écartés en aval (cohérent
+      : scraper conservé pour couverture viager, comme les autres). Test 2026-06-14 : catalogue
+      de 24 biens, 0 dans la zone cible à l''instant (stock tournant : 36/37/53/28 vus en sondage
+      antérieur), 0 fuite, scraper fonctionnel. dernier_test 2026-06-14.'
+  - id: frenchproperty24
+    nom: 24 French Property (portail anglophone, AWPCP)
+    url_base: https://www.24frenchproperty.com
+    methode: scrape_simple
+    actif: true
+    priorite: 4
+    note: 'SSR pur (WordPress + plugin classifieds AWPCP). Catégories régionales NON strictement
+      dept → on parcourt « Loire Valley » (405) et la catégorie globale « for-sale » (15) avec ?offset={N}&results=10,
+      PUIS POST-FILTRE strict CP[:2] ∈ depts cibles (comme remax/figaro_immo). Cartes div.awpcp-listing-excerpt
+      : h4.awpcp-listing-title a (titre+url /advert/real-estate/{id}/), div.awpcp-listing-excerpt-content
+      (ville + CP 5 chiffres « Ville – NNNNN »), div.awpcp-listing-excerpt-extra (« Price: € NNN,NNN
+      »). Surface rarement en liste → None. Inventaire zone TRÈS modeste. Test 2026-06-14 : 1 bien
+      zone sous criteria prod (Beaumont-Pied-de-Bœuf 72, 448k €), 0 fuite, scraper fonctionnel.
+      dernier_test 2026-06-14.'
+
+
 blacklist:
 
   # ── Ajouts 2026-06-13 (scraper-scout — réseaux mandataires/franchises non retenus) ──
@@ -4686,3 +5158,136 @@ blacklist:
     raison: "Doublon de feed/domaine. i-Particuliers route ses annonces par le moteur Ikami (ikami.fr), même endpoint API que le scraper actif 'ikami' ; le test renvoyait les 17 MÊMES annonces (identiques, depts 18/41/45/58/89). i_particuliers ne fait que filtrer un sous-ensemble (reference_client=iparticuliersxml) du même flux -> couvert par ikami (superset). Fichier supprimé."
     dernier_test: "2026-06-10"
     alternative: "ikami"
+
+
+  # ── Ajouts 2026-06-14 (scraper-scout — sites explorés et écartés CSR/anti-bot/down) ──
+  - id: cloixlumet
+    nom: Cloix & Lumet (Bourges, 18)
+    url_base: https://www.cloixlumet.net
+    raison: 'CSR pur (Vue/React, BunnyCDN, ~770 ko). /vente, /vente/maison rendent 200 mais 0 prix
+      / 0 référence / aucune carte dans le HTML brut (pas de __NUXT__/__INITIAL_STATE__, aucun /api
+      repérable). Seuls des liens de navigation par ville/CP (/vente/maison/bourges/18000). Réactivation
+      : Playwright ou reverse-engineering de l''endpoint JSON.'
+    dernier_test: '2026-06-14'
+  - id: topaze_immobilier
+    nom: Topaze Immobilier (Tours, 37)
+    url_base: https://www.topaze-immobilier.com
+    raison: 'CSR (CMS Netty/Modelo, BunnyCDN, ~1 Mo, prix=0 dans le HTML, __SSR_TEMPLATE_READY).
+      Les annonces sont templatées côté client. Même famille que royalfoncier / aisling / agencelorzimmobilier
+      (tous Netty/Modelo, non scrapables en httpx pur). /acheter = 404. Réactivation : Playwright.'
+    dernier_test: '2026-06-14'
+  - id: royalfoncier
+    nom: Royal Foncier (Sainte-Maure-de-Touraine, 37)
+    url_base: https://www.royalfoncier.fr
+    raison: 'CSR (CMS Netty/Modelo, BunnyCDN, ~1 Mo, prix=0, __SSR_TEMPLATE_READY). /vente et /vente/maison
+      ne contiennent que des liens de navigation par ville (/vente/maison/{ville}/{cp}), aucune
+      carte d''annonce SSR, aucun /api ni JSON embarqué. Type de biens pourtant idéal (moulins/manoirs/longères).
+      Sitemap = pages catégories seulement (pas de fiches). Réactivation : Playwright / API Netty.'
+    dernier_test: '2026-06-14'
+  - id: agencelorzimmobilier
+    nom: Agence Lorz Immobilier (Bourges, 18)
+    url_base: https://www.agencelorzimmobilier.com
+    raison: 'CSR (Netty/Modelo, BunnyCDN, prix=0 SSR). Le sitemap.xml ne liste que des pages catégories/villes
+      (/vente/maison/bourges/18000), pas de fiches détail individuelles → annonces rendues en JS.
+      Réactivation : Playwright.'
+    dernier_test: '2026-06-14'
+  - id: immobiliere_saint_amandoise
+    nom: Immobilière Saint-Amandoise (Saint-Amand-Montrond, 18)
+    url_base: https://www.immobiliere-saint-amandoise.fr
+    raison: 'CMS Periscop/Regicom. L''endpoint AJAX /immo/c/front/search/... renvoie du HTML mais
+      c''est la COQUILLE de recherche (template avec placeholder `-property-url-` et <option> de
+      villes) ; les cartes réelles sont injectées par un second appel JS non trivial à reproduire
+      (pas de carte SSR avec CP+prix dans la réponse). Détails en slugs plats /fr/{slug} sans CP.
+      Réactivation : capture de l''appel de résultats Periscop ou Playwright.'
+    dernier_test: '2026-06-14'
+  - id: immobilier_ad
+    nom: AD Immobilier (Tours / Luynes / Fondettes, 37)
+    url_base: https://immobilier-ad.com
+    raison: 'SSR WordPress + Visual Composer, MAIS (1) inventaire 100 % PRESTIGE (tous les prix
+      observés ≥ 1 000 000 €, très au-dessus de prix_max=600000 → 0 stock en fourchette) ; (2) markup
+      VC très irrégulier : prix et lien détail dans des colonnes séparées, ville seulement dans
+      le title du lien, aucune carte atomique fiable → parsing fragile. Non retenu (faible valeur
+      + 0 stock).'
+    dernier_test: '2026-06-14'
+  - id: agence_berry_immobilier
+    nom: Agence Berry Immobilier (Issoudun / Châteauroux, 36)
+    url_base: https://www.agence-berry-immobilier.fr
+    raison: 'URL prometteuse (pattern LBI server-side /vente/36-indre/{secteur}/1-maison/N) MAIS
+      serveur instable : alterne timeout (>45 s) et ''Connection refused'' (errno 111) sur requêtes
+      httpx répétées → impossible de scraper de façon fiable. À re-tenter plus tard (throttle agressif
+      possible) ; sinon proxy.'
+    dernier_test: '2026-06-14'
+  - id: denoray_immobilier
+    nom: De Noray Immobilier (Indre-et-Loire, 37)
+    url_base: https://www.denoray-immobilier.com
+    raison: Site SSR .html prometteur (/annonces/transaction/vente.html) mais serveur REFUSE les
+      connexions httpx (errno 111) après un premier accès, y compris via WebFetch (ECONNREFUSED)
+      → anti-bot IP / blocage. Non scrapable en l'état.
+    dernier_test: '2026-06-14'
+  - id: bergerault_immobilier
+    nom: Bergerault Immobilier (Bourges, 18)
+    url_base: https://www.bergerault-immobilier.com
+    raison: DNS ne résout pas (Name or service not known) — domaine inactif/migré.
+    dernier_test: '2026-06-14'
+  - id: agencetbi
+    nom: TBI Touraine Berry Immobilier (Loches, 37)
+    url_base: https://agencetbi.com
+    raison: 'Domaine détourné : redirige vers un site de paris/casino (« mostbet », « aviator »).
+      Plus une agence immobilière. Écarté.'
+    dernier_test: '2026-06-14'
+  - id: idvignaud
+    nom: Damien Vignaud Immobilier (Bléré / Amboise, 37)
+    url_base: https://idvignaud.com
+    raison: 'WordPress derrière Cloudflare ; 0 prix dans le HTML SSR (annonces via widget JS/iframe
+      externe `/idvignaud-immo`). Pas de catalogue énumérable en httpx. Réactivation : identifier
+      l''iframe/API du widget ou Playwright.'
+    dernier_test: '2026-06-14'
+  - id: joigny_immobilier
+    nom: Joigny Immobilier
+    url_base: https://www.joigny-immobilier.fr
+    raison: 'Inaccessible en httpx : HTTP 503 (Apache) sur la home ET certificat TLS expiré sur
+      joigny-immobilier.fr. Site instable/protégé au moment du run. Réactiver si le site redevient
+      joignable (cert renouvelé + 200). Couvre Joigny (89).'
+    dernier_test: '2026-06-14'
+    alternative: agencefavart (même secteur Joigny, SSR propre)
+  - id: evrovilla
+    nom: Evrovilla (portail Nièvre)
+    url_base: https://www.evrovilla.com
+    raison: HTTP 403 server=cloudflare sur la home (challenge bot) — infranchissable en httpx sans
+      cookie cf_clearance / proxy résidentiel. Portail régional Nièvre.
+    dernier_test: '2026-06-14'
+    alternative: bienici, iad, safti
+  - id: agenceimmobilierenevers
+    nom: Agence Immobilière Nevers (réseau ID)
+    url_base: https://www.agenceimmobilierenevers.fr
+    raison: 'Home 200 sous Cloudflare mais les routes de liste (/fr/annonces, /annonces, /fr/recherche/)
+      renvoient 404 : application CSR (contenu chargé en JS, aucune carte en SSR httpx). Réactivation
+      : Playwright ou endpoint API à reverse-engineer.'
+    dernier_test: '2026-06-14'
+    alternative: actimmo58 (Nevers, déjà en base), bienici
+  - id: charny_immobilier
+    nom: Agence Charny Immobilier
+    url_base: https://charny-immobilier.com
+    raison: 'Win Immobilier en routage par hash CSR (#!/annonces-immobilieres-...) : les ~587 annonces
+      (Charny/Puisaye 89 + marge Loiret 45) sont rendues côté client, le HTML brut httpx ne contient
+      ni cartes ni prix exploitables. Pas d''endpoint JSON SSR repéré. Réactivation : Playwright
+      ou flux XML Win Immobilier si exposé.'
+    dernier_test: '2026-06-14'
+    alternative: agencefavart, ordim_immo (déjà en base)
+  - id: habitat_morvan
+    nom: Habitat Morvan (Vermenton/Avallon)
+    url_base: https://www.habitat-morvan.fr
+    raison: Domaine injoignable depuis l'environnement de run (ConnectError/ECONNREFUSED répété
+      sur www et apex, plusieurs retries). Probable géo-restriction IP ou indisponibilité ponctuelle
+      ; à re-sonder depuis une IP FR. Couvre Avallon/Morvan (89/58), ~200 biens annoncés — candidat
+      à re-tester au prochain run.
+    dernier_test: '2026-06-14'
+    alternative: immotransactions, vivre_en_morvan (même secteur Morvan)
+  - id: europeimmobilier
+    nom: Europe Immobilier (Avallon)
+    url_base: https://www.europeimmobilier.fr
+    raison: Domaine injoignable depuis l'environnement de run (ConnectTimeout/ECONNREFUSED répété).
+      Probable géo-restriction IP ou blocage du datacenter ; à re-sonder depuis une IP FR. Couvre
+      Avallon/Vézelay/Noyers (89), ~180 biens — candidat à re-tester au prochain run.
+    dernier_test: '2026-06-14'
+    alternative: immotransactions, vivre_en_morvan
