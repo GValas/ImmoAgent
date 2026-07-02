@@ -131,7 +131,7 @@ scraper via `python scrapers/xxx.py` après migration).
 |---------|------|-------|
 | `lesiteimmo.py` | LeSiteImmo | JSON-LD CollectionPage, 25/page, slugs sarthe-72 |
 | `foncia.py` | Foncia Transaction | Angular SSR, div.foncia-card, ~90/dept |
-| `seloger.py` | SeLoger | URL legacy list.htm?places=[{cp:XXXXX}], ~18/dept |
+| `seloger.py` | SeLoger | list.htm SSR, UA desktop (brèche iOS morte 2026-07), dept entier + balayage tranches de prix (pagination serveur inopérante), ~125/dept |
 | `properstar.py` | Properstar | Agrégateur international, article.item-adaptive, ~20/dept |
 | `laforet.py` | Laforêt Immobilier | SSR Symfony, data-gtm-item-*-param, 9 depts (skip 72/36) |
 | `arthurimmo.py` | Arthur Immo | Laravel+Livewire SSR, div[wire:id] property.card |
