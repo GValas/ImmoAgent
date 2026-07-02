@@ -173,6 +173,17 @@ def filter_biens(biens: list[dict], criteres) -> list[dict]:
     return filtered
 
 
+def refilter_dpe(biens: list[dict], criteres) -> list[dict]:
+    """Ré-applique `dpe_exclus` : le DPE n'est souvent capté qu'APRÈS la page
+    détail (gallery l'extrait) — les passoires F/G captées tardivement sont
+    écartées ici. No-op si dpe_exclus est vide."""
+    excl = [str(d).upper() for d in getattr(criteres, "dpe_exclus", []) or []]
+    if not excl:
+        return biens
+    return [b for b in biens
+            if not (b.get("dpe") and str(b["dpe"]).upper() in excl)]
+
+
 def refilter_terrain_from_text(biens: list[dict], criteres) -> list[dict]:
     """Sur les biens sans `surface_terrain`, tente d'extraire le terrain depuis la
     description COMPLÈTE (marque `terrain_estime_texte`), puis ré-applique terrain_min.

@@ -29,12 +29,18 @@ Interface utilitaire :
       → ajoute bus_proche / bus_nom / bus_distance_km à chaque bien (in place)
 """
 import asyncio
-import math
 import os
+import sys
 import time
-import unicodedata
+from pathlib import Path
 
 import httpx
+
+# Racine du projet sur le path (permet `python scrapers/bus.py` en direct)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from core.geo import geocode_commune as _geocode_commune  # noqa: E402
+from core.geo import haversine_km as _haversine_km  # noqa: E402
 
 # Miroir Overpass. (2026-06-10 : kumi.systems était mort et openstreetmap.fr est
 #  whitelist-only — 403. On garde le miroir canonique overpass-api.de, qui répond,
@@ -54,69 +60,18 @@ _BREAKER_THRESHOLD = 3
 # l'étape indéfiniment. Passé ce budget, on cesse d'appeler Overpass pour les biens
 # restants (annotés « pas de bus ») et le pipeline continue. Surcharge : BUS_BUDGET_S.
 _DEFAULT_BUDGET_S = float(os.environ.get("BUS_BUDGET_S", "180"))
-GEO_API_URL = "https://geo.api.gouv.fr/communes"
 
 # UA honnête : overpass-api.de renvoie 406 sur un User-Agent qui usurpe un navigateur
 # (« Mozilla/… ») ; il accepte un UA descriptif. NE PAS remettre un UA Mozilla ici.
 _HEADERS = {"User-Agent": "immo-agent/1.0 (personal real-estate search)"}
 
-# Caches de session
-_GEOCODE_CACHE: dict[str, tuple[float, float] | None] = {}
-
-
-def _normalize(s: str) -> str:
-    """Minuscules, sans accents, espaces compactés — pour comparer des noms de commune."""
-    s = unicodedata.normalize("NFKD", (s or "").strip().lower())
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    return " ".join(s.replace("-", " ").split())
-
-
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Distance grand-cercle en km entre deux points (degrés décimaux)."""
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
-
-
-# ──────────────────────────────────────────────
-# Géocodage des communes (fallback si le bien n'a pas de coordonnées)
-# ──────────────────────────────────────────────
-
-async def _geocode_commune(
-    client: httpx.AsyncClient, ville: str, code_postal: str, departement: str = ""
-) -> tuple[float, float] | None:
-    """Renvoie (lat, lon) du centre de la commune via geo.api.gouv.fr, mis en cache."""
-    cp = str(code_postal or "").strip()
-    dep = str(departement or "").strip()
-    key = f"{_normalize(ville)}|{cp[:5]}|{dep}"
-    if key in _GEOCODE_CACHE:
-        return _GEOCODE_CACHE[key]
-
-    params = {"fields": "centre", "format": "json", "limit": "1"}
-    if ville:
-        params["nom"] = ville
-    if len(cp) >= 5:
-        params["codePostal"] = cp[:5]
-    elif dep:
-        params["codeDepartement"] = dep
-    elif len(cp) == 2:
-        params["codeDepartement"] = cp
-
-    coords = None
-    try:
-        r = await client.get(GEO_API_URL, params=params)
-        if r.status_code == 200 and r.json():
-            centre = r.json()[0].get("centre", {}).get("coordinates")
-            if centre:  # [lon, lat]
-                coords = (float(centre[1]), float(centre[0]))
-    except Exception as e:
-        print(f"[Bus] géocodage échoué pour {ville} ({code_postal}): {e}")
-
-    _GEOCODE_CACHE[key] = coords
-    return coords
+# Cache de session des résultats Overpass, clé (lat arrondie, lon arrondie, rayon).
+# Les biens sans coords propres retombent sur le CENTRE COMMUNE → tous les biens
+# d'une même commune produisaient une requête Overpass identique, sérialisée
+# derrière Semaphore(1) (jusqu'à ~28 s chacune) : les doublons pouvaient manger
+# tout le budget. round(·, 3) ≈ grille de 110 m — les centres communes partagés
+# tombent exactement sur la même clé.
+_OVERPASS_CACHE: dict[tuple[float, float, int], tuple[str, float] | None] = {}
 
 
 # ──────────────────────────────────────────────
@@ -247,6 +202,15 @@ async def annotate_biens(
             b["bus_nom"] = None
             b["bus_distance_km"] = None
 
+        def _apply(b: dict, res: tuple[str, float] | None):
+            if res is None:
+                _no_bus(b)
+            else:
+                nom, dist = res
+                b["bus_proche"] = dist <= rayon_km
+                b["bus_nom"] = nom
+                b["bus_distance_km"] = dist
+
         async def annotate_one(b: dict):
             if breaker["dead"] or budget_state["expired"] or time.monotonic() >= deadline:
                 _no_bus(b)
@@ -255,11 +219,22 @@ async def annotate_biens(
             if not coords or breaker["dead"] or budget_state["expired"]:
                 _no_bus(b)
                 return
+            # Cache : les biens d'une même commune (fallback centre commune) partagent
+            # exactement les mêmes coordonnées → une seule requête Overpass pour tous.
+            cache_key = (round(coords[0], 3), round(coords[1], 3), rayon_m)
+            if cache_key in _OVERPASS_CACHE:
+                _apply(b, _OVERPASS_CACHE[cache_key])
+                return
             async with overpass_sem:
                 # Budget global / coupe-circuit ont pu tomber pendant l'attente du
                 # sémaphore (accès séquentiel) → on ne lance pas une requête de plus.
                 if breaker["dead"] or budget_state["expired"]:
                     _no_bus(b)
+                    return
+                # Un autre bien de la même commune a pu remplir le cache pendant
+                # l'attente du sémaphore (accès séquentiel) → re-check avant requête.
+                if cache_key in _OVERPASS_CACHE:
+                    _apply(b, _OVERPASS_CACHE[cache_key])
                     return
                 if time.monotonic() >= deadline:
                     if not budget_state["expired"]:
@@ -276,15 +251,10 @@ async def annotate_biens(
                     print(f"[Bus] Overpass injoignable {_BREAKER_THRESHOLD}× d'affilée "
                           f"— annotation bus désactivée pour ce run (non critique)")
                 _no_bus(b)
-            elif res is None:
-                breaker["fails"] = 0         # joignable → reset
-                _no_bus(b)
             else:
-                breaker["fails"] = 0
-                nom, dist = res
-                b["bus_proche"] = dist <= rayon_km
-                b["bus_nom"] = nom
-                b["bus_distance_km"] = dist
+                breaker["fails"] = 0         # joignable → reset
+                _OVERPASS_CACHE[cache_key] = res   # None = « aucun arrêt » (cachable)
+                _apply(b, res)
 
         await asyncio.gather(*(annotate_one(b) for b in biens))
 

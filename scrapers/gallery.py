@@ -454,9 +454,28 @@ def _maybe_set_description(bien: dict, txt: str) -> None:
 
 
 def _enrich_meta(bien: dict, txt: str) -> None:
-    """DPE + description (best-effort) depuis le HTML/JSON détail déjà récupéré."""
+    """DPE + description + candidats géo (best-effort) depuis le HTML/JSON détail
+    déjà récupéré."""
     _maybe_set_dpe(bien, txt=txt)        # txt=txt : forme volontaire (cf. dispatch)
     _maybe_set_description(bien, txt)
+    _stash_geo_candidates(bien, txt)
+
+
+def _stash_geo_candidates(bien: dict, txt: str) -> None:
+    """Mémorise sur le bien (`_geo_candidates`) les candidats (lat, lon) trouvés
+    dans le HTML détail DÉJÀ téléchargé, pour que geolocate.annotate_biens n'ait
+    pas à re-fetcher la même page quelques secondes plus tard (2× moins de trafic
+    détail, et pas de rafale non throttlée sur le même domaine). La validation
+    contre le centre commune reste faite par geolocate. Ne lève jamais."""
+    try:
+        if bien.get("latitude") is not None or bien.get("_geo_candidates"):
+            return
+        from scrapers.geolocate import extract_coord_candidates  # import tardif (cycle)
+        cands = extract_coord_candidates(txt)
+        if cands.get("labeled") or cands.get("ambiguous"):
+            bien["_geo_candidates"] = cands
+    except Exception:
+        pass
 
 
 # Clés JSON considérées comme du texte descriptif d'annonce (API notaires & co.).
@@ -516,11 +535,18 @@ def _dpe_from_notaires(data: dict) -> str | None:
 
 
 async def _get(session: httpx.AsyncClient, url: str, **kw):
-    """GET avec retry/backoff sur 429/503 (sites publics rate-limités, ex. century21)."""
+    """GET avec retry/backoff sur 429/503 ET sur erreur réseau transitoire
+    (ReadTimeout/ConnectError — un seul retry sauvait l'enrichissement du bien)."""
     import asyncio
     r = None
     for attempt in range(3):
-        r = await session.get(url, follow_redirects=True, timeout=25, **kw)
+        try:
+            r = await session.get(url, follow_redirects=True, timeout=25, **kw)
+        except Exception:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(1.5 * (attempt + 1))
+            continue
         if r.status_code in (429, 503) and attempt < 2:
             await asyncio.sleep(1.5 * (attempt + 1))
             continue

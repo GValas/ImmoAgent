@@ -56,7 +56,9 @@ async def run_pipeline(
         # unique partagée (core.filters). Répercute un changement de criteria.md sur
         # suivi_actif SANS re-scraper le web.
         before = len(biens_bruts)
-        biens_bruts = apply_posterior_filters(biens_bruts, criteres)
+        # dept_guard=True : même garde-fou hors-zone que refilter_suivi (un raw
+        # historique peut contenir des fuites de scrapers depuis corrigés).
+        biens_bruts = apply_posterior_filters(biens_bruts, criteres, dept_guard=True)
         print(f"⏪ Re-filtrage a posteriori : {len(biens_bruts)}/{before} biens conservés")
 
         if not biens_bruts:
@@ -100,7 +102,7 @@ async def run_pipeline(
 
 
 def _print_done(start: datetime, output: Path):
-    elapsed = (datetime.now() - start).seconds
+    elapsed = int((datetime.now() - start).total_seconds())
     print("\n" + "=" * 60)
     print(f"  ✅ Pipeline terminé en {elapsed}s")
     print(f"  📁 Résultats : {output}")

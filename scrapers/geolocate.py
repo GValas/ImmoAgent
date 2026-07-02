@@ -184,11 +184,18 @@ async def coords_from_detail(client: httpx.AsyncClient, bien: dict,
     return _extract_html_coords(html, commune)
 
 
-def _extract_html_coords(html: str, commune: tuple[float, float] | None) -> tuple[float, float] | None:
+def extract_coord_candidates(html: str) -> dict:
     """
-    Extrait (lat, lon) d'une page HTML. D'abord les paires étiquetées (ordre fiable) ;
-    à défaut, repli sur les paires de décimaux adjacents en testant les deux ordres —
-    la validation contre le centre commune lève l'ambiguïté lat/lon et rejette le bruit.
+    Candidats (lat, lon) d'une page détail : {"labeled": [...], "ambiguous": [...]}.
+
+    `labeled`   : paires explicitement étiquetées (ordre lat/lon fiable), puis
+                  produit croisé des valeurs lat/lon étiquetées séparément ;
+    `ambiguous` : paires de décimaux adjacents dans LES DEUX ordres — à ne retenir
+                  qu'après validation contre le centre commune (≤ _DETAIL_MAX_KM).
+
+    Exposé pour gallery.py : la passe galerie a déjà le HTML détail en main et
+    stocke ces candidats sur le bien (`_geo_candidates`) — geolocate n'a alors
+    plus besoin de re-télécharger la même page.
     """
     def _f(s: str) -> float | None:
         try:
@@ -196,31 +203,19 @@ def _extract_html_coords(html: str, commune: tuple[float, float] | None) -> tupl
         except ValueError:
             return None
 
-    # 1) Paires étiquetées (lat, lon dans cet ordre).
-    labeled = []
+    labeled: list[tuple[float, float]] = []
     for pat in _PAIR_PATTERNS:
         for a, b in pat.findall(html):
             lat, lon = _f(a), _f(b)
             if lat is not None and lon is not None and _in_france(lat, lon):
                 labeled.append((lat, lon))
-    hit = _nearest_valid(labeled, commune)
-    if hit:
-        return hit
 
-    # 2) Valeurs lat/lon étiquetées mais séparées → produit croisé (validé commune).
     lats = [v for v in (_f(s) for s in _LAT_SINGLE.findall(html)[:_SINGLE_MAX]) if v is not None]
     lons = [v for v in (_f(s) for s in _LON_SINGLE.findall(html)[:_SINGLE_MAX]) if v is not None]
     if lats and lons:
-        crossed = [(la, lo) for la in lats for lo in lons if _in_france(la, lo)]
-        hit = _nearest_valid(crossed, commune)
-        if hit:
-            return hit
+        labeled.extend((la, lo) for la in lats for lo in lons if _in_france(la, lo))
 
-    # 3) Repli : paires adjacentes, ordre inconnu → on essaie (a,b) et (b,a).
-    #    Nécessite le centre commune pour trancher (sinon trop ambigu).
-    if not commune:
-        return None
-    ambiguous = []
+    ambiguous: list[tuple[float, float]] = []
     for a, b in _ADJ_PATTERN.findall(html)[:_ADJ_MAX]:
         x, y = _f(a), _f(b)
         if x is None or y is None:
@@ -228,7 +223,24 @@ def _extract_html_coords(html: str, commune: tuple[float, float] | None) -> tupl
         for lat, lon in ((x, y), (y, x)):
             if _in_france(lat, lon):
                 ambiguous.append((lat, lon))
-    return _nearest_valid(ambiguous, commune)
+
+    return {"labeled": labeled, "ambiguous": ambiguous}
+
+
+def _coords_from_candidates(cands: dict, commune: tuple[float, float] | None) -> tuple[float, float] | None:
+    """Meilleur candidat validé : paires étiquetées d'abord ; les paires ambiguës
+    exigent le centre commune pour trancher l'ordre lat/lon (sinon trop risqué)."""
+    hit = _nearest_valid([tuple(c) for c in (cands.get("labeled") or [])], commune)
+    if hit:
+        return hit
+    if not commune:
+        return None
+    return _nearest_valid([tuple(c) for c in (cands.get("ambiguous") or [])], commune)
+
+
+def _extract_html_coords(html: str, commune: tuple[float, float] | None) -> tuple[float, float] | None:
+    """Extrait (lat, lon) d'une page HTML (candidats + validation commune)."""
+    return _coords_from_candidates(extract_coord_candidates(html), commune)
 
 
 async def _coords_for(client: httpx.AsyncClient, b: dict) -> tuple[tuple[float, float] | None, float, bool]:
@@ -239,12 +251,29 @@ async def _coords_for(client: httpx.AsyncClient, b: dict) -> tuple[tuple[float, 
     """
     lat, lon = b.get("latitude"), b.get("longitude")
     if lat is not None and lon is not None:
-        radius = float(b.get("blur_radius_m") or 0) or DEFAULT_RADIUS_M
-        return (float(lat), float(lon)), radius, True
+        try:
+            radius = float(b.get("blur_radius_m") or 0) or DEFAULT_RADIUS_M
+            return (float(lat), float(lon)), radius, True
+        except (TypeError, ValueError):
+            pass   # coords scraper illisibles → repli commune / page détail
 
     commune = await _geocode_commune(client, b.get("ville", ""), b.get("code_postal", ""),
                                      b.get("departement", ""))
-    # Tentative d'extraction des coordonnées depuis la page/API détail de l'annonce.
+
+    # 1) Candidats déjà extraits par la passe galerie (gallery.py a téléchargé la
+    #    page détail il y a quelques secondes) → validation locale, AUCUN re-fetch.
+    cands = b.pop("_geo_candidates", None)
+    if cands:
+        hit = _coords_from_candidates(cands, commune)
+        if hit:
+            b["latitude"], b["longitude"] = hit
+            b["geo_source"] = "page_detail"
+            return hit, DEFAULT_RADIUS_M, True
+        # La page a déjà été vue et n'a rien donné de valide → inutile de la
+        # re-télécharger (mêmes données) ; repli direct sur le centre commune.
+        return commune, 0.0, False
+
+    # 2) Sinon (fetcher galerie dédié sans HTML, coupe-circuit…) : page/API détail.
     detail = await coords_from_detail(client, b, commune)
     if detail:
         b["latitude"], b["longitude"] = detail   # mémorise pour l'Excel / réutilisation
@@ -259,21 +288,38 @@ async def annotate_biens(biens: list[dict], criteres=None) -> list[dict]:
       - maps_satellite_url / geoportail_url / cadastre_url : liens de vérification
       - geo_precis (bool) : coords issues de l'annonce (vs centre commune)
     """
+    from collections import defaultdict
+    from urllib.parse import urlparse
+
     async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=40) as client:
+        # Concurrence bornée : globale + par domaine. Sans cela, N biens d'un même
+        # site (ex. foncia) déclenchaient N fetchs détail SIMULTANÉS juste après que
+        # gallery s'est limité à 3/domaine — le profil parfait pour un ban 429.
+        sem = asyncio.Semaphore(16)
+        dom_sems: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(3))
+
         async def enrich(b: dict):
-            # Lien accessibilité Rome2Rio (Paris → commune) : indépendant des coords,
-            # posé sur tous les biens.
-            b["rome2rio_url"] = rome2rio_url(b.get("ville", ""), b.get("code_postal"))
-            coords, _radius, precis = await _coords_for(client, b)
-            if not coords:
-                b["geo_precis"] = False
-                return
-            lat, lon = coords
-            links = maps_links(lat, lon)
-            b["maps_satellite_url"] = links["google_satellite"]
-            b["geoportail_url"] = links["geoportail"]
-            b["cadastre_url"] = links["cadastre"]
-            b["geo_precis"] = precis
+            # Best-effort : un bien illisible ne doit jamais tuer tout le gather.
+            try:
+                # Lien accessibilité Rome2Rio (Paris → commune) : indépendant des
+                # coords, posé sur tous les biens.
+                b["rome2rio_url"] = rome2rio_url(b.get("ville", ""), b.get("code_postal"))
+                dom = urlparse(str(b.get("url") or "")).netloc
+                async with sem, dom_sems[dom]:
+                    coords, _radius, precis = await _coords_for(client, b)
+                if not coords:
+                    b["geo_precis"] = False
+                    return
+                lat, lon = coords
+                links = maps_links(lat, lon)
+                b["maps_satellite_url"] = links["google_satellite"]
+                b["geoportail_url"] = links["geoportail"]
+                b["cadastre_url"] = links["cadastre"]
+                b["geo_precis"] = precis
+            except Exception as e:
+                b.setdefault("geo_precis", False)
+                print(f"[Geoloc] bien ignoré ({type(e).__name__}: {e}) — "
+                      f"{str(b.get('url') or b.get('titre') or '')[:60]}")
 
         await asyncio.gather(*(enrich(b) for b in biens))
 

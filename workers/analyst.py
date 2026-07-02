@@ -59,7 +59,10 @@ def enrich_bien(bien: dict, prix_m2_marche: dict) -> dict:
     if mq is not None and mq >= 60:
         alertes.append("✨ Colle à la description recherchée")
 
-    bien["alerte"] = alertes
+    # Préserver les alertes déjà posées en amont (ex. « 📸 Doublon photo fusionné »
+    # par hunter.deduplicate_by_photo) — l'affectation directe les écrasait.
+    prior = [a for a in (bien.get("alerte") or []) if a not in alertes]
+    bien["alerte"] = prior + alertes
     bien["prix_m2_calcule"] = round(prix_m2_bien, 0) if prix_m2_bien else None
     bien["prix_m2_marche_dep"] = prix_m2_ref or None
     return bien
@@ -181,30 +184,42 @@ def export_excel(biens: list[dict], resume: str) -> Path:
 # POINT D'ENTRÉE
 # ──────────────────────────────────────────────
 
-async def run(biens_bruts: list[dict], criteres) -> Path:
-    """Pipeline : enrichissement DVF + match qualitatif NLP → export Excel.
-    (Le scoring pondéré a été retiré — à revoir plus tard.)"""
-    print(f"[Analyst] Enrichissement de {len(biens_bruts)} biens...")
+async def enrich_pipeline(biens: list[dict], criteres) -> list[dict]:
+    """Séquence d'enrichissement PARTAGÉE (orchestrator/analyst ET scheduler) :
+    DVF → match qualitatif NLP → enrichissement factuel → tri par match.
 
+    Auparavant scheduler.run_cycle recopiait cette séquence en important les
+    internes d'analyst — les deux copies avaient déjà divergé (tri/log absent
+    côté scheduler) et tout enrichissement futur aurait silencieusement manqué
+    au chemin de prod. Source unique désormais."""
     # Données marché DVF
     prix_marche = await fetch_prix_marche_dvf(criteres.departements)
 
     # Match qualitatif NLP (annote match_qualitatif/match_extrait) — si une
     # description qualitative est définie (sinon no-op).
     desc_qual = getattr(criteres, "description_qualitative", "") or ""
-    if desc_qual.strip():
+    if desc_qual.strip() and biens:
         from workers.qualitative import annotate_biens as qual_annotate
-        await qual_annotate(biens_bruts, desc_qual)
+        await qual_annotate(biens, desc_qual)
 
     # Enrichissement factuel (prix/m², DVF, alertes)
-    enriched = [enrich_bien(b, prix_marche) for b in biens_bruts]
+    enriched = [enrich_bien(b, prix_marche) for b in biens]
 
     # Tri par match qualitatif décroissant (seul signal de pertinence restant) ;
     # ordre d'insertion si pas de description qualitative.
-    if desc_qual.strip():
+    if desc_qual.strip() and enriched:
         enriched.sort(key=lambda b: b.get("match_qualitatif") or 0, reverse=True)
         print(f"[Analyst] Top 5 match qualitatif : "
               f"{[b.get('match_qualitatif') for b in enriched[:5]]}")
+    return enriched
+
+
+async def run(biens_bruts: list[dict], criteres) -> Path:
+    """Pipeline : enrichissement DVF + match qualitatif NLP → export Excel.
+    (Le scoring pondéré a été retiré — à revoir plus tard.)"""
+    print(f"[Analyst] Enrichissement de {len(biens_bruts)} biens...")
+
+    enriched = await enrich_pipeline(biens_bruts, criteres)
 
     # Résumé local
     resume = llm_summary(enriched[:10])

@@ -18,39 +18,30 @@ Interface utilitaire :
       → annote puis ne conserve que les biens avec gare <= rayon_km
 """
 import asyncio
-import math
-import unicodedata
+import sys
+from pathlib import Path
 
 import httpx
+
+# Racine du projet sur le path (permet `python scrapers/gares.py` en direct)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from core.geo import geocode_commune, haversine_km, normalize_commune  # noqa: E402
+
+# Alias rétro-compat : geolocate.py (et d'anciens appels) importent ces noms d'ici.
+_normalize = normalize_commune
+_haversine_km = haversine_km
+_geocode_commune = geocode_commune
 
 SNCF_EXPORT_URL = (
     "https://ressources.data.sncf.com/api/explore/v2.1/catalog/"
     "datasets/liste-des-gares/exports/json"
 )
-GEO_API_URL = "https://geo.api.gouv.fr/communes"
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-# Caches de session
+# Cache de session
 _GARES_CACHE: list[dict] = []
-_GEOCODE_CACHE: dict[str, tuple[float, float] | None] = {}
-
-
-def _normalize(s: str) -> str:
-    """Minuscules, sans accents, espaces compactés — pour comparer des noms de commune."""
-    s = unicodedata.normalize("NFKD", (s or "").strip().lower())
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    return " ".join(s.replace("-", " ").split())
-
-
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Distance grand-cercle en km entre deux points (degrés décimaux)."""
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
 
 
 # ──────────────────────────────────────────────
@@ -58,80 +49,43 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 # ──────────────────────────────────────────────
 
 async def get_gares() -> list[dict]:
-    """Télécharge (une fois) toutes les gares voyageurs avec coordonnées."""
+    """Télécharge (une fois) toutes les gares voyageurs avec coordonnées.
+
+    NON-FATAL : si l'open data SNCF est indisponible, retourne [] avec un warning
+    (l'annotation gare est alors sautée pour ce run) — une panne SNCF ne doit
+    JAMAIS détruire le run Hunter complet."""
     if _GARES_CACHE:
         return _GARES_CACHE
 
     params = {"where": 'voyageurs="O"', "select": "libelle,commune,c_geo"}
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=60) as client:
-        r = await client.get(SNCF_EXPORT_URL, params=params)
-        r.raise_for_status()
-        rows = r.json()
+    try:
+        async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=60) as client:
+            r = await client.get(SNCF_EXPORT_URL, params=params)
+            r.raise_for_status()
+            rows = r.json()
+    except Exception as e:
+        print(f"[Gares] ⚠️  Référentiel SNCF indisponible ({type(e).__name__}: {e}) "
+              f"— annotation gare sautée pour ce run")
+        return []
 
     for row in rows:
         geo = row.get("c_geo") or {}
         lat, lon = geo.get("lat"), geo.get("lon")
         if lat is None or lon is None:
             continue
+        try:
+            lat_f, lon_f = float(lat), float(lon)
+        except (TypeError, ValueError):
+            continue
         _GARES_CACHE.append({
             "nom": row.get("libelle") or row.get("commune") or "",
             "commune": _normalize(row.get("commune", "")),
-            "lat": float(lat),
-            "lon": float(lon),
+            "lat": lat_f,
+            "lon": lon_f,
         })
 
     print(f"[Gares] {len(_GARES_CACHE)} gares voyageurs chargées (SNCF open data)")
     return _GARES_CACHE
-
-
-# ──────────────────────────────────────────────
-# Géocodage des communes (fallback si le bien n'a pas de coordonnées)
-# ──────────────────────────────────────────────
-
-async def _geocode_commune(
-    client: httpx.AsyncClient, ville: str, code_postal: str, departement: str = ""
-) -> tuple[float, float] | None:
-    """
-    Renvoie (lat, lon) du centre de la commune via geo.api.gouv.fr, mis en cache.
-    Le code postal lève l'ambiguïté entre communes homonymes ; à défaut on retombe
-    sur le département (présent à 100% dans les biens) pour éviter de géocoder une
-    commune homonyme à l'autre bout de la France.
-    """
-    cp = str(code_postal or "").strip()
-    dep = str(departement or "").strip()
-    key = f"{_normalize(ville)}|{cp[:5]}|{dep}"
-    if key in _GEOCODE_CACHE:
-        return _GEOCODE_CACHE[key]
-
-    # Il faut une VILLE ou un CODE POSTAL complet pour localiser une commune.
-    # Le département seul ne suffit PAS : l'API renvoie alors une commune
-    # arbitraire (la 1ʳᵉ du dept, ex. « Allonnes » pour le 49) → localisation
-    # bidon. Dans ce cas on renvoie None (le bien sera exclu, faute de position).
-    params = {"fields": "centre", "format": "json", "limit": "1"}
-    if ville:
-        params["nom"] = ville
-        if len(cp) >= 5:
-            params["codePostal"] = cp[:5]      # commune précise
-        elif dep:
-            params["codeDepartement"] = dep    # désambigue les homonymes
-    elif len(cp) >= 5:
-        params["codePostal"] = cp[:5]          # commune identifiée par le seul CP
-    else:
-        _GEOCODE_CACHE[key] = None             # département seul → pas localisable
-        return None
-
-    coords = None
-    try:
-        r = await client.get(GEO_API_URL, params=params)
-        if r.status_code == 200 and r.json():
-            centre = r.json()[0].get("centre", {}).get("coordinates")
-            if centre:  # [lon, lat]
-                coords = (float(centre[1]), float(centre[0]))
-    except Exception as e:
-        print(f"[Gares] géocodage échoué pour {ville} ({code_postal}): {e}")
-
-    _GEOCODE_CACHE[key] = coords
-    return coords
 
 
 # ──────────────────────────────────────────────
@@ -168,7 +122,10 @@ async def annotate_biens(biens: list[dict], rayon_km: float = 10.0) -> list[dict
         async def coords_for(b: dict) -> tuple[float, float] | None:
             lat, lon = b.get("latitude"), b.get("longitude")
             if lat is not None and lon is not None:
-                return (float(lat), float(lon))
+                try:
+                    return (float(lat), float(lon))
+                except (TypeError, ValueError):
+                    pass   # coords scraper illisibles → repli géocodage commune
             async with sem:
                 return await _geocode_commune(
                     client, b.get("ville", ""), b.get("code_postal", ""),

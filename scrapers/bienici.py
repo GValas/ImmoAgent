@@ -70,6 +70,9 @@ async def search(criteres: dict) -> list[dict]:
                 print(f"[Bienici] Dept {dept}: {len(biens)} annonces")
             except Exception as e:
                 print(f"[Bienici] Erreur dept {dept}: {e}")
+            # Politesse : Bien'ici est notre 1ᵉʳ agrégateur — un ban IP ici serait
+            # le plus coûteux de tout le parc. Aucun délai auparavant.
+            await asyncio.sleep(0.5)
 
     return results
 
@@ -127,6 +130,7 @@ async def _fetch_dept(client: httpx.AsyncClient, dept: str, zone_ids: list[str],
         fetched_so_far = (page_num + 1) * PAGE_SIZE
         if fetched_so_far >= total:
             break
+        await asyncio.sleep(0.3)   # politesse inter-pages (cf. commentaire dept)
 
     if hors_zone:
         print(f"[Bienici] Dept {dept}: {hors_zone} annonces hors-zone écartées "

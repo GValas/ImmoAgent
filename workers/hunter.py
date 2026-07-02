@@ -4,9 +4,11 @@ Lance tous les scrapers en parallèle, déduplique les résultats,
 et sauvegarde les biens bruts en JSON dans data/raw/.
 """
 import asyncio
+import contextlib
 import importlib.util
 import io
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -23,8 +25,10 @@ from core.filters import (  # noqa: F401
     filter_biens,
     filter_mots_cles,
     filter_photos_min,
+    refilter_dpe,
     refilter_terrain_from_text,
 )
+from core.state_io import atomic_write_json
 from models import CriteresRecherche
 
 SCRAPERS_DIR = Path(__file__).parent.parent / "scrapers"
@@ -36,6 +40,23 @@ GARE_RAYON_KM = 20.0
 # Rayon (km) du flag "bus proche" — court : un arrêt de bus utile est proche
 # (annotation informative, non éliminatoire).
 BUS_RAYON_KM = 2.0
+
+# Bornes du fan-out scrapers. Sans elles, les ~300 scrapers partaient dans un
+# seul gather : ~300 pools de connexions simultanés, ~12 Chromium concurrents
+# (2-4 Go de RAM), et UN scraper suspendu bloquait le run entier pour toujours.
+SCRAPER_CONCURRENCY = int(os.environ.get("SCRAPER_CONCURRENCY", "30"))
+SCRAPER_TIMEOUT_S = float(os.environ.get("SCRAPER_TIMEOUT_S", "600"))
+# Les scrapers Playwright lancent chacun un Chromium → plafond dédié, bien plus bas.
+PLAYWRIGHT_CONCURRENCY = int(os.environ.get("PLAYWRIGHT_CONCURRENCY", "2"))
+
+
+def _uses_playwright(source_id: str) -> bool:
+    """Détecte (une fois, à froid) si un scraper lance Playwright/Chromium."""
+    try:
+        src = (SCRAPERS_DIR / f"{source_id}.py").read_text(encoding="utf-8", errors="ignore")
+        return "playwright" in src
+    except Exception:
+        return False
 
 
 def _criteres_to_dict(criteres: CriteresRecherche) -> dict:
@@ -67,7 +88,9 @@ async def run_scraper(source_id: str, criteres: CriteresRecherche) -> Optional[l
     try:
         spec = importlib.util.spec_from_file_location(source_id, scraper_path)
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        # exec_module est SYNCHRONE : exécuté dans un thread pour qu'un import
+        # lent (I/O au chargement) ne gèle pas les ~30 scrapers concurrents.
+        await asyncio.to_thread(spec.loader.exec_module, module)
 
         results = await module.search(_criteres_to_dict(criteres))
         print(f"[Hunter] {source_id} → {len(results)} annonces récupérées")
@@ -354,22 +377,32 @@ def _save_scraper_health(sources: list[dict], results: list) -> None:
     0 (ou en échec) — pour repérer les scrapers morts à passer `actif: false`.
     Best-effort (ne lève jamais)."""
     try:
+        # Lecture de l'état précédent isolée : un fichier corrompu (kill mi-écriture
+        # avant le passage à l'écriture atomique) repartait autrement en exception et
+        # désactivait le suivi santé POUR TOUJOURS (le fichier n'était jamais réécrit).
         prev = {}
-        if HEALTH_FILE.exists():
-            prev = json.loads(HEALTH_FILE.read_text(encoding="utf-8")).get("sources", {})
+        try:
+            if HEALTH_FILE.exists():
+                prev = json.loads(HEALTH_FILE.read_text(encoding="utf-8")).get("sources", {})
+        except Exception:
+            print("[Hunter] scraper_health.json illisible — compteurs repartis de zéro")
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         health = {}
         for s, res in zip(sources, results):
             sid = s["id"]
+            if not (SCRAPERS_DIR / f"{sid}.py").exists():
+                # Scraper jamais généré : marqué distinctement, PAS compté comme
+                # « muet » (sinon il pollue muets_5runs avec du « n'existe pas »).
+                health[sid] = {"last_count": "absent", "zero_streak": 0, "last_run": ts}
+                continue
             count = -1 if res is None else len(res)            # -1 = scraper en échec
             streak = prev.get(sid, {}).get("zero_streak", 0)
             streak = streak + 1 if count <= 0 else 0
             health[sid] = {"last_count": count, "zero_streak": streak, "last_run": ts}
         dead = sorted(sid for sid, h in health.items() if h["zero_streak"] >= 5)
-        HEALTH_FILE.write_text(
-            json.dumps({"updated": ts, "muets_5runs": dead, "sources": health},
-                       ensure_ascii=False, indent=2),
-            encoding="utf-8")
+        atomic_write_json(HEALTH_FILE,
+                          {"updated": ts, "muets_5runs": dead, "sources": health},
+                          ensure_ascii=False, indent=2)
         if dead:
             print(f"[Hunter] ⚠️  {len(dead)} scraper(s) muet(s) depuis ≥5 runs "
                   f"(candidats actif:false) : {', '.join(dead[:10])}"
@@ -378,16 +411,42 @@ def _save_scraper_health(sources: list[dict], results: list) -> None:
         print(f"[Hunter] Suivi santé scrapers ignoré ({e})")
 
 
-async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
+async def run(
+    sources: list[dict],
+    criteres: CriteresRecherche,
+    seen: Optional[dict] = None,
+) -> list[dict]:
     """
-    Lance tous les scrapers en parallèle, déduplique, filtre,
-    sauvegarde et retourne les biens bruts.
+    Lance tous les scrapers en parallèle (concurrence bornée + timeout par
+    scraper), déduplique, filtre, enrichit, sauvegarde et retourne les biens.
+
+    `seen` (optionnel, passé par le scheduler) : dict {hash: date ISO de dernière
+    vue}. Les biens déjà vus sont écartés AVANT l'enrichissement page détail
+    (galerie/DPE/photos/bus/geoloc) — en régime de croisière ~95% des survivants
+    sont déjà connus : les enrichir pour les jeter ensuite était l'essentiel du
+    trafic réseau du cycle. Leur timestamp est rafraîchi in place dans `seen`
+    (l'annonce est toujours en ligne). Sans `seen` (orchestrator), comportement
+    complet inchangé.
     """
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Lancement parallèle
-    tasks = [run_scraper(s["id"], criteres) for s in sources]
-    results_per_source = await asyncio.gather(*tasks)
+    # Lancement parallèle, borné : plafond global + plafond Playwright (Chromium)
+    # + timeout par scraper (un scraper suspendu ne bloque plus le run entier ;
+    # timeout → None, compté comme échec par le suivi santé).
+    scraper_sem = asyncio.Semaphore(SCRAPER_CONCURRENCY)
+    playwright_sem = asyncio.Semaphore(PLAYWRIGHT_CONCURRENCY)
+
+    async def _bounded_run(source_id: str) -> Optional[list[dict]]:
+        gate = playwright_sem if _uses_playwright(source_id) else contextlib.nullcontext()
+        async with scraper_sem, gate:
+            try:
+                return await asyncio.wait_for(
+                    run_scraper(source_id, criteres), SCRAPER_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                print(f"[Hunter] ⏱  {source_id} : timeout {SCRAPER_TIMEOUT_S:.0f}s — abandonné")
+                return None
+
+    results_per_source = await asyncio.gather(*[_bounded_run(s["id"]) for s in sources])
 
     # Flat list. run_scraper renvoie None si le scraper a planté (vs [] = 0 annonce
     # réelle) → on compte les échecs séparément pour repérer les scrapers à réparer.
@@ -413,10 +472,30 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     filtered = filter_biens(deduped, criteres)
     print(f"[Hunter] Après filtrage : {len(filtered)} annonces")
 
-    # Annotation gare SNCF voyageurs la plus proche (toujours active, NON
-    # éliminatoire) : remplit gare_nom / gare_distance_km pour l'Excel.
-    from scrapers.gares import annotate_biens as gare_annotate
-    filtered = await gare_annotate(filtered, GARE_RAYON_KM)
+    # Écarter les biens DÉJÀ VUS avant tout enrichissement (mode scheduler).
+    # Leur timestamp est rafraîchi : l'annonce est toujours en ligne.
+    if seen is not None:
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        fresh = []
+        for b in filtered:
+            h = dedup_hash(b)
+            if h in seen:
+                seen[h] = now_iso
+            else:
+                fresh.append(b)
+        if len(fresh) != len(filtered):
+            print(f"[Hunter] Déjà vus : {len(filtered) - len(fresh)} bien(s) écarté(s) "
+                  f"avant enrichissement (biens_vus.json)")
+        filtered = fresh
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    raw_path = RAW_DIR / f"biens_raw_{ts}.json"
+
+    # Sauvegarde raw PRÉCOCE (pré-enrichissement) : si une annotation/enrichissement
+    # plante malgré les garde-fous, le scrape de ~300 sources n'est pas perdu — le
+    # fichier est réécrit enrichi en fin de run.
+    if filtered:
+        atomic_write_json(raw_path, filtered, ensure_ascii=False, indent=2, default=str)
 
     # Enrichissement galerie : récupère la galerie COMPLÈTE depuis la page détail
     # des survivants (la plupart des scrapers ne captent que 0-1 photo en vue liste).
@@ -453,39 +532,26 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     _ndpe = sum(1 for b in filtered if b.get("dpe"))
     print(f"[Hunter] DPE capté (post-détail) : {_ndpe}/{len(filtered)} biens")
 
-    # Re-filtre DPE : le DPE n'est dispo qu'APRÈS la page détail (gallery l'extrait).
-    # On ré-applique dpe_exclus ici → les passoires F/G captées tardivement sont écartées.
-    _dpe_excl = [str(d).upper() for d in getattr(criteres, "dpe_exclus", [])]
-    if _dpe_excl:
-        before = len(filtered)
-        filtered = [b for b in filtered
-                    if not (b.get("dpe") and str(b.get("dpe")).upper() in _dpe_excl)]
-        if before - len(filtered):
-            print(f"[Hunter] Re-filtre DPE ({'/'.join(_dpe_excl)}) : {before - len(filtered)} bien(s) écarté(s)")
+    # Re-filtres post-détail — séquence PARTAGÉE de core.filters (le DPE, le terrain
+    # et la description complète ne sont fiables qu'APRÈS la page détail).
+    before = len(filtered)
+    filtered = refilter_dpe(filtered, criteres)
+    if before - len(filtered):
+        _dpe_excl = [str(d).upper() for d in getattr(criteres, "dpe_exclus", [])]
+        print(f"[Hunter] Re-filtre DPE ({'/'.join(_dpe_excl)}) : "
+              f"{before - len(filtered)} bien(s) écarté(s)")
 
-    # Re-filtre TERRAIN : comme le DPE, le terrain n'est souvent fiable qu'APRÈS la
-    # page détail — beaucoup de scrapers ne renseignent pas surface_terrain (il n'est
-    # que dans le texte, ex. bsk_immobilier qui met 0). On l'extrait de la description
-    # COMPLÈTE pour les biens sans terrain renseigné, puis on ré-applique terrain_min.
     _tmin = getattr(criteres, "terrain_min", 0)
     if _tmin:
-        _enr = 0
-        for b in filtered:
-            if not b.get("surface_terrain"):
-                t = extract_terrain_from_text(b.get("description") or "")
-                if t:
-                    b["surface_terrain"] = t
-                    b["terrain_estime_texte"] = True   # trace : valeur déduite du texte
-                    _enr += 1
+        _flag_avant = sum(1 for b in filtered if b.get("terrain_estime_texte"))
         before = len(filtered)
-        filtered = [b for b in filtered
-                    if not (b.get("surface_terrain") and b["surface_terrain"] < _tmin)]
+        filtered = refilter_terrain_from_text(filtered, criteres)
+        _enr = sum(1 for b in filtered if b.get("terrain_estime_texte")) - _flag_avant
         if _enr or before - len(filtered):
-            print(f"[Hunter] Terrain post-détail : {_enr} extrait(s) du texte ; "
+            print(f"[Hunter] Terrain post-détail : {max(_enr, 0)} extrait(s) du texte ; "
                   f"re-filtre terrain_min({_tmin}) : {before - len(filtered)} bien(s) écarté(s)")
 
-    # Filtre mots-clés (obligatoires/interdits) sur l'annonce COMPLÈTE — la
-    # description n'est fiable qu'APRÈS l'enrichissement page détail (gallery).
+    # Filtre mots-clés (obligatoires/interdits) sur l'annonce COMPLÈTE.
     before = len(filtered)
     filtered = filter_mots_cles(filtered, criteres)
     if before - len(filtered):
@@ -498,31 +564,49 @@ async def run(sources: list[dict], criteres: CriteresRecherche) -> list[dict]:
     pmin = getattr(criteres, "photos_min", 0)
     if pmin:
         before = len(filtered)
-        filtered = [b for b in filtered if len(b.get("photos") or []) >= pmin]
+        filtered = filter_photos_min(filtered, criteres)
         print(f"[Hunter] Filtre photos_min({pmin}) : {len(filtered)}/{before} conservés")
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
 
     # Déduplication inter-sources par empreinte photo (sur les survivants, peu nombreux —
     # ne télécharge la 1ʳᵉ photo que des candidats regroupés par surface). Attrape un même
     # bien publié sur deux sites avec prix/ville différents, que le hash exact rate.
     before = len(filtered)
-    filtered = await deduplicate_by_photo(filtered)
+    try:
+        filtered = await deduplicate_by_photo(filtered)
+    except Exception as e:
+        print(f"[Hunter] ⚠️  Dédup photo ignorée ({type(e).__name__}: {e})")
     if len(filtered) != before:
         print(f"[Hunter] Après dédup photo : {len(filtered)} annonces\n")
 
-    # Annotation arrêt de bus le plus proche (toujours active, NON éliminatoire) :
-    # remplit bus_proche / bus_nom / bus_distance_km pour l'Excel.
+    # Annotations (toutes NON éliminatoires, toutes best-effort : une panne d'une
+    # source open-data — SNCF, Overpass, geo.api — ne doit JAMAIS détruire le run).
+    # La gare est annotée ICI, sur les survivants finaux (elle tournait avant les
+    # re-filtres → géocodage gaspillé sur des biens ensuite écartés).
+    from scrapers.gares import annotate_biens as gare_annotate
+    try:
+        filtered = await gare_annotate(filtered, GARE_RAYON_KM)
+    except Exception as e:
+        print(f"[Hunter] ⚠️  Annotation gare ignorée ({type(e).__name__}: {e})")
+
     from scrapers.bus import annotate_biens as bus_annotate
-    filtered = await bus_annotate(filtered, BUS_RAYON_KM)
+    try:
+        filtered = await bus_annotate(filtered, BUS_RAYON_KM)
+    except Exception as e:
+        print(f"[Hunter] ⚠️  Annotation bus ignorée ({type(e).__name__}: {e})")
 
     # Pré-localisation (liens satellite + ortho/cadastre), toujours active.
     from scrapers.geolocate import annotate_biens as geo_annotate
-    filtered = await geo_annotate(filtered)
+    try:
+        filtered = await geo_annotate(filtered)
+    except Exception as e:
+        print(f"[Hunter] ⚠️  Pré-localisation ignorée ({type(e).__name__}: {e})")
 
-    # Sauvegarde raw finale
-    raw_path = RAW_DIR / f"biens_raw_{ts}.json"
-    raw_path.write_text(json.dumps(filtered, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    # Nettoyage des clés de travail internes (jamais persistées).
+    for b in filtered:
+        b.pop("_geo_candidates", None)
+
+    # Sauvegarde raw finale (écrase la version pré-enrichissement du début de run)
+    atomic_write_json(raw_path, filtered, ensure_ascii=False, indent=2, default=str)
     print(f"[Hunter] Sauvegardé → {raw_path}")
     _prune_old_raw()   # borne la croissance de data/raw/
 

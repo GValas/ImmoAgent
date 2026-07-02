@@ -18,7 +18,6 @@ Usage :
 
 import argparse
 import asyncio
-import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -28,6 +27,7 @@ from core.dept_data import filter_by_dept
 from core.excel_export import SUIVI_COLUMNS, write_listings_xlsx
 from core.filters import apply_posterior_filters
 from core.logging_setup import enable_timestamped_prints
+from core.state_io import atomic_write_json, load_json
 from workers import builder, discovery, hunter
 
 # Horodatage automatique des logs `[Worker] …` (centralisé dans core.logging_setup).
@@ -64,15 +64,20 @@ def load_scheduler_config() -> dict:
 # STATE — dernière exécution de chaque worker
 # ──────────────────────────────────────────────
 
+_STATE_DEFAULTS = {"last_hunter": None, "last_discovery": None, "last_builder": None}
+
+
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    return {"last_hunter": None, "last_discovery": None, "last_builder": None}
+    """État scheduler, complété des clés par défaut (un fichier ancien/corrompu ou
+    édité à la main ne fait plus planter run_cycle sur un KeyError)."""
+    data = load_json(STATE_FILE, {})
+    if not isinstance(data, dict):
+        data = {}
+    return {**_STATE_DEFAULTS, **data}
 
 
 def save_state(state: dict):
-    DATA_DIR.mkdir(exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
+    atomic_write_json(STATE_FILE, state, indent=2, default=str)
 
 
 def should_run(last_run_str: str | None, interval_hours: float) -> bool:
@@ -86,15 +91,34 @@ def should_run(last_run_str: str | None, interval_hours: float) -> bool:
 # DÉDUPLICATION INTER-RUNS (biens déjà vus)
 # ──────────────────────────────────────────────
 
-def load_seen() -> set:
-    if SEEN_FILE.exists():
-        return set(json.loads(SEEN_FILE.read_text(encoding="utf-8")))
-    return set()
+# Durée de rétention d'un hash non revu (jours). Un hash n'est rafraîchi que
+# lorsque l'annonce est revue par le Hunter ; passé ce délai sans re-vue,
+# l'annonce a quitté le marché → son hash est purgé (le fichier ne croît plus
+# indéfiniment). Une annonce encore en ligne est revue à chaque cycle, donc
+# jamais purgée.
+SEEN_TTL_DAYS = 90
 
 
-def save_seen(seen: set):
-    DATA_DIR.mkdir(exist_ok=True)
-    SEEN_FILE.write_text(json.dumps(list(seen)), encoding="utf-8")
+def load_seen() -> dict:
+    """{hash: date ISO de dernière vue}. Rétro-compat : l'ancien format (liste de
+    hashes) est converti à la volée, stampé à aujourd'hui."""
+    data = load_json(SEEN_FILE, {})
+    if isinstance(data, list):
+        today = datetime.now().isoformat(timespec="seconds")
+        return {h: today for h in data}
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def save_seen(seen: dict):
+    cutoff = datetime.now() - timedelta(days=SEEN_TTL_DAYS)
+
+    def _keep(ts) -> bool:
+        try:
+            return datetime.fromisoformat(str(ts)) >= cutoff
+        except ValueError:
+            return True   # timestamp illisible → on garde (prudence)
+
+    atomic_write_json(SEEN_FILE, {h: ts for h, ts in seen.items() if _keep(ts)})
 
 
 def bien_hash(b: dict) -> str:
@@ -117,15 +141,20 @@ def bien_identity(b: dict) -> str:
     return "sv:" + f"{b.get('surface')}-{str(b.get('ville') or '').lower().strip()}"
 
 
-def filter_new(biens: list[dict], seen: set) -> tuple[list[dict], set]:
-    """Retourne uniquement les biens jamais vus, et le seen mis à jour."""
-    new, updated_seen = [], set(seen)
+def filter_new(biens: list[dict], seen: dict) -> list[dict]:
+    """Retourne uniquement les biens jamais vus. Rafraîchit in place le timestamp
+    des biens déjà connus. N'AJOUTE PAS les nouveaux à `seen` : leurs hashes ne
+    sont enregistrés qu'après le succès d'update_suivi (sinon un crash aval les
+    rendait invisibles pour toujours)."""
+    now = datetime.now().isoformat(timespec="seconds")
+    new = []
     for b in biens:
         h = bien_hash(b)
-        if h not in updated_seen:
+        if h in seen:
+            seen[h] = now
+        else:
             new.append(b)
-            updated_seen.add(h)
-    return new, updated_seen
+    return new
 
 
 # ──────────────────────────────────────────────
@@ -201,11 +230,23 @@ async def update_suivi(new_biens: list[dict], cfg: dict):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     max_biens  = cfg["max_biens_suivi"]
 
-    # Charger le suivi existant
-    existing = []
+    # Charger le suivi existant (fichier corrompu → repart d'un suivi vide au lieu
+    # de crash-looper le scheduler)
     suivi_json = DATA_DIR / "suivi_actif.json"
-    if suivi_json.exists():
-        existing = json.loads(suivi_json.read_text(encoding="utf-8"))
+    existing = load_json(suivi_json, [])
+    if not isinstance(existing, list):
+        existing = []
+
+    # Garde-fou liveness : retire les annonces mortes (vendues/retirées → 404/410
+    # ou page « plus disponible »). Appliqué aux SEULS biens déjà suivis : les
+    # nouveaux viennent d'être scrapés (liste + page détail) il y a quelques
+    # secondes — les re-sonder était du trafic pur.
+    try:
+        existing, n_dead = await prune_dead_listings(existing)
+        if n_dead:
+            print(f"[Scheduler] Garde-fou liveness : {n_dead} annonce(s) morte(s) retirée(s)")
+    except Exception as e:
+        print(f"[Scheduler] Garde-fou liveness ignoré ({e})")
 
     # Scoring retiré → on garde tous les nouveaux biens (à revoir plus tard).
     qualifying = list(new_biens)
@@ -225,15 +266,6 @@ async def update_suivi(new_biens: list[dict], cfg: dict):
         merged = filter_by_dept(merged, departements)
         if before - len(merged):
             print(f"[Scheduler] Garde-fou dept : {before - len(merged)} bien(s) hors-zone écarté(s)")
-
-    # Garde-fou liveness : retire les annonces mortes (vendues/retirées → 404/410
-    # ou page « plus disponible »). Le suivi cumulatif les garderait sinon → liens vides.
-    try:
-        merged, n_dead = await prune_dead_listings(merged)
-        if n_dead:
-            print(f"[Scheduler] Garde-fou liveness : {n_dead} annonce(s) morte(s) retirée(s)")
-    except Exception as e:
-        print(f"[Scheduler] Garde-fou liveness ignoré ({e})")
 
     # « Ajouté le » : date d'entrée dans le suivi. On préserve la date d'origine
     # d'un bien déjà suivi (clé d'identité) ; un bien jamais vu est stampé à
@@ -261,8 +293,8 @@ async def update_suivi(new_biens: list[dict], cfg: dict):
     deduped.sort(key=lambda x: x.get("match_qualitatif") or 0, reverse=True)
     deduped = deduped[:max_biens]
 
-    # Sauvegarder JSON intermédiaire
-    suivi_json.write_text(json.dumps(deduped, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    # Sauvegarder JSON intermédiaire (source de vérité, écriture atomique)
+    atomic_write_json(suivi_json, deduped, ensure_ascii=False, indent=2, default=str)
 
     # Regénérer l'Excel
     _write_suivi_excel(deduped)
@@ -286,7 +318,9 @@ def refilter_suivi():
         print(f"[Scheduler] {suivi_json} introuvable — rien à re-filtrer.")
         return
 
-    biens = json.loads(suivi_json.read_text(encoding="utf-8"))
+    biens = load_json(suivi_json, [])
+    if not isinstance(biens, list):
+        biens = []
     before = len(biens)
 
     # Mêmes filtres a posteriori que le Hunter, sur données déjà enrichies (séquence
@@ -307,8 +341,7 @@ def refilter_suivi():
     biens.sort(key=lambda x: x.get("match_qualitatif") or 0, reverse=True)
     biens = biens[:cfg["max_biens_suivi"]]
 
-    suivi_json.write_text(
-        json.dumps(biens, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    atomic_write_json(suivi_json, biens, ensure_ascii=False, indent=2, default=str)
     _write_suivi_excel(biens)
     print(f"[Scheduler] Re-filtrage suivi : {len(biens)}/{before} biens conservés → {SUIVI_FILE}")
 
@@ -332,6 +365,13 @@ def _write_suivi_excel(biens: list[dict]):
     except ImportError:
         print("[Scheduler] openpyxl manquant — Excel non généré")
         return
+    except Exception as e:
+        # Excel ouvert dans un tableur (PermissionError), disque plein… : le JSON
+        # source de vérité est déjà écrit — perdre UN rafraîchissement Excel est
+        # bénin, tuer le cycle (et le daemon) ne l'était pas.
+        print(f"[Scheduler] ⚠️  Écriture Excel échouée ({type(e).__name__}: {e}) — "
+              f"suivi_actif.json reste la référence")
+        return
     print(f"[Scheduler] Excel mis à jour → {SUIVI_FILE}")
 
 
@@ -339,51 +379,51 @@ def _write_suivi_excel(biens: list[dict]):
 # CYCLE PRINCIPAL
 # ──────────────────────────────────────────────
 
-async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> dict:
-    """Exécute un cycle du scheduler selon l'état et les fréquences."""
+async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> tuple[dict, list[dict]]:
+    """Exécute un cycle du scheduler selon l'état et les fréquences.
+
+    Retourne (state, sources) : les sources rafraîchies par Discovery sont
+    désormais REMONTÉES à la boucle (elles étaient perdues après un cycle —
+    un changement de sources.yaml ne survivait pas au cycle Discovery)."""
     criteres = load_criteria()
     now      = datetime.now().isoformat()
     ran_something = False
 
     # ── Discovery ──
-    if should_run(state["last_discovery"], cfg["discovery_interval_days"] * 24):
+    if should_run(state.get("last_discovery"), cfg["discovery_interval_days"] * 24):
         print(f"\n[Scheduler] {_ts()} Discovery...")
         sources = await discovery.run(criteres)
         state["last_discovery"] = now
         ran_something = True
 
     # ── Builder ──
-    if should_run(state["last_builder"], cfg["builder_interval_days"] * 24):
+    if should_run(state.get("last_builder"), cfg["builder_interval_days"] * 24):
         print(f"[Scheduler] {_ts()} Builder...")
         await builder.run(sources, criteres)
         state["last_builder"] = now
         ran_something = True
 
     # ── Hunter + Analyst ──
-    if should_run(state["last_hunter"], cfg["hunter_interval_hours"]):
+    if should_run(state.get("last_hunter"), cfg["hunter_interval_hours"]):
         print(f"[Scheduler] {_ts()} Hunter...")
-        biens_bruts = await hunter.run(sources, criteres)
+        # `seen` est passé au Hunter : les biens déjà vus sont écartés AVANT
+        # l'enrichissement page détail (≈95% du trafic détail économisé en régime
+        # de croisière) ; leurs timestamps sont rafraîchis in place.
+        seen = load_seen()
+        biens_bruts = await hunter.run(sources, criteres, seen=seen)
 
         if biens_bruts:
-            # Filtrer les biens déjà vus
-            seen = load_seen()
-            new_biens, seen = filter_new(biens_bruts, seen)
-            save_seen(seen)
+            # Double garde (le Hunter a déjà écarté les vus ; no-op en général)
+            new_biens = filter_new(biens_bruts, seen)
 
             print(f"[Scheduler] {len(new_biens)} nouveau(x) bien(s) sur {len(biens_bruts)}")
 
             if new_biens:
                 print(f"[Scheduler] {_ts()} Analyst sur {len(new_biens)} nouveaux biens...")
-                from workers.analyst import enrich_bien, fetch_prix_marche_dvf
-                prix_marche = await fetch_prix_marche_dvf(criteres.departements)
-
-                # Match qualitatif NLP (si une description est définie)
-                desc_qual = getattr(criteres, "description_qualitative", "") or ""
-                if desc_qual.strip():
-                    from workers.qualitative import annotate_biens as qual_annotate
-                    await qual_annotate(new_biens, desc_qual)
-
-                enriched = [enrich_bien(b, prix_marche) for b in new_biens]
+                # Séquence d'enrichissement PARTAGÉE avec l'orchestrator
+                # (DVF → qualitatif → factuel → tri) — plus de copie divergente.
+                from workers.analyst import enrich_pipeline
+                enriched = await enrich_pipeline(new_biens, criteres)
                 await update_suivi(enriched, cfg)
             else:
                 print("[Scheduler] Aucun nouveau bien — garde-fous sur suivi existant")
@@ -391,8 +431,17 @@ async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> dict:
                 # (ban/dept) : une image ban ajoutée entre deux runs purge alors
                 # les entrées déjà accumulées.
                 await update_suivi([], cfg)
+
+            # Les nouveaux biens ne sont marqués « vus » qu'ICI, une fois analysés
+            # et fusionnés dans le suivi. Un crash en amont (Excel, OOM, kill) les
+            # laissait autrement invisibles à tout jamais.
+            ts_seen = datetime.now().isoformat(timespec="seconds")
+            for b in new_biens:
+                seen[bien_hash(b)] = ts_seen
+            save_seen(seen)
         else:
             print("[Scheduler] Aucun bien récupéré ce cycle")
+            save_seen(seen)   # persiste les timestamps rafraîchis par le Hunter
 
         state["last_hunter"] = now
         ran_something = True
@@ -400,7 +449,7 @@ async def run_cycle(state: dict, cfg: dict, sources: list[dict]) -> dict:
     if not ran_something:
         print(f"[Scheduler] {_ts()} Rien à faire ce tick")
 
-    return state
+    return state, sources
 
 
 def _ts() -> str:
@@ -408,16 +457,19 @@ def _ts() -> str:
 
 
 def _next_run(state: dict, cfg: dict) -> datetime:
-    """Calcule le prochain moment où quelque chose doit tourner."""
-    candidates = []
-    if state["last_hunter"]:
-        candidates.append(
-            datetime.fromisoformat(state["last_hunter"])
-            + timedelta(hours=cfg["hunter_interval_hours"])
-        )
-    else:
-        candidates.append(datetime.now())
-    return min(candidates) if candidates else datetime.now()
+    """Prochain moment où QUELQUE CHOSE doit tourner — Hunter, Discovery ou
+    Builder (seul le Hunter était considéré : une Discovery due attendait le
+    prochain tick Hunter)."""
+    def _due(last: str | None, hours: float) -> datetime:
+        if not last:
+            return datetime.now()
+        return datetime.fromisoformat(last) + timedelta(hours=hours)
+
+    return min(
+        _due(state.get("last_hunter"), cfg["hunter_interval_hours"]),
+        _due(state.get("last_discovery"), cfg["discovery_interval_days"] * 24),
+        _due(state.get("last_builder"), cfg["builder_interval_days"] * 24),
+    )
 
 
 # ──────────────────────────────────────────────
@@ -440,9 +492,18 @@ async def run_forever():
     print("=" * 55)
 
     while True:
-        cfg   = load_scheduler_config()   # relit criteria.md à chaque cycle
-        state = await run_cycle(state, cfg, sources)
-        save_state(state)
+        # Garde-fou daemon : un cycle en échec (criteria.md en cours d'édition,
+        # panne réseau totale, disque plein…) ne doit JAMAIS tuer la boucle
+        # infinie — on journalise et on retente après un backoff.
+        try:
+            cfg = load_scheduler_config()   # relit criteria.md à chaque cycle
+            state, sources = await run_cycle(state, cfg, sources)
+            save_state(state)
+        except Exception as e:
+            print(f"[Scheduler] ⚠️  Cycle en échec ({type(e).__name__}: {e}) — "
+                  f"nouvel essai dans 15 min")
+            await asyncio.sleep(900)
+            continue
 
         # Calcul du prochain tick
         next_run = _next_run(state, cfg)
@@ -454,10 +515,10 @@ async def run_forever():
 async def run_once():
     """Un seul cycle complet — utile pour tester."""
     DATA_DIR.mkdir(exist_ok=True)
-    state   = {"last_hunter": None, "last_discovery": None, "last_builder": None}
+    state   = dict(_STATE_DEFAULTS)
     cfg     = load_scheduler_config()
     sources = load_sources()
-    state   = await run_cycle(state, cfg, sources)
+    state, _ = await run_cycle(state, cfg, sources)
     save_state(state)
     print("\n[Scheduler] Cycle unique terminé.")
 

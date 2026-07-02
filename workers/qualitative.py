@@ -26,6 +26,7 @@ n'est éliminé.
 import asyncio
 import json
 import os
+import time
 
 import httpx
 
@@ -37,6 +38,11 @@ MODEL = os.environ.get("QUALITATIVE_MODEL", "qwen2.5:3b")
 _CONCURRENCY = int(os.environ.get("QUALITATIVE_CONCURRENCY", "4"))
 # Délai par appel (un 3B sur GPU répond en ~0,5–2 s ; on laisse de la marge).
 _TIMEOUT = float(os.environ.get("QUALITATIVE_TIMEOUT", "60"))
+# Budget temps GLOBAL (mur) pour toute la passe de scoring : si Ollama retombe
+# silencieusement sur CPU, 400 biens × ~50 s ÷ 4 ≈ 90 min de blocage — passé ce
+# budget, les biens restants sont laissés non annotés (non éliminatoire) et le
+# pipeline continue. Surcharge : QUALITATIVE_BUDGET_S.
+_BUDGET_S = float(os.environ.get("QUALITATIVE_BUDGET_S", "900"))
 
 _SYSTEM_PROMPT = (
     "Tu es un assistant qui évalue dans quelle mesure une ANNONCE immobilière "
@@ -78,9 +84,14 @@ async def _check_available(client: httpx.AsyncClient) -> bool:
         r = await client.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
         r.raise_for_status()
         tags = {m.get("name", "") for m in (r.json().get("models") or [])}
-        # Ollama liste « qwen2.5:3b » ; on tolère un tag sans suffixe explicite.
-        present = any(t == MODEL or t.startswith(MODEL.split(":")[0] + ":") for t in tags) \
-            if tags else False
+        # Correspondance EXACTE si MODEL porte un tag (qwen2.5:3b ≠ qwen2.5:7b —
+        # l'ancien préfixe-match validait le mauvais tag puis chaque /api/chat
+        # 404ait, un log d'erreur par bien). Sans tag explicite, tout tag du même
+        # modèle convient (MODEL=qwen2.5 accepte qwen2.5:3b).
+        if ":" in MODEL:
+            present = MODEL in tags
+        else:
+            present = any(t == MODEL or t.split(":", 1)[0] == MODEL for t in tags)
         if not present:
             print(f"[Qualitatif] ⚠️  Modèle '{MODEL}' absent d'Ollama ({OLLAMA_HOST}). "
                   f"Modèles vus : {sorted(tags) or '∅'}. "
@@ -102,13 +113,25 @@ def _coerce_score(value) -> float | None:
 
 
 async def _score_one(client: httpx.AsyncClient, sem: asyncio.Semaphore,
-                     bien: dict, desc_qual: str) -> None:
+                     bien: dict, desc_qual: str,
+                     deadline: float, budget_state: dict) -> None:
     """Annote un bien (in place). Best-effort : ne lève jamais."""
     texte_titre = bien.get("titre") or ""
     texte_desc = bien.get("description") or ""
     if len((texte_titre + texte_desc).strip()) < 12:
         bien["match_qualitatif"] = None
         bien["match_extrait"] = ""
+        return
+
+    # Budget temps global dépassé (ex. Ollama retombé sur CPU) → on laisse le bien
+    # non annoté (non éliminatoire) au lieu de bloquer le cycle pendant des heures.
+    if time.monotonic() >= deadline:
+        if not budget_state["expired"]:
+            budget_state["expired"] = True
+            print(f"[Qualitatif] ⚠️  Budget temps ({_BUDGET_S:.0f}s) dépassé — "
+                  f"scoring arrêté pour les biens restants (non éliminatoire)")
+        bien.setdefault("match_qualitatif", None)
+        bien.setdefault("match_extrait", "")
         return
 
     payload = {
@@ -123,6 +146,15 @@ async def _score_one(client: httpx.AsyncClient, sem: asyncio.Semaphore,
     }
     try:
         async with sem:
+            # Le budget a pu expirer pendant l'attente du sémaphore.
+            if time.monotonic() >= deadline:
+                if not budget_state["expired"]:
+                    budget_state["expired"] = True
+                    print(f"[Qualitatif] ⚠️  Budget temps ({_BUDGET_S:.0f}s) dépassé — "
+                          f"scoring arrêté pour les biens restants (non éliminatoire)")
+                bien.setdefault("match_qualitatif", None)
+                bien.setdefault("match_extrait", "")
+                return
             r = await client.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=_TIMEOUT)
         r.raise_for_status()
         content = (r.json().get("message") or {}).get("content") or ""
@@ -155,7 +187,10 @@ async def annotate_biens(biens: list[dict], description_qualitative: str) -> lis
         print(f"[Qualitatif] Évaluation LLM ({MODEL} via {OLLAMA_HOST}) "
               f"sur {len(biens)} biens…")
         sem = asyncio.Semaphore(_CONCURRENCY)
-        await asyncio.gather(*[_score_one(client, sem, b, desc) for b in biens])
+        deadline = time.monotonic() + _BUDGET_S
+        budget_state = {"expired": False}
+        await asyncio.gather(*[_score_one(client, sem, b, desc, deadline, budget_state)
+                               for b in biens])
 
     vals = [b["match_qualitatif"] for b in biens if b.get("match_qualitatif") is not None]
     if vals:
