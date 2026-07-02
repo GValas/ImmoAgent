@@ -34,19 +34,13 @@ import re
 
 import httpx
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.immomans.fr"
 LISTING_URL = f"{BASE_URL}/vente"
 MAX_PAGES = 12          # plafond de sécurité (catalogue réel ~3 pages)
 PHOTOS_PER_CARD = 10
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # prod_type Netty → on ne garde que les maisons / propriétés (pas appt/immeuble/terrain)
 _KEEP_PROD_TYPES = {"house"}

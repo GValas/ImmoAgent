@@ -40,6 +40,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 # Page d'atterrissage régionale + pages de listing géographiques du hub (zone cible).
 LANDING = "https://immobilier-bourgogne.biz/index.htm"
 LISTING_PAGES = [
@@ -54,14 +56,6 @@ LISTING_PAGES = [
 MAX_FICHES = 60
 PHOTOS_PER_CARD = 8
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Slug d'URL d'une fiche : commence par "NN-" (ou "NN-NN-…" multi-dept).
 _FICHE_RE = re.compile(r"/(\d{2}(?:-\d{2})*)-[a-z0-9-]+\.htm$", re.IGNORECASE)

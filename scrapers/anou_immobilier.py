@@ -37,19 +37,13 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://anou-immobilier.fr"
 LISTING_URL = f"{BASE_URL}/immobilier.php"
 MAX_PAGES = 20          # plafond de sécurité (~12 pages réelles ; au-delà le site boucle)
 PHOTOS_PER_CARD = 1     # une photo de couverture dispo sur la liste
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Types conservés (segment d'URL / libellé offre) : maisons / propriétés
 _KEEP_TYPE = re.compile(

@@ -40,20 +40,14 @@ import re
 
 import httpx
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.maisonblanche.immo"
 SITEMAP_URL = f"{BASE_URL}/sitemap.xml"
 PHOTOS_PER_CARD = 10
 MAX_DETAILS_PER_DEPT = 80   # garde-fou
 CONCURRENCY = 6
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # URL détail : .../vente/{slug}...-{cp},{REF}
 _DETAIL_RE = re.compile(r"/vente/[^/]+-(\d{5}),([A-Za-z0-9]+)$")

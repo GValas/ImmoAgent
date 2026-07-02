@@ -39,19 +39,13 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.ajp-immobilier.com"
 MAX_PAGES = 6
 PER_PAGE = 200
 PHOTOS_PER_CARD = 10
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Pages "ville" du réseau situées dans la zone cible (Maine-et-Loire).
 # Elles couvrent tout le 49 (agences Angers/Cholet/Segré/Sèvremoine) et

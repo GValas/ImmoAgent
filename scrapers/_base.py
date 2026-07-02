@@ -20,6 +20,7 @@ Interface inchangée pour le pipeline : chaque scraper expose toujours
 from __future__ import annotations
 
 import asyncio
+import random
 import re
 from collections.abc import Awaitable, Callable
 from typing import Optional
@@ -36,6 +37,23 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "fr-FR,fr;q=0.9",
 }
+
+# Pool d'UA desktop grand public : un UA unique + timings métronomiques sur toute
+# la flotte est un fingerprint bot facile. make_client en tire un au hasard par
+# client (HEADERS reste exporté tel quel pour les scrapers qui l'importent).
+_UA_POOL = (
+    HEADERS["User-Agent"],
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+)
+
+
+def _jitter(base: float) -> float:
+    """Délai avec jitter ±40-60% — casse la signature métronomique des sleeps fixes."""
+    return base * random.uniform(0.6, 1.6)
 
 # Code département → slug standard « nom-de-departement » (les 11 départements
 # cibles). Réutilisable tel quel ou via override par site (slugs spécifiques).
@@ -57,8 +75,11 @@ DEFAULT_DEPT_SLUGS: dict[str, str] = {
 # ── Client HTTP + retry ────────────────────────────────────────────────────────
 
 def make_client(timeout: float = 20, **kwargs) -> httpx.AsyncClient:
-    """Client httpx avec HEADERS + follow_redirects par défaut."""
-    kwargs.setdefault("headers", HEADERS)
+    """Client httpx avec HEADERS (UA tiré du pool) + follow_redirects par défaut."""
+    if "headers" not in kwargs:
+        headers = dict(HEADERS)
+        headers["User-Agent"] = random.choice(_UA_POOL)
+        kwargs["headers"] = headers
     kwargs.setdefault("follow_redirects", True)
     return httpx.AsyncClient(timeout=timeout, **kwargs)
 
@@ -97,10 +118,41 @@ def parse_price(text: str) -> Optional[float]:
         return None
 
 
+def parse_price_digits(text: str) -> Optional[float]:
+    """Prix = TOUS les chiffres du texte ('250.000 €' → 250000.0 ; '' → None).
+
+    Variante canonique du parc (ex-`_parse_price` recopié dans ~58 scrapers) :
+    contrairement à `parse_price`, la virgule/le point sont traités comme
+    séparateurs de milliers (jamais décimaux) — adapté aux prix affichés FR."""
+    digits = re.sub(r"[^\d]", "", text or "")
+    try:
+        return float(digits) if digits else None
+    except ValueError:
+        return None
+
+
 def parse_int(pattern: str, text: str) -> Optional[int]:
     """Premier entier capturé par `pattern` (groupe 1) dans `text`, sinon None."""
     m = re.search(pattern, text or "", re.IGNORECASE)
     return int(m.group(1)) if m else None
+
+
+def parse_float(pattern: str, text: str) -> Optional[float]:
+    """Premier flottant capturé par `pattern` (groupe 1) : espaces retirés,
+    virgule décimale tolérée. Sensible à la casse (ex-`_re_float` du parc)."""
+    m = re.search(pattern, text or "")
+    if m:
+        try:
+            return float(m.group(1).replace(" ", "").replace(",", "."))
+        except Exception:
+            pass
+    return None
+
+
+def parse_str_upper(pattern: str, text: str) -> Optional[str]:
+    """Première capture de `pattern` en MAJUSCULES (ex-`_re_str` du parc — DPE…)."""
+    m = re.search(pattern, text or "", re.IGNORECASE)
+    return m.group(1).upper() if m else None
 
 
 def parse_terrain(text: str) -> Optional[float]:
@@ -140,6 +192,37 @@ def parse_loc(text: str) -> tuple[str, str]:
         cp = m_cp.group(1)
     ville = re.sub(r"\s*\(\d{5}\)\s*$", "", text or "").strip()
     return ville, cp
+
+
+# ── Post-filtre standard d'un bien parsé ─────────────────────────────────────────
+
+def keep_bien(
+    bien: dict, dept: Optional[str], seen_ids: set, *,
+    prix_max: float = 0, prix_min: float = 0, surface_min: float = 0,
+) -> bool:
+    """Post-filtre standard d'un bien parsé — exporté pour les scrapers hors
+    `run_dept_search` (catalogue une-page, API…), qui recopiaient ce bloc inline.
+
+    Applique : garde-fou département (préfixe code_postal vs `dept`, ignoré si
+    dept est None/vide), dédup par id_annonce/url via `seen_ids` (mis à jour in
+    place), bornes prix_min/prix_max et surface_min. True si le bien est à garder."""
+    cp = str(bien.get("code_postal") or "")
+    if dept and cp and cp[:2] != str(dept):
+        return False
+    aid = bien.get("id_annonce") or bien.get("url")
+    if aid and aid in seen_ids:
+        return False
+    p = bien.get("prix") or 0
+    s = bien.get("surface") or 0
+    if prix_max and p and p > prix_max:
+        return False
+    if prix_min and p and p < prix_min:
+        return False
+    if surface_min and s and s < surface_min:
+        return False
+    if aid:                     # aid absent → pas de dédup possible, on garde
+        seen_ids.add(aid)
+    return True
 
 
 # ── Driver générique département + pagination ────────────────────────────────────
@@ -185,7 +268,7 @@ async def run_dept_search(
                 print(f"[{label}] Dept {dept}: {len(biens)} annonces")
             except Exception as e:
                 print(f"[{label}] Erreur dept {dept}: {e}")
-            await asyncio.sleep(dept_sleep)
+            await asyncio.sleep(_jitter(dept_sleep))
 
     return results
 
@@ -196,6 +279,7 @@ async def _scrape_one_dept(
 ) -> list[dict]:
     biens: list[dict] = []
     seen_ids: set[str] = set()
+    pages_sans_nouveau = 0
 
     for page in range(1, max_pages + 1):
         r = await get_with_retry(client, page_url(dept, slug, page))
@@ -205,7 +289,12 @@ async def _scrape_one_dept(
         if not cards:
             break
 
-        new_on_page = 0
+        # On distingue « page sans aucune carte exploitable » (fin de liste → stop)
+        # de « cartes présentes mais toutes filtrées/dédupliquées » (ex. page entière
+        # au-dessus de prix_max) : dans ce second cas les pages SUIVANTES peuvent
+        # encore contenir des biens valides — on ne s'arrête qu'après 2 pages de
+        # suite sans rien de neuf.
+        parsed_on_page = new_on_page = 0
         for card in cards:
             try:
                 bien = parse_card(card, dept)
@@ -213,29 +302,71 @@ async def _scrape_one_dept(
                 continue
             if not bien:
                 continue
-            cp = str(bien.get("code_postal") or "")
-            if cp and cp[:2] != dept:
+            parsed_on_page += 1
+            if not keep_bien(bien, dept, seen_ids,
+                             prix_max=prix_max, prix_min=prix_min,
+                             surface_min=surface_min):
                 continue
-            aid = bien.get("id_annonce") or bien.get("url")
-            if aid in seen_ids:
-                continue
-            p = bien.get("prix") or 0
-            s = bien.get("surface") or 0
-            if prix_max and p and p > prix_max:
-                continue
-            if prix_min and p and p < prix_min:
-                continue
-            if surface_min and s and s < surface_min:
-                continue
-            seen_ids.add(aid)
             biens.append(bien)
             new_on_page += 1
 
-        if new_on_page == 0:
+        if parsed_on_page == 0:
             break
-        await asyncio.sleep(page_sleep)
+        if new_on_page == 0:
+            pages_sans_nouveau += 1
+            if pages_sans_nouveau >= 2:
+                break
+        else:
+            pages_sans_nouveau = 0
+        await asyncio.sleep(_jitter(page_sleep))
 
     return biens
+
+
+# ── Driver générique département pour scrapers API/JSON ──────────────────────────
+
+async def run_dept_api(
+    *,
+    source: str,
+    fetch_dept: Callable[[httpx.AsyncClient, str, Optional[str]], Awaitable[list[dict]]],
+    criteres: dict,
+    dept_slugs: Optional[dict[str, str]] = None,
+    dept_sleep: float = 0.5,
+    label: Optional[str] = None,
+    client_kwargs: Optional[dict] = None,
+) -> list[dict]:
+    """Pendant de `run_dept_search` pour la famille API/JSON (bienici, era, foncia…).
+
+    Boucle sur les départements cibles avec try/except par département, puis
+    applique le post-filtre standard (`keep_bien` : garde-fou CP, dédup id,
+    prix/surface) aux dicts retournés par `fetch_dept(client, dept, slug)`.
+    `dept_slugs=None` → slug passé None (les API n'en ont souvent pas besoin)."""
+    label = label or source
+    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
+    prix_max = criteres.get("prix_max", 0)
+    prix_min = criteres.get("prix_min", 0)
+    surface_min = criteres.get("surface_min", 0)
+    results: list[dict] = []
+    seen_ids: set = set()
+
+    async with make_client(**(client_kwargs or {})) as client:
+        for dept in departements:
+            slug = dept_slugs.get(dept) if dept_slugs is not None else None
+            if dept_slugs is not None and not slug:
+                continue
+            try:
+                biens = await fetch_dept(client, dept, slug)
+            except Exception as e:
+                print(f"[{label}] Erreur dept {dept}: {e}")
+                biens = []
+            kept = [b for b in biens
+                    if keep_bien(b, dept, seen_ids, prix_max=prix_max,
+                                 prix_min=prix_min, surface_min=surface_min)]
+            results.extend(kept)
+            print(f"[{label}] Dept {dept}: {len(kept)} annonces")
+            await asyncio.sleep(_jitter(dept_sleep))
+
+    return results
 
 
 # ── CLI standalone (python scrapers/xxx.py) ──────────────────────────────────────

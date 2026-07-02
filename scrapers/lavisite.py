@@ -34,6 +34,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.lavisite.immo"
 LISTING_PATH = "/nos-biens-achat-vente-location-gestion-locative/"
 MAX_PAGES = 12          # plafond de sécurité (~5 pages réelles pour maisons à la vente)
@@ -41,14 +43,6 @@ PHOTOS_PER_CARD = 1     # 1 photo de couverture dispo sur la liste
 
 GEO_API = "https://geo.api.gouv.fr/communes"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # On ne garde que les maisons / propriétés (label "Maison" + heuristique titre).
 _KEEP_TITLE = re.compile(

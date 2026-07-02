@@ -32,17 +32,11 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://metais-immobilier.com"
 LISTING_URL = f"{BASE_URL}/biens-immobiliers/"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Exclusion par TYPE de bien (résolu sur la fiche détail, pas sur le titre :
 # un titre peut citer une "forêt domaniale" voisine sans être une forêt à vendre).

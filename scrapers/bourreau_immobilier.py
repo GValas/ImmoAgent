@@ -36,18 +36,13 @@ import unicodedata
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://bourreau-immobilier.com"
 MAX_PAGES = 10
 PHOTOS_PER_CARD = 1  # la liste n'expose qu'une vignette ; gallery.py enrichira
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 GEO_API = "https://geo.api.gouv.fr/communes"
 
@@ -303,15 +298,6 @@ def _li_value_float(card, span_class: str) -> float | None:
     try:
         f = float(val)
         return f if 8 <= f <= 5000 else None
-    except ValueError:
-        return None
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
-    try:
-        return float(cleaned) if cleaned else None
     except ValueError:
         return None
 

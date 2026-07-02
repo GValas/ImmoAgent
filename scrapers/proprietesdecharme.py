@@ -36,6 +36,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.proprietesdecharme.com"
 # Archive "Maisons & Villas de luxe" (exclut d'emblée appartements/terrains/commerces)
 ARCHIVE_URL = f"{BASE_URL}/property-type/_maison/"
@@ -43,14 +45,6 @@ MAX_PAGES = 50          # plafond de sécurité (archive réelle ~277 pages — 
 DETAIL_CONCURRENCY = 8
 PHOTOS_PER_CARD = 10
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 _EXCLUDE_KEYWORDS = re.compile(r"appartement|studio|\bterrain\b|garage|parking|bureau", re.IGNORECASE)
 _TYPE_MAP = [

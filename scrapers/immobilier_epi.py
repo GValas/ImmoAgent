@@ -27,6 +27,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE = "https://www.immobilier-epi.com"
 SITEMAP = f"{BASE}/bien-sitemap.xml"
 BAN_URL = "https://api-adresse.data.gouv.fr/search/"
@@ -35,14 +37,6 @@ BAN_URL = "https://api-adresse.data.gouv.fr/search/"
 # Cher 18 ; « Brie » → 49, pas l'Aisne…).
 EPI_LAT, EPI_LON = 47.26, -0.08
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # suffixes de type de bien à retirer du slug pour isoler la ville
 _TYPE_SUFFIX = re.compile(

@@ -11,6 +11,9 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import parse_int as _re_int
+from scrapers._base import parse_str_upper as _re_str
+
 BASE = "https://www.laresidence.fr"
 
 DEPT_SLUGS = {
@@ -60,16 +63,6 @@ def _re_float(pattern: str, text: str) -> float | None:
         return float(m.group(1).replace(" ", "").replace(",", "."))
     except Exception:
         return None
-
-
-def _re_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
-
-
-def _re_str(pattern: str, text: str) -> str | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return m.group(1).upper() if m else None
 
 
 def _parse_jsonld(html: str) -> list[dict]:

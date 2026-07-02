@@ -39,6 +39,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.lesclesdumidi.com"
 AJAX_URL = f"{BASE_URL}/2016/ajax_listing_infini_dep.php"
 PAGE_SIZE = 10
@@ -298,15 +300,6 @@ def _parse_city(text: str) -> tuple[str, str, str]:
     ville = " ".join(tokens[1:]).strip() if len(tokens) > 1 else ""
     # Quelques fiches répètent le type en ville (« Maison Maison ») ; on nettoie.
     return type_word, ville, cp
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
 
 
 def _to_float(text: str) -> float | None:

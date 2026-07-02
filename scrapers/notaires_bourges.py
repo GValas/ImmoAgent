@@ -37,6 +37,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://conseilregional-bourges.notaires.fr"
 LISTING_PATH = "/petites-annonces"
 MAX_PAGES = 30  # garde-fou : ~12 pages observées (18/36/58)
@@ -48,14 +50,6 @@ COVERED_DEPTS = {"18", "36", "58", "45", "41", "37", "89"}
 # Types de bien (typeBiens[]) demandés côté serveur : maisons + propriétés agricoles.
 TYPE_BIENS = ["MAI", "AGR"]
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # On ne retient que maisons / propriétés ; rejet explicite des types non-bâtis/divers.
 _KEEP_TYPE = re.compile(

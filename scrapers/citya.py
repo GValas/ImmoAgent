@@ -11,6 +11,8 @@ import re
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
+from scrapers._base import parse_int as _re_int
+
 BASE_URL = "https://www.citya.com"
 
 DEPT_SLUGS = {
@@ -217,11 +219,6 @@ def _re_float(pattern: str, text: str) -> float | None:
         except Exception:
             pass
     return None
-
-
-def _re_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ import re
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
+from scrapers._base import parse_float as _re_float
+
 BASE_URL = "https://www.ladresse.com"
 
 DEPT_CODES = {
@@ -175,16 +177,6 @@ def _parse_card(card, dept: str) -> dict | None:
         "dpe": None,
         "agence": "L'Adresse",
     }
-
-
-def _re_float(pattern: str, text: str) -> float | None:
-    m = re.search(pattern, text)
-    if m:
-        try:
-            return float(m.group(1).replace(" ", "").replace(",", "."))
-        except Exception:
-            pass
-    return None
 
 
 if __name__ == "__main__":

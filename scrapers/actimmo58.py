@@ -42,6 +42,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.actimmo58.fr"
 MAX_PAGES = 12
 PHOTOS_PER_CARD = 10
@@ -56,14 +58,6 @@ COVERED_DEPTS = {"58", "18"}
 # l'orientation "maison / propriété" du projet.
 SEARCH_IDTYPES = ["1", "5", "43", "21"]  # Maison, Terrain, Terrain à bâtir, Immeuble
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 _EXCLUDE_TYPE = re.compile(
     r"appartement|local|commerce|garage|parking|bureau|fonds", re.IGNORECASE

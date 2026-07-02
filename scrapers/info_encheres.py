@@ -35,18 +35,12 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.info-encheres.com"
 MAX_PAGES = 6          # snr 0..5 (large marge ; le stock réel tient en ~3 pages)
 ENRICH_DETAIL = True   # fetch fiche détail pour CP/surface/description
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Natures (colonne liste) à conserver : habitation
 _KEEP_TYPE = re.compile(

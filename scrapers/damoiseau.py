@@ -39,19 +39,14 @@ import unicodedata
 
 import httpx
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.damoiseau.immo"
 LISTING_URL = f"{BASE_URL}/resultats?transac=vente"
 GEO_API = "https://geo.api.gouv.fr"
 PHOTOS_PER_CARD = 1  # la liste n'expose qu'une vignette par bien
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Cache lookup commune → (dept, code_postal) pour les départements demandés.
 _COMMUNES_CACHE: dict[str, tuple[str, str]] = {}
@@ -186,14 +181,6 @@ def _field(rec: str, name: str) -> str:
 
 def _strip_tags(s: str) -> str:
     return re.sub(r"<[^>]+>", " ", s)
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[^\d]", "", text)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
 
 
 def _parse_surface(surface_html: str) -> float | None:

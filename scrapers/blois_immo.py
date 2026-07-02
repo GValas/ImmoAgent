@@ -36,19 +36,14 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.blois-immo.fr"
 LISTING_URL = f"{BASE_URL}/annonces/transaction/Vente.html"
 MAX_PAGES = 15
 PHOTOS_PER_CARD = 10
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Le type est codé dans la classe "product--type-{code}" du conteneur.
 # Codes observés (cf. titres) : codes numériques + slugs textuels.
@@ -323,14 +318,6 @@ def _data_float(card, kind: str) -> float | None:
     txt = el.get_text().replace(",", ".")
     m = re.search(r"\d+(?:\.\d+)?", txt)
     return float(m.group(0)) if m else None
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[^\d]", "", text)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
 
 
 # ── CLI standalone ────────────────────────────────────────────────────────────

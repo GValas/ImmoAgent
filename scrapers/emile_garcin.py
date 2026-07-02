@@ -32,6 +32,9 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_int as _parse_int
+
 BASE_URL = "https://www.emilegarcin.com"
 LISTING_URL = f"{BASE_URL}/fr/annonces/vente-immobilier"
 LOCATIONS_URL = f"{BASE_URL}/fr/load-locations"
@@ -40,14 +43,6 @@ MAX_PAGES = 70          # garde-fou : l'inventaire fait ~62 pages
 PHOTOS_PER_CARD = 1     # une seule vignette dispo sur la carte de listing
 LOC_CONCURRENCY = 6     # concurrence sur la résolution ville → code postal
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Mots-clés type de bien : exclure appartements/studios (le projet vise des maisons/propriétés)
 _EXCLUDE_KEYWORDS = re.compile(
@@ -313,11 +308,6 @@ def _parse_surface(text: str) -> float | None:
         return float(val)
     except ValueError:
         return None
-
-
-def _parse_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
 
 
 def _guess_type(titre: str) -> str:

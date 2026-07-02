@@ -32,6 +32,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://chambre-yonne-89.notaires.fr"
 LISTING_PATH = "/petites-annonces"
 PER_PAGE = 12
@@ -42,14 +44,6 @@ COVERED_DEPTS = {"89", "45", "58"}
 
 TYPE_BIENS = ["MAI", "AGR"]
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 _KEEP_TYPE = re.compile(
     r"maison|villa|propri[ée]t[ée]|ferme|longere|longère|manoir|chateau|ch[âa]teau|"

@@ -35,6 +35,8 @@ import re
 
 import httpx
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.lucilia-b-immobilier.fr"
 
 # Pages "univers" de VENTE à balayer (rNN/slug)
@@ -49,14 +51,6 @@ LISTING_PAGES = [
 PHOTOS_PER_CARD = 8
 MAX_DETAILS = 60  # plafond de sécurité (petite agence)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Commune (telle qu'écrite dans le slug / H1, normalisée) → code postal.
 # Toute l'agglo de Tours est en Indre-et-Loire (37).

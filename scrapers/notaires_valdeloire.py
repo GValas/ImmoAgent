@@ -14,18 +14,19 @@ Filtre DÉPARTEMENT : le portail couvre nativement 45 / 41 / 37 (+ qq fuites voi
     de la description. Aucune fuite hors-département (contrôle code_postal[:2] / slug NN).
 
 Cartes : a.offer-card[href -> www.immobilier.notaires.fr/fr/annonce-immo/vente/{type}/{ville}-{NN}/{id}]
-  - Date      : 1er <p class="text-gray-600">  (JJ/MM/AAAA)
   - Prix FAI  : <p ...notaires-color2-color> "348000 €"  (prix charge acquéreur, frais inclus)
-  - Prix net  : span "Dont prix de vente : 330000 €"  (on garde le prix FAI comme `prix`)
-  - Type      : <p> "Vente - Maison / villa"
-  - Loc       : <p> "Dadonville - Loiret (45)"
+  - Type      : <p> "Vente - Maison / villa" ; Loc : <p> "Dadonville - Loiret (45)"
   - Surf/pcs  : <p> "261m2 - 7 pièces"
   - Desc      : dernier <p class="text-2xs"> "Commune de DADONVILLE (45300)<br>…"  → CP exact
   - Photo     : img.image[src]
 
 Couverture (mai 2026) : ~1150 maisons VENTE sur 96 pages, quasi exclusivement 45/41/37.
-Les autres départements cibles (72, 28, 89, 49, 36, 18, 58, 53) → 0 stock natif (hors zone).
 Complémentaire de `immobilier_notaires.py` (API nationale) : ici fiches notariales locales.
+
+Migration _base (allégée) : la pagination est GLOBALE (pas de boucle département) →
+incompatible avec run_dept_search/run_dept_api ; on garde la structure mais le client,
+le retry 429/503, la dédup et les filtres viennent du socle (make_client, get_with_retry,
+keep_bien, parse_price_digits, standalone_main).
 
 Interface : async def search(criteres: dict) -> list[dict]
 """
@@ -33,12 +34,18 @@ Interface : async def search(criteres: dict) -> list[dict]
 import asyncio
 import re
 
-import httpx
 from bs4 import BeautifulSoup
+
+from scrapers._base import (
+    get_with_retry,
+    keep_bien,
+    make_client,
+    parse_price_digits,
+    standalone_main,
+)
 
 BASE_URL = "https://chambre-interdep-valdeloire.notaires.fr"
 LISTING_PATH = "/petites-annonces"
-PER_PAGE = 12
 MAX_PAGES = 110  # garde-fou : ~96 pages MAI + qq pages AGR
 
 # Départements où ce portail a effectivement du stock (observé mai 2026).
@@ -49,14 +56,6 @@ COVERED_DEPTS = {"45", "41", "37", "36", "18", "28", "72", "89", "58", "49", "53
 # (APP=appartement, TER=terrain, GAR=garage, COM/IMM/DIV/LAC/VIG exclus.)
 TYPE_BIENS = ["MAI", "AGR"]
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # On ne retient que maisons / propriétés ; on rejette explicitement les types non-bâtis/divers.
 _KEEP_TYPE = re.compile(
@@ -78,8 +77,7 @@ async def search(criteres: dict) -> list[dict]:
     surface_min = criteres.get("surface_min", 0)
 
     # Si aucun dept cible n'est couvert par le portail, inutile de scraper.
-    targets = departements & COVERED_DEPTS
-    if not targets:
+    if not departements & COVERED_DEPTS:
         print(
             f"[NotairesValDeLoire] aucun dept cible dans la zone couverte "
             f"{sorted(COVERED_DEPTS)} → skip"
@@ -89,19 +87,13 @@ async def search(criteres: dict) -> list[dict]:
     results: list[dict] = []
     seen_ids: set[str] = set()
 
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=25
-    ) as client:
+    async with make_client(timeout=25) as client:
         for page in range(1, MAX_PAGES + 1):
             params = [("typeTransactions[]", "VENTE")]
             params += [("typeBiens[]", t) for t in TYPE_BIENS]
             params.append(("page", str(page)))
-            try:
-                r = await client.get(BASE_URL + LISTING_PATH, params=params)
-            except Exception as e:
-                print(f"[NotairesValDeLoire] ERR page {page}: {e}")
-                break
-            if r.status_code != 200:
+            r = await get_with_retry(client, BASE_URL + LISTING_PATH, params=params)
+            if r is None or r.status_code != 200:
                 break
 
             soup = BeautifulSoup(r.text, "html.parser")
@@ -109,36 +101,20 @@ async def search(criteres: dict) -> list[dict]:
             if not cards:
                 break
 
-            kept_on_page = 0
             for card in cards:
                 try:
                     bien = _parse_card(card)
                 except Exception:
                     continue
-                if not bien:
+                # POST-FILTRE département (0 fuite garantie) ; keep_bien ajoute la
+                # cohérence cp[:2]==dept, la dédup id et les bornes prix/surface.
+                if not bien or bien["departement"] not in departements:
                     continue
-
-                dept = bien["departement"]
-                # POST-FILTRE département : 0 fuite garantie.
-                if dept not in departements:
+                if not keep_bien(bien, bien["departement"], seen_ids,
+                                 prix_max=prix_max, prix_min=prix_min,
+                                 surface_min=surface_min):
                     continue
-
-                aid = bien["id_annonce"]
-                if aid in seen_ids:
-                    continue
-
-                p = bien.get("prix") or 0
-                s = bien.get("surface") or 0
-                if prix_max and p and p > prix_max:
-                    continue
-                if prix_min and p and p < prix_min:
-                    continue
-                if surface_min and s and s < surface_min:
-                    continue
-
-                seen_ids.add(aid)
                 results.append(bien)
-                kept_on_page += 1
 
             # Page vide de cartes exploitables = on continue (les fuites hors-zone
             # peuvent occuper une page), mais on s'arrête s'il n'y a plus de carte du tout.
@@ -223,8 +199,6 @@ def _parse_card(card) -> dict | None:
         code_postal = m_cp.group(1)
         if not dept:
             dept = code_postal[:2]
-    elif dept and ville:
-        code_postal = ""  # inconnu, dept suffit pour le filtre
 
     if not dept:
         return None
@@ -280,51 +254,10 @@ def _parse_card(card) -> dict | None:
 
 
 def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[^\d]", "", text)
-    if not cleaned:
-        return None
-    try:
-        val = float(cleaned)
-        return val if val >= 1000 else None
-    except ValueError:
-        return None
+    """Prix notarial (tous chiffres) avec garde-fou < 1000 € (mensualités, réfs)."""
+    val = parse_price_digits(text)
+    return val if val and val >= 1000 else None
 
 
 if __name__ == "__main__":
-    import sys
-
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-
-    async def _test():
-        depts = ["72", "28", "45", "89", "49", "37", "36", "18", "58", "41", "53"]
-        biens = await search(
-            {
-                "departements": depts,
-                "prix_max": 0,
-                "prix_min": 0,
-                "surface_min": 0,
-            }
-        )
-        print(f"\nTotal Notaires Val de Loire: {len(biens)} biens")
-        by_dept: dict[str, int] = {}
-        leaks = []
-        for b in biens:
-            by_dept[b["departement"]] = by_dept.get(b["departement"], 0) + 1
-            cp = b.get("code_postal") or ""
-            if cp and cp[:2] != b["departement"]:
-                leaks.append((b["departement"], cp, b["url"]))
-            if b["departement"] not in depts:
-                leaks.append(("HORS-CIBLE", b["departement"], b["url"]))
-        print("Par département :", dict(sorted(by_dept.items())))
-        print("FUITES (cp[:2] != dept ou hors-cible) :", len(leaks))
-        for lk in leaks[:10]:
-            print("  LEAK", lk)
-        for b in biens[:10]:
-            print(
-                f"  [{b['departement']}|{b.get('code_postal') or '?????'}]"
-                f" {b['titre'][:50]} — {b['prix']}€ — {b.get('surface') or '?'}m²"
-                f" — {b.get('pieces') or '?'}p — {b['ville']}"
-            )
-
-    asyncio.run(_test())
+    standalone_main(search, "Notaires Val de Loire")

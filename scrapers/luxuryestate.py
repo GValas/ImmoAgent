@@ -2,9 +2,13 @@
 
 Méthode : scrape_simple (httpx) — SSR HTML
 URL pattern : /france/{region-slug}/{dept-slug}?pag={N}
-              ex : /france/centre/indre-and-loire
-                   /france/pays-de-la-loire/sarthe?pag=2
               → filtre département CÔTÉ SERVEUR (une URL par département cible).
+Cartes : li.search-list__item  (data-id = id de l'annonce)
+
+Migré sur scrapers/_base.py (modèle le_tuc.py) : HEADERS, boucle département +
+pagination, filtres prix/surface et dédup viennent du socle (run_dept_search).
+Ne reste ici que le PROPRE au site : slugs region/dept, post-filtre toponyme et
+parsing des cartes.
 
 Particularités :
   - Site anglophone (le projet est FR, mais ce portail expose ses libellés en EN).
@@ -14,43 +18,21 @@ Particularités :
     en clair). Le post-filtre département s'appuie donc sur le TOPONYME : le titre
     se termine par le nom du département (ex. « …, Sarthe », « …, Indre and Loire »),
     re-vérifié contre le nom attendu pour l'URL → 0 fuite hors-zone.
-
-Cartes : li.search-list__item  (data-id = id de l'annonce)
-  - URL    : a.details_title[href]  → /p{ID}-{type}-for-sale-{ville}
-  - Titre  : a.details_title  → "Luxury home in Tours, Indre and Loire"
-             (type + ' in ' + Ville + ', ' + Département)
-  - Prix   : div.price  → "€ 1,395,000"
-  - Specs  : div.specs  → "328 m²  5  6"  (surface, salles de bain, chambres)
-  - Photos : div.foto img[src]  (// → https:)
-  - Agence : .listed-by span / .agency img[alt]
-
-Type de bien : déduit du préfixe du titre (Luxury home / Villa / Castle /
-               Rural or Farmhouse / Apartment…). On exclut les appartements.
+  - Type de bien déduit du préfixe du titre (Luxury home / Villa / Castle…) ;
+    les appartements/terrains/commerces sont exclus.
 
 Pagination : ?pag={N} (jusqu'à ~21 pages selon le département, ~14-15 cartes/page).
 
 Interface : async def search(criteres: dict) -> list[dict]
 """
 
-import asyncio
 import re
 import unicodedata
 
-import httpx
-from bs4 import BeautifulSoup
+from scrapers._base import parse_price_digits, run_dept_search, standalone_main
 
 BASE_URL = "https://www.luxuryestate.com"
-MAX_PAGES = 22
 PHOTOS_PER_CARD = 10
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
-}
 
 # Code département → slug URL luxuryestate.com (region/departement)
 DEPT_SLUGS: dict[str, str] = {
@@ -100,95 +82,18 @@ def _norm(s: str) -> str:
 
 
 async def search(criteres: dict) -> list[dict]:
-    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
-    prix_max = criteres.get("prix_max", 0)
-    prix_min = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 0)
-
-    results: list[dict] = []
-
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=25
-    ) as client:
-        for dept in departements:
-            slug = DEPT_SLUGS.get(dept)
-            if not slug:
-                continue
-            try:
-                biens = await _scrape_dept(
-                    client, dept, slug, prix_max, prix_min, surface_min
-                )
-                results.extend(biens)
-                print(f"[LuxuryEstate] Dept {dept}: {len(biens)} annonces")
-            except Exception as e:
-                print(f"[LuxuryEstate] Erreur dept {dept}: {e}")
-            await asyncio.sleep(0.6)
-
-    return results
-
-
-async def _scrape_dept(
-    client: httpx.AsyncClient,
-    dept: str,
-    slug: str,
-    prix_max: int,
-    prix_min: int,
-    surface_min: int,
-) -> list[dict]:
-    biens: list[dict] = []
-    seen_ids: set[str] = set()
-    label = _norm(DEPT_LABELS.get(dept, ""))
-
-    for page in range(1, MAX_PAGES + 1):
-        url = f"{BASE_URL}/france/{slug}"
-        if page > 1:
-            url += f"?pag={page}"
-        r = await client.get(url)
-        if r.status_code != 200:
-            break
-
-        cards = BeautifulSoup(r.text, "html.parser").select("li.search-list__item")
-        if not cards:
-            break
-
-        new_on_page = 0
-        for card in cards:
-            try:
-                bien = _parse_card(card, dept)
-            except Exception:
-                continue
-            if not bien:
-                continue
-
-            # Post-filtre département STRICT par toponyme : le titre doit se
-            # terminer par le nom du département attendu → 0 fuite hors-zone.
-            if label and label not in _norm(bien.get("_dept_label") or ""):
-                continue
-
-            aid = bien["id_annonce"]
-            if aid in seen_ids:
-                continue
-
-            p = bien.get("prix") or 0
-            s = bien.get("surface") or 0
-            if prix_max and p and p > prix_max:
-                continue
-            if prix_min and p and p < prix_min:
-                continue
-            if surface_min and s and s < surface_min:
-                continue
-
-            bien.pop("_dept_label", None)
-            seen_ids.add(aid)
-            biens.append(bien)
-            new_on_page += 1
-
-        if new_on_page == 0:
-            break
-
-        await asyncio.sleep(0.5)
-
-    return biens
+    return await run_dept_search(
+        source="luxuryestate",
+        label="LuxuryEstate",
+        page_url=lambda dept, slug, page: (
+            f"{BASE_URL}/france/{slug}" + (f"?pag={page}" if page > 1 else "")
+        ),
+        card_selector="li.search-list__item",
+        parse_card=_parse_card,
+        criteres=criteres,
+        dept_slugs=DEPT_SLUGS,
+        max_pages=22,
+    )
 
 
 def _parse_card(card, dept: str) -> dict | None:
@@ -215,6 +120,12 @@ def _parse_card(card, dept: str) -> dict | None:
     else:
         ville = before.strip()
 
+    # Post-filtre département STRICT par toponyme : le titre doit se terminer
+    # par le nom du département attendu → 0 fuite hors-zone.
+    label = _norm(DEPT_LABELS.get(dept, ""))
+    if label and label not in _norm(dept_label):
+        return None
+
     type_norm = type_part.lower()
     if _EXCLUDE_TYPE.search(type_norm):
         return None
@@ -227,15 +138,15 @@ def _parse_card(card, dept: str) -> dict | None:
         aid = mid.group(1) if mid else url
     id_annonce = str(aid)
 
-    # Prix : "€ 1,395,000"
+    # Prix : "€ 1,395,000" (virgules = séparateurs de milliers)
     price_el = card.select_one("div.price")
-    prix = _parse_price(price_el.get_text(" ", strip=True) if price_el else "")
+    prix = parse_price_digits(price_el.get_text(" ", strip=True) if price_el else "")
 
     # Specs : "328 m²  5  6" (surface | salles de bain | chambres)
     specs_el = card.select_one("div.specs")
     specs_text = specs_el.get_text(" ", strip=True) if specs_el else ""
     surface = _parse_surface(specs_text)
-    chambres = _parse_chambres(card)
+    chambres = _parse_chambres(specs_text)
 
     # Description (souvent vide en liste, chargée en AJAX) — best-effort
     desc_el = card.select_one("[data-role='set-ajax-description']")
@@ -279,23 +190,13 @@ def _parse_card(card, dept: str) -> dict | None:
         "photos": photos,
         "dpe": None,
         "agence": agence[:80],
-        "_dept_label": dept_label,  # interne — retiré après le post-filtre
     }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _parse_price(text: str) -> float | None:
-    """'€ 1,395,000' → 1395000.0 ; ignore les libellés non chiffrés."""
-    cleaned = re.sub(r"[^\d]", "", text)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
-
+# ── Helpers propres au site ───────────────────────────────────────────────────
 
 def _parse_surface(text: str) -> float | None:
-    """'328 m² 5 6' → 328.0"""
+    """'328 m² 5 6' → 328.0 (virgule/point = séparateurs de milliers)."""
     m = re.search(r"([\d\s,\.]+)\s*m²", text)
     if not m:
         return None
@@ -307,42 +208,11 @@ def _parse_surface(text: str) -> float | None:
         return None
 
 
-def _parse_chambres(card) -> int | None:
+def _parse_chambres(specs_text: str) -> int | None:
     """Dernier nombre du bloc specs = chambres (icône #bed)."""
-    specs = card.select_one("div.specs")
-    if not specs:
-        return None
-    nums = re.findall(r"\b(\d{1,2})\b", specs.get_text(" ", strip=True))
+    nums = re.findall(r"\b(\d{1,2})\b", specs_text)
     return int(nums[-1]) if nums else None
 
 
-# ── CLI standalone ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-
-    criteres = load_criteria()
-    biens = asyncio.run(
-        search(
-            {
-                "departements": criteres.departements,
-                "prix_max": criteres.prix_max,
-                "prix_min": getattr(criteres, "prix_min", 0),
-                "surface_min": criteres.surface_min,
-            }
-        )
-    )
-    print(f"\nTotal LuxuryEstate: {len(biens)} annonces")
-    depts = sorted({b["departement"] for b in biens})
-    print(f"Départements vus : {depts}")
-    for b in biens[:10]:
-        print(
-            f"  [{b['departement']}] {b['titre'][:55]}"
-            f" — {b['prix']}€"
-            f" — {b.get('surface') or '?'}m²"
-            f" — {b.get('chambres') or '?'}ch"
-            f" — {b['type_bien']} — {b['ville']}"
-        )
+    standalone_main(search, "LuxuryEstate")

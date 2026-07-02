@@ -41,20 +41,15 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.demeuresenperigord.fr"
 LIST_PATH = "/nos-biens-immobiliers/"
 BAN_URL = "https://api-adresse.data.gouv.fr/search/"
 MAX_PAGES = 20
 PHOTOS_PER_CARD = 1  # la liste n'expose que la photo de couverture
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Type de bien (segment <select name="typ">) → on ne garde que propriétés/maisons.
 _TYP_KEEP = {"mai"}  # "Propriétés" (maisons / demeures / châteaux)
@@ -318,15 +313,6 @@ def _type_from_text(text: str) -> str | None:
 
 def _to_float(text: str) -> float | None:
     cleaned = re.sub(r"[\s\xa0]", "", text)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
     try:
         return float(cleaned) if cleaned else None
     except ValueError:

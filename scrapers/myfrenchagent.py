@@ -37,6 +37,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.myfrenchagent.com"
 LIST_PATH = "/nos-biens/1-acheter"
 TYPE_BIEN = 1            # 1 = maison
@@ -44,14 +46,6 @@ MAX_PAGES = 10           # garde-fou (la liste maison fait ~7 pages)
 DETAIL_CONCURRENCY = 6   # fetchs détail en parallèle (pour rester dans les temps)
 PHOTOS_PER_CARD = 12
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Départements cibles (le post-filtre n'accepte que ceux-là)
 TARGET_DEPTS = {"72", "28", "45", "89", "49", "37", "36", "18", "58", "41", "53"}

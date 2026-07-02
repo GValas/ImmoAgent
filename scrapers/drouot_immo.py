@@ -33,19 +33,13 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://drouot.immo"
 LISTING_PATH = "/annonces"
 PER_PAGE = 40
 MAX_PAGES = 12  # garde-fou (≈ 84 biens nationaux / 40 = 3 pages)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Types à conserver (propertyType de l'API) : maison / villa / propriété…
 _KEEP_TYPE = re.compile(

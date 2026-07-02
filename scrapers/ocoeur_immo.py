@@ -29,19 +29,14 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://ocoeurdelimmo.immo"
 LIST_URL = BASE_URL + "/annonces/vente/"
 MAX_PAGES = 8
 PHOTOS_PER_CARD = 10
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 _KEEP_TYPE = re.compile(
     r"maison|propriete|propriété|villa|ferme|longere|longère|manoir|chateau|"
@@ -199,14 +194,6 @@ def _detect_type(text: str) -> str | None:
     if m:
         return m.group(0).lower()
     return None
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[^\d]", "", text)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
 
 
 def _parse_int(pattern: str, text: str) -> int | None:

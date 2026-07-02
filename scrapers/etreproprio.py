@@ -20,10 +20,15 @@ Cartes liste : a.ep-card-cla-a (href = page détail)
 hors-département (le filtre serveur /NN n'est pas vérifiable autrement), on
 récupère la page détail de chaque bien : elle embarque un blob JS contenant
 "postalCode":"NNNNN","departmentCode":"NN" + price/houseArea/terrainArea/roomNb/
-dpeGlobalLetter. On post-filtre STRICT sur code_postal[:2] == dept.
+dpeGlobalLetter. On post-filtre STRICT sur code_postal[:2] == dept (les biens
+sans CP en détail sont écartés — puis garde-fou `keep_bien` du driver).
 
 Pour rester poli et borné, on limite à MAX_CARDS biens/dept et on récupère les
 pages détail avec une concurrence plafonnée.
+
+Migré sur scrapers/_base.py : boucle départements, dédup, garde-fou CP et
+filtres prix/surface sont fournis par `run_dept_api` ; ce fichier ne porte plus
+que la récupération liste + enrichissement détail propres à EtreProprio.
 
 Couverture : agrégateur national (mandataires + agences), gros stock par dept
 cible (3000+ maisons en Sarthe). On ne garde que les maisons (segment d'URL).
@@ -37,43 +42,29 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import get_with_retry, run_dept_api, standalone_main
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.etreproprio.com"
 MAX_CARDS = 60          # cartes SSR rendues par page liste (pas de pagination httpx)
 DETAIL_CONCURRENCY = 6  # requêtes détail simultanées (politesse)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
-
 
 async def search(criteres: dict) -> list[dict]:
-    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
     prix_max = criteres.get("prix_max", 0)
     prix_min = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 0)
 
-    results: list[dict] = []
+    async def _fetch_dept(client, dept, slug):
+        return await _scrape_dept(client, dept, prix_max, prix_min)
 
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=25
-    ) as client:
-        for dept in departements:
-            try:
-                biens = await _scrape_dept(
-                    client, dept, prix_max, prix_min, surface_min
-                )
-                results.extend(biens)
-                print(f"[EtreProprio] Dept {dept}: {len(biens)} annonces")
-            except Exception as e:
-                print(f"[EtreProprio] Erreur dept {dept}: {e}")
-            await asyncio.sleep(0.6)
-
-    return results
+    return await run_dept_api(
+        source="etreproprio",
+        label="EtreProprio",
+        fetch_dept=_fetch_dept,
+        criteres=criteres,
+        dept_sleep=0.6,
+        client_kwargs={"timeout": 25},
+    )
 
 
 async def _scrape_dept(
@@ -81,12 +72,11 @@ async def _scrape_dept(
     dept: str,
     prix_max: int,
     prix_min: int,
-    surface_min: int,
 ) -> list[dict]:
-    url = f"{BASE_URL}/maison-a-vendre/{dept}"
-    r = await client.get(url)
-    if r.status_code != 200:
-        print(f"[EtreProprio] Dept {dept}: HTTP {r.status_code}")
+    r = await get_with_retry(client, f"{BASE_URL}/maison-a-vendre/{dept}")
+    if r is None or r.status_code != 200:
+        if r is not None:
+            print(f"[EtreProprio] Dept {dept}: HTTP {r.status_code}")
         return []
 
     cards = BeautifulSoup(r.text, "html.parser").select("a.ep-card-cla-a")[:MAX_CARDS]
@@ -116,30 +106,17 @@ async def _scrape_dept(
 
     async def enrich(stub: dict) -> dict | None:
         async with sem:
-            try:
-                rd = await client.get(stub["url"])
-                await asyncio.sleep(0.2)
-            except Exception:
-                return None
-            if rd.status_code != 200:
+            rd = await get_with_retry(client, stub["url"])
+            await asyncio.sleep(0.2)
+            if rd is None or rd.status_code != 200:
                 return None
             return _merge_detail(stub, rd.text, dept)
 
     enriched = await asyncio.gather(*(enrich(s) for s in stubs))
 
-    biens: list[dict] = []
-    for bien in enriched:
-        if not bien:
-            continue
-        # Post-filtre dept STRICT : 0 fuite hors-département
-        if not bien["code_postal"] or bien["code_postal"][:2] != dept:
-            continue
-        s = bien.get("surface") or 0
-        if surface_min and s and s < surface_min:
-            continue
-        biens.append(bien)
-
-    return biens
+    # Biens sans CP en détail ⇒ écartés (le garde-fou dept du driver exige un CP
+    # vérifiable pour garantir 0 fuite) ; le reste est filtré par keep_bien.
+    return [b for b in enriched if b and b["code_postal"]]
 
 
 def _parse_card(card) -> dict | None:
@@ -261,14 +238,6 @@ def _blob_int(html: str, key: str) -> int | None:
     return None
 
 
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[^\d]", "", text)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
-
-
 def _parse_surface_title(text: str) -> float | None:
     """'Maison 75 m² à Conlie' → 75.0"""
     if not text:
@@ -292,33 +261,5 @@ def _titlecase(s: str) -> str:
     return "-".join(p.capitalize() for p in s.lower().split("-"))
 
 
-# ── CLI standalone ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-
-    criteres = load_criteria()
-    biens = asyncio.run(
-        search(
-            {
-                "departements": criteres.departements,
-                "prix_max": criteres.prix_max,
-                "prix_min": getattr(criteres, "prix_min", 0),
-                "surface_min": criteres.surface_min,
-            }
-        )
-    )
-    print(f"\nTotal EtreProprio: {len(biens)} annonces")
-    depts = sorted({b["code_postal"][:2] for b in biens if b["code_postal"]})
-    print(f"Départements vus : {depts}")
-    for b in biens[:10]:
-        print(
-            f"  [{b['code_postal']}] {b['titre'][:55]}"
-            f" — {b['prix']}€"
-            f" — {b.get('surface') or '?'}m²"
-            f" — terrain {b.get('surface_terrain') or '?'}m²"
-            f" — {b['pieces'] or '?'}p — dpe {b['dpe'] or '?'} — {b['ville']}"
-        )
+    standalone_main(search, "EtreProprio")

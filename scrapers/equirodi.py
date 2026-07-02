@@ -50,19 +50,13 @@ import unicodedata
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.equirodi.com"
 LISTING = BASE_URL + "/annonces/equestre-a-vendre/propriete-equestre/{region}.htm"
 MAX_PAGES = 8
 PHOTOS_PER_CARD = 1
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Slugs de RÉGION (anciennes régions) reconnus par le site. Chaque slug couvre
 # plusieurs départements cibles. NE PAS utiliser les slugs "nouvelles régions"

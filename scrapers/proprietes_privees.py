@@ -13,20 +13,24 @@ Localisation du BIEN (pas de l'agence) :
     celui du bien — à distinguer du bloc conseiller `location:{...label:"..."}`
     qui porte l'adresse du mandataire.
 
+Migré sur scrapers/_base.py : boucle départements, client, dédup, filtres
+prix/surface et garde-fou département (appliqué APRÈS le repli fiche détail)
+sont fournis par `run_dept_api` ; ce fichier ne porte plus que la pagination,
+le parsing des cards et la résolution de localisation propres au site.
+
 Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
 import re
 
-import httpx
 from bs4 import BeautifulSoup
 
-BASE_URL = "https://www.proprietes-privees.com"
+from scrapers._base import get_with_retry, keep_bien, run_dept_api, standalone_main
+from scrapers._base import parse_float as _re_float
+from scrapers._base import parse_int as _re_int
+from scrapers._base import parse_str_upper as _re_str
 
-UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
+BASE_URL = "https://www.proprietes-privees.com"
 
 # Slugs : nom seul, sans numéro (ex: "sarthe" et non "sarthe-72")
 DEPT_SLUGS = {
@@ -58,33 +62,24 @@ _DETAIL_LOC_RE = re.compile(
 
 
 async def search(criteres: dict) -> list[dict]:
-    departements = criteres.get("departements", [])
-    prix_max = criteres.get("prix_max", 600000)
+    prix_max = criteres.get("prix_max", 0)
     prix_min = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 80)
+    surface_min = criteres.get("surface_min", 0)
 
-    results = []
-    async with httpx.AsyncClient(
-        headers={"User-Agent": UA, "Accept-Language": "fr-FR,fr;q=0.9"},
-        follow_redirects=True,
-        timeout=30,
-    ) as client:
-        for dept in departements:
-            try:
-                biens = await _scrape_dept(client, str(dept), prix_min, prix_max, surface_min)
-                results.extend(biens)
-                print(f"[PropPrivées] Dept {dept}: {len(biens)} annonces")
-            except Exception as e:
-                print(f"[PropPrivées] Erreur dept {dept}: {e}")
+    async def _fetch_dept(client, dept, slug):
+        return await _scrape_dept(client, dept, slug, prix_min, prix_max, surface_min)
 
-    return results
+    return await run_dept_api(
+        source="proprietes_privees",
+        label="PropPrivées",
+        fetch_dept=_fetch_dept,
+        criteres=criteres,
+        dept_slugs=DEPT_SLUGS,
+        client_kwargs={"timeout": 30},
+    )
 
 
-async def _scrape_dept(client, dept: str, prix_min: int, prix_max: int, surface_min: int) -> list[dict]:
-    slug = DEPT_SLUGS.get(dept)
-    if not slug:
-        return []
-
+async def _scrape_dept(client, dept, slug, prix_min, prix_max, surface_min) -> list[dict]:
     biens = []
     seen_ids = set()
 
@@ -93,29 +88,21 @@ async def _scrape_dept(client, dept: str, prix_min: int, prix_max: int, surface_
         if page_num > 1:
             url += f"?page={page_num}"
 
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            html = resp.text
-        except Exception as e:
-            print(f"[PropPrivées] Dept {dept} page {page_num}: {e}")
+        resp = await get_with_retry(client, url)
+        if resp is None or resp.status_code != 200:
             break
 
-        cards = _parse_html(html, dept)
+        cards = _parse_html(resp.text, dept)
         if not cards:
             break
 
         new_found = 0
         for b in cards:
-            if b["id_annonce"] in seen_ids:
+            # dept=None : le garde-fou département n'est appliqué qu'APRÈS le
+            # repli fiche détail (localisation liste parfois absente/incohérente)
+            if not keep_bien(b, None, seen_ids, prix_max=prix_max,
+                             prix_min=prix_min, surface_min=surface_min):
                 continue
-            if b.get("prix") and prix_max and b["prix"] > prix_max:
-                continue
-            if prix_min and b.get("prix") and b["prix"] < prix_min:
-                continue
-            if b.get("surface") and surface_min and b["surface"] < surface_min:
-                continue
-            seen_ids.add(b["id_annonce"])
             biens.append(b)
             new_found += 1
 
@@ -124,17 +111,12 @@ async def _scrape_dept(client, dept: str, prix_min: int, prix_max: int, surface_
 
     # Repli fiche détail : pour les biens dont la localisation liste est absente
     # ou incohérente avec le département cible, récupérer la vraie loc du bien.
+    # (La sécurité anti-fuite finale est le garde-fou CP de run_dept_api.)
     await _resolve_locations(client, biens, dept)
 
-    # Sécurité dépt : ne pas laisser fuiter un bien hors département cible une
-    # fois la vraie localisation connue.
-    coherent = [b for b in biens if not b["code_postal"] or b["code_postal"][:2] == dept]
-    leaked = len(biens) - len(coherent)
-    if leaked:
-        print(f"[PropPrivées] Dept {dept}: {leaked} annonces écartées (hors département)")
-    for b in coherent:
+    for b in biens:
         b.pop("_type_str", None)
-    return coherent
+    return biens
 
 
 async def _resolve_locations(client, biens: list[dict], dept: str) -> None:
@@ -163,10 +145,8 @@ async def _resolve_locations(client, biens: list[dict], dept: str) -> None:
 
 
 async def _location_from_detail(client, url: str) -> tuple[str, str] | None:
-    try:
-        resp = await client.get(url)
-        resp.raise_for_status()
-    except Exception:
+    resp = await get_with_retry(client, url)
+    if resp is None or resp.status_code != 200:
         return None
     m = _DETAIL_LOC_RE.search(resp.text)
     if not m:
@@ -294,37 +274,5 @@ def _parse_card(card, dept: str) -> dict | None:
     }
 
 
-def _re_float(pattern: str, text: str) -> float | None:
-    m = re.search(pattern, text)
-    if m:
-        try:
-            return float(m.group(1).replace(" ", "").replace(",", "."))
-        except Exception:
-            pass
-    return None
-
-
-def _re_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
-
-
-def _re_str(pattern: str, text: str) -> str | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return m.group(1).upper() if m else None
-
-
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-    criteres = load_criteria()
-    biens = asyncio.run(search({
-        "departements": criteres.departements[:2],
-        "prix_max": criteres.prix_max,
-        "prix_min": criteres.prix_min,
-        "surface_min": criteres.surface_min,
-    }))
-    print(f"\nTotal Propriétés Privées: {len(biens)} annonces")
-    for b in biens[:5]:
-        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m² — {b['ville']} ({b['code_postal']}) dept {b['departement']}")
+    standalone_main(search, "Propriétés Privées")

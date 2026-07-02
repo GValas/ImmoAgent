@@ -36,19 +36,15 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_int as _parse_int
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.immosquare.fr"
 LIST_URL = f"{BASE_URL}/a-vendre/"
 PHOTOS_PER_CARD = 5
 DETAIL_CONCURRENCY = 4
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Codes postaux des départements couverts par le réseau (préfixes acceptés).
 # Sert uniquement à borner la recherche du CP sur la page détail ; le filtre
@@ -263,20 +259,6 @@ async def _fetch_cp(
 class _Empty:
     def get_text(self, *a, **k):
         return ""
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
-
-
-def _parse_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
 
 
 def _parse_surface(text: str) -> float | None:

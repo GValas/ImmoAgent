@@ -36,18 +36,13 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.c-limmo.fr"
 MAX_PAGES = 30
 PHOTOS_PER_CARD = 1  # la vue liste n'expose qu'une photo de fond
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Types de bien (titre/slug) à conserver
 _KEEP_TYPE = re.compile(
@@ -268,15 +263,6 @@ def _parse_loc(text: str) -> tuple[str, str]:
         cp = m_cp.group(1)
     ville = re.sub(r"\s*\(\d{5}\)\s*$", "", text).strip()
     return ville, cp
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
 
 
 def _parse_surface(text: str) -> float | None:

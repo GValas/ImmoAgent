@@ -25,6 +25,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.architecturedecollection.fr"
 LISTING_URL = f"{BASE_URL}/categorie-produit/a-vendre/"
 MAX_LISTING_PAGES = 5          # garde-fou ; en pratique 2 pages existent
@@ -32,14 +34,6 @@ MAX_PRODUCTS = 200             # garde-fou
 PHOTOS_PER_BIEN = 10
 CONCURRENCY = 8
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Mots-clés indiquant un appartement (à exclure — on veut maisons/propriétés)
 _APPART_RE = re.compile(

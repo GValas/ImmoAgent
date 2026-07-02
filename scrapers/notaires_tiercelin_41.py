@@ -35,20 +35,14 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.tiercelin-brunet-duvivier.notaires.fr"
 LIST_URL = BASE_URL + "/fr_FR/3/{page}/annonces-immobilieres.html"
 MAX_PAGES = 12
 PHOTOS_PER_CARD = 10
 AGENCE = "Notaires Tiercelin-Brunet-Duvivier (Montrichard)"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Nom de département (slug d'URL) → code. Seuls 41 et 37 sont servis par l'étude,
 # mais on garde une table générale pour rester robuste.

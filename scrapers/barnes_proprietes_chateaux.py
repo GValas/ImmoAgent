@@ -35,19 +35,14 @@ import unicodedata
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.barnes-proprietes-chateaux.com"
 LISTING_PATH = "/vente/maisons-de-caractere/page/{page}"
 MAX_PAGES = 48
 PHOTOS_PER_CARD = 1  # la liste n'expose qu'une image de preview (galerie en page détail)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Repli : nom de département (sans accent, minuscule) → code, pour les départements cibles
 DEPT_NOMS: dict[str, str] = {
@@ -229,15 +224,6 @@ def _extract_dept(card) -> str | None:
         if nom in slug:
             return code
     return None
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
 
 
 def _parse_infos(info: str):

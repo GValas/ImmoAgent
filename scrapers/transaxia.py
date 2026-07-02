@@ -39,19 +39,13 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://transaxia.fr"
 MAX_PAGES = 60          # plafond de sécurité (le filtre flou disperse un dept sur
                         # beaucoup de pages ; ~111 pages pour l'inventaire complet)
 PHOTOS_PER_CARD = 1     # 1 photo de couverture sur la liste
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Types de bien (titre/slug) à conserver
 _KEEP_TYPE = re.compile(

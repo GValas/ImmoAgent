@@ -33,6 +33,9 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.startgoimmo.fr"
 MAX_PAGES = 10
 PHOTOS_PER_CARD = 10
@@ -40,14 +43,6 @@ PHOTOS_PER_CARD = 10
 # Types de bien Houzez à parcourir (on ne garde que maisons/villas/propriétés ensuite)
 PROPERTY_TYPES = ["maison", "villa", "propriete", "immeuble"]
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # /annonces/vente-{type}-{CP}-{ville}-startgo-ref-{N}/
 _URL_RE = re.compile(
@@ -246,15 +241,6 @@ async def _enrich_detail(client: httpx.AsyncClient, base: dict) -> None:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
-
 
 def _parse_terrain(text: str) -> float | None:
     """'sur 440 m² de terrain' → 440.0"""

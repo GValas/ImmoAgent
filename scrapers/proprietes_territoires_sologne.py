@@ -39,19 +39,14 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_int as _parse_int
+
 BASE_URL = "https://proprietes-territoires-sologne.fr"
 SITEMAP_URL = f"{BASE_URL}/estate_property-sitemap.xml"
 MAX_PROPERTIES = 80          # garde-fou (inventaire réel ~34)
 PHOTOS_PER_CARD = 12
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Types exclus (on garde maisons / propriétés / fermes / domaines / étangs / forêts)
 _EXCLUDE_TYPE = re.compile(
@@ -281,11 +276,6 @@ def _parse_m2(pattern: str, text: str) -> float | None:
     except ValueError:
         pass
     return None
-
-
-def _parse_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
 
 
 def _guess_type(titre: str) -> str:

@@ -33,6 +33,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.francechateaupropriete.com"
 LIST_URL = f"{BASE_URL}/index.php?page={{page}}&action=list"
 MAX_PAGES = 30
@@ -40,14 +42,6 @@ PHOTOS_PER_CARD = 10
 
 BAN_URL = "https://api-adresse.data.gouv.fr/search/"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 _KEEP_TYPE = re.compile(
     r"maison|propri[ée]t[ée]|villa|ferme|long[èe]re|manoir|ch[âa]teau|moulin|"

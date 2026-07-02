@@ -6,6 +6,12 @@ URL pattern : /french-property-for-sale/{region-slug}/{dept-slug}/?page=N
               → filtre département CÔTÉ SERVEUR via le slug de département.
               (ex: /french-property-for-sale/pays-de-la-loire/mayenne/?page=2)
 
+Migré sur scrapers/_base.py (modèle le_tuc.py) : boucle département, dédup et
+filtres prix/surface viennent du socle (run_dept_api — le parsing de carte est
+ASYNCHRONE à cause de la résolution commune→département, incompatible avec
+run_dept_search). Ne reste ici que le PROPRE au site : slugs, pagination,
+résolution geo.api.gouv.fr et parsing des cartes.
+
 Particularité : aucun code postal n'est exposé (ni en liste, ni en page détail —
                 seulement la commune + la région). Le post-filtre département se fait
                 donc en résolvant la COMMUNE → code département via geo.api.gouv.fr
@@ -28,7 +34,6 @@ Type de bien : non structuré → déduit du titre (house/cottage/longère/manor
 
 Couverture : portail national couvrant toute la France par dept-slug. Sur la zone
              cible, la Mayenne (53) et les départements Loire/Anjou ont du stock réel.
-             Slugs de département mappés pour les 11 départements cibles.
 
 Interface : async def search(criteres: dict) -> list[dict]
 """
@@ -39,32 +44,26 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import get_with_retry, parse_price_digits, run_dept_api, standalone_main
+
 BASE_URL = "https://www.francepropertyshop.com"
 MAX_PAGES = 8
 PHOTOS_PER_CARD = 1
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
-# Code département → (region-slug, dept-slug) tels qu'utilisés dans l'URL serveur.
-DEPT_SLUGS: dict[str, tuple[str, str]] = {
-    "72": ("pays-de-la-loire", "sarthe"),
-    "28": ("centre-val-de-loire", "eure-et-loir"),
-    "45": ("centre-val-de-loire", "loiret"),
-    "89": ("bourgogne-franche-comte", "yonne"),
-    "49": ("pays-de-la-loire", "maine-et-loire"),
-    "37": ("centre-val-de-loire", "indre-et-loire"),
-    "36": ("centre-val-de-loire", "indre"),
-    "18": ("centre-val-de-loire", "cher"),
-    "58": ("bourgogne-franche-comte", "nievre"),
-    "41": ("centre-val-de-loire", "loir-et-cher"),
-    "53": ("pays-de-la-loire", "mayenne"),
+# Code département → "region-slug/dept-slug" tels qu'utilisés dans l'URL serveur.
+DEPT_SLUGS: dict[str, str] = {
+    "72": "pays-de-la-loire/sarthe",
+    "28": "centre-val-de-loire/eure-et-loir",
+    "45": "centre-val-de-loire/loiret",
+    "89": "bourgogne-franche-comte/yonne",
+    "49": "pays-de-la-loire/maine-et-loire",
+    "37": "centre-val-de-loire/indre-et-loire",
+    "36": "centre-val-de-loire/indre",
+    "18": "centre-val-de-loire/cher",
+    "58": "bourgogne-franche-comte/nievre",
+    "41": "centre-val-de-loire/loir-et-cher",
+    "53": "pays-de-la-loire/mayenne",
 }
 
 # Type de bien déduit du titre anglophone (on ne garde que maisons / propriétés).
@@ -83,10 +82,6 @@ _EXCLUDE_TYPE = re.compile(
 _DEPT_CACHE: dict[str, str | None] = {}
 
 
-def _norm_commune(nom: str) -> str:
-    return re.sub(r"\s+", " ", nom or "").strip()
-
-
 async def _commune_departement(
     client: httpx.AsyncClient, commune: str
 ) -> str | None:
@@ -95,7 +90,7 @@ async def _commune_departement(
     Renvoie None si introuvable/ambigu. Mis en cache pour éviter les requêtes
     répétées. Sert de garde-fou strict : couplé au slug serveur, 0 fuite.
     """
-    key = _norm_commune(commune)
+    key = re.sub(r"\s+", " ", commune or "").strip()
     if not key:
         return None
     if key in _DEPT_CACHE:
@@ -130,52 +125,25 @@ async def _commune_departement(
 
 
 async def search(criteres: dict) -> list[dict]:
-    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
-    prix_max = criteres.get("prix_max", 0)
-    prix_min = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 0)
-
-    results: list[dict] = []
-
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=30
-    ) as client:
-        for dept in departements:
-            slugs = DEPT_SLUGS.get(dept)
-            if not slugs:
-                continue
-            try:
-                biens = await _scrape_dept(
-                    client, dept, slugs, prix_max, prix_min, surface_min
-                )
-                results.extend(biens)
-                print(f"[FrancePropertyShop] Dept {dept}: {len(biens)} annonces")
-            except Exception as e:
-                print(f"[FrancePropertyShop] Erreur dept {dept}: {e}")
-            await asyncio.sleep(0.6)
-
-    return results
+    return await run_dept_api(
+        source="francepropertyshop",
+        label="FrancePropertyShop",
+        fetch_dept=_fetch_dept,
+        criteres=criteres,
+        dept_slugs=DEPT_SLUGS,
+        dept_sleep=0.6,
+        client_kwargs={"timeout": 30},
+    )
 
 
-async def _scrape_dept(
-    client: httpx.AsyncClient,
-    dept: str,
-    slugs: tuple[str, str],
-    prix_max: int,
-    prix_min: int,
-    surface_min: int,
-) -> list[dict]:
-    region_slug, dept_slug = slugs
+async def _fetch_dept(client, dept: str, slug: str | None) -> list[dict]:
     biens: list[dict] = []
     seen_ids: set[str] = set()
 
     for page in range(1, MAX_PAGES + 1):
-        url = (
-            f"{BASE_URL}/french-property-for-sale/"
-            f"{region_slug}/{dept_slug}/?page={page}"
-        )
-        r = await client.get(url)
-        if r.status_code != 200:
+        url = f"{BASE_URL}/french-property-for-sale/{slug}/?page={page}"
+        r = await get_with_retry(client, url)
+        if r is None or r.status_code != 200:
             break
 
         cards = BeautifulSoup(r.text, "html.parser").select("div.card")
@@ -188,29 +156,15 @@ async def _scrape_dept(
                 bien = await _parse_card(client, card, dept)
             except Exception:
                 continue
-            if not bien:
+            if not bien or bien["id_annonce"] in seen_ids:
                 continue
-
-            aid = bien["id_annonce"]
-            if aid in seen_ids:
-                continue
-
-            p = bien.get("prix") or 0
-            s = bien.get("surface") or 0
-            if prix_max and p and p > prix_max:
-                continue
-            if prix_min and p and p < prix_min:
-                continue
-            if surface_min and s and s < surface_min:
-                continue
-
-            seen_ids.add(aid)
+            seen_ids.add(bien["id_annonce"])
             biens.append(bien)
             new_on_page += 1
 
+        # Page sans rien de neuf (que des doublons) = fin de liste → stop
         if new_on_page == 0:
             break
-
         await asyncio.sleep(0.5)
 
     return biens
@@ -259,9 +213,9 @@ async def _parse_card(client: httpx.AsyncClient, card, dept: str) -> dict | None
     elif re.search(r"mill|moulin|farm|estate|propert", titre, re.I):
         type_bien = "propriete"
 
-    # Prix : "€172,800"
+    # Prix : "€172,800" (virgules = séparateurs de milliers anglophones)
     price_el = card.select_one(".card__price")
-    prix = _parse_price(price_el.get_text(" ", strip=True) if price_el else "")
+    prix = parse_price_digits(price_el.get_text(" ", strip=True) if price_el else "")
 
     # Icônes : chambres (fiable) + surface ; rooms ignoré (non fiable)
     icons = card.select_one(".card__icons")
@@ -311,45 +265,5 @@ async def _parse_card(client: httpx.AsyncClient, card, dept: str) -> dict | None
     }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _parse_price(text: str) -> float | None:
-    """'€172,800' / '172 800 €' → 172800.0 (les virgules sont des séparateurs
-    de milliers anglophones)."""
-    cleaned = re.sub(r"[^\d]", "", text)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
-
-
-# ── CLI standalone ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-
-    criteres = load_criteria()
-    biens = asyncio.run(
-        search(
-            {
-                "departements": criteres.departements,
-                "prix_max": criteres.prix_max,
-                "prix_min": getattr(criteres, "prix_min", 0),
-                "surface_min": criteres.surface_min,
-            }
-        )
-    )
-    print(f"\nTotal France Property Shop: {len(biens)} annonces")
-    depts = sorted({b["departement"] for b in biens})
-    print(f"Départements vus : {depts}")
-    for b in biens[:12]:
-        print(
-            f"  [{b['departement']}] {b['titre'][:50]}"
-            f" — {b['prix']}€"
-            f" — {b.get('surface') or '?'}m²"
-            f" — {b.get('chambres') or '?'}ch"
-            f" — {b['type_bien']} — {b['ville']}"
-        )
+    standalone_main(search, "France Property Shop")

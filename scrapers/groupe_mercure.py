@@ -23,19 +23,13 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.groupe-mercure.fr"
 LISTING_URL = f"{BASE_URL}/annonces/"
 MAX_PAGES = 70           # plafond de sécurité (~59 pages réelles)
 PHOTOS_PER_CARD = 1      # 1 photo de couverture dispo sur la liste
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Mots-clés titre → type de bien (exclut les appartements)
 _EXCLUDE_KEYWORDS = re.compile(r"appartement|studio|terrain\b|garage|parking", re.IGNORECASE)

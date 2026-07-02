@@ -10,16 +10,11 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_int as _re_int
+
 BASE_URL = "https://www.properstar.fr"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Department code → URL slug (no accents, no dashes with code)
 DEPT_SLUGS = {
@@ -182,11 +177,6 @@ def _re_float(pattern: str, text: str) -> float | None:
         except Exception:
             pass
     return None
-
-
-def _re_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
 
 
 if __name__ == "__main__":

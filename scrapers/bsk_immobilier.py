@@ -23,13 +23,19 @@ Réponse JSON : data[] (dicts riches), meta.last_page (pagination).
 
 Couverture : réseau national ; stock zone cible faible mais réel.
 
+Flux NATIONAL sans boucle département → les drivers de _base ne s'appliquent
+pas ; on utilise le socle pour le client (make_client), le retry 429/503
+(get_with_retry — l'API throttle), le post-filtre (keep_bien) et le CLI
+(standalone_main).
+
 Interface : async def search(criteres: dict) -> list[dict]
 """
 
 import asyncio
 import re
 
-import httpx
+from scrapers._base import HEADERS as _BASE_HEADERS
+from scrapers._base import get_with_retry, keep_bien, make_client, standalone_main
 
 BASE_URL = "https://bskimmobilier.com"
 API_URL = f"{BASE_URL}/api/property/search"
@@ -40,13 +46,10 @@ PHOTOS_PER_CARD = 10
 # Types BSK à conserver (maisons / propriétés / châteaux)
 KEEP_PROPERTY_TYPES = ["HOUSE", "CASTLE"]
 
+# En-têtes AJAX de l'API interne (UA du socle + spécifiques XHR)
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
+    **_BASE_HEADERS,
     "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Language": "fr-FR,fr;q=0.9",
     "X-Requested-With": "XMLHttpRequest",
     "Referer": f"{BASE_URL}/acheter",
 }
@@ -87,16 +90,13 @@ async def search(criteres: dict) -> list[dict]:
     results: list[dict] = []
     seen_ids: set[str] = set()
 
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=40
-    ) as client:
+    async with make_client(timeout=40, headers=HEADERS) as client:
         last_page = MAX_PAGES
         for page in range(1, MAX_PAGES + 1):
             params = base_params + [("page[number]", str(page))]
-            try:
-                r = await client.get(API_URL, params=params)
-            except Exception as e:
-                print(f"[BSK] Erreur page {page}: {e}")
+            r = await get_with_retry(client, API_URL, params=params)
+            if r is None:
+                print(f"[BSK] Erreur page {page}: réseau")
                 break
             if r.status_code != 200:
                 print(f"[BSK] Stop page {page} (HTTP {r.status_code})")
@@ -116,19 +116,11 @@ async def search(criteres: dict) -> list[dict]:
                     continue
                 if not bien:
                     continue
-                aid = bien["id_annonce"]
-                if aid in seen_ids:
+                # Dédup + bornes (re-vérifiées même si filtrées serveur) ;
+                # dept=None : le filtre strict zipCode est déjà dans _parse_item
+                if not keep_bien(bien, None, seen_ids, prix_max=prix_max,
+                                 prix_min=prix_min, surface_min=surface_min):
                     continue
-                # Bornes (re-vérifiées même si filtrées serveur)
-                p = bien.get("prix") or 0
-                s = bien.get("surface") or 0
-                if prix_max and p and p > prix_max:
-                    continue
-                if prix_min and p and p < prix_min:
-                    continue
-                if surface_min and s and s < surface_min:
-                    continue
-                seen_ids.add(aid)
                 results.append(bien)
 
             if page >= last_page:
@@ -235,33 +227,5 @@ def _agent_name(agent) -> str | None:
     return None
 
 
-# ── CLI standalone ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-
-    criteres = load_criteria()
-    biens = asyncio.run(
-        search(
-            {
-                "departements": criteres.departements,
-                "prix_max": criteres.prix_max,
-                "prix_min": getattr(criteres, "prix_min", 0),
-                "surface_min": criteres.surface_min,
-            }
-        )
-    )
-    print(f"\nTotal BSK: {len(biens)} annonces")
-    depts = sorted({b["code_postal"][:2] for b in biens if b["code_postal"]})
-    print(f"Départements vus : {depts}")
-    for b in biens[:12]:
-        print(
-            f"  [{b['code_postal']}] {b['titre'][:50]}"
-            f" — {b['prix']}€"
-            f" — {b.get('surface') or '?'}m²"
-            f" — terrain {b.get('surface_terrain') or '?'}m²"
-            f" — {b['pieces'] or '?'}p — DPE {b['dpe'] or '?'} — {b['ville']}"
-        )
+    standalone_main(search, "BSK")

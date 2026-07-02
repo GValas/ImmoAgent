@@ -28,6 +28,12 @@ L'annuaire départemental cape à ~30 villes (les mieux pourvues) → couverture
 mais sans fuite. Surface/pièces lus dans le titre ; terrain & DPE non exposés en liste
 (enrichis ensuite par gallery.py sur les survivants).
 
+Migré sur scrapers/_base.py : boucle départements (`run_dept_api`, la structure
+villes-en-parallèle est propre à ce site), slugs (DEFAULT_DEPT_SLUGS), client,
+garde-fou CP, dédup inter-villes et filtres prix/surface (keep_bien). Les
+helpers _parse_price (coupe « ou xxx €/mois ») et _parse_surface (m² sans
+suffixe « hab ») restent locaux — sémantique différente du socle.
+
 Interface : async def search(criteres: dict) -> list[dict]
 """
 
@@ -37,35 +43,19 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import (
+    DEFAULT_DEPT_SLUGS,
+    get_with_retry,
+    keep_bien,
+    run_dept_api,
+    standalone_main,
+)
+
 BASE_URL = "https://www.le-partenaire.fr"
 MAX_PAGES = 6          # pages par ville
 MAX_CITIES = 30        # l'annuaire départemental n'en liste pas plus
 CITY_CONCURRENCY = 6   # villes scrapées en parallèle (borne anti-surcharge)
 PHOTOS_PER_CARD = 1    # une seule vignette en liste ; gallery.py complète ensuite
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
-
-# Code département → slug d'annuaire le-partenaire.fr
-DEPT_SLUGS: dict[str, str] = {
-    "72": "sarthe",
-    "28": "eure-et-loir",
-    "45": "loiret",
-    "89": "yonne",
-    "49": "maine-et-loire",
-    "37": "indre-et-loire",
-    "36": "indre",
-    "18": "cher",
-    "58": "nievre",
-    "41": "loir-et-cher",
-    "53": "mayenne",
-}
 
 # URL détail d'une annonce : /immobilier/vente/maison/{ville}/{CP}/{N}pieces/{id}
 _DETAIL_RE = re.compile(r"/immobilier/vente/maison/[a-z0-9-]+/(\d{5})/(\d+)pieces/(\d+)")
@@ -74,31 +64,22 @@ _CITY_RE = re.compile(r"^/immobilier/vente/maison/[a-z0-9-]+/(\d{5})$")
 
 
 async def search(criteres: dict) -> list[dict]:
-    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
     prix_max = criteres.get("prix_max", 0)
     prix_min = criteres.get("prix_min", 0)
     surface_min = criteres.get("surface_min", 0)
 
-    results: list[dict] = []
+    async def _fetch_dept(client, dept, slug):
+        return await _scrape_dept(client, dept, slug, prix_max, prix_min, surface_min)
 
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=25
-    ) as client:
-        for dept in departements:
-            slug = DEPT_SLUGS.get(dept)
-            if not slug:
-                continue
-            try:
-                biens = await _scrape_dept(
-                    client, dept, slug, prix_max, prix_min, surface_min
-                )
-                results.extend(biens)
-                print(f"[LePartenaire] Dept {dept}: {len(biens)} annonces")
-            except Exception as e:
-                print(f"[LePartenaire] Erreur dept {dept}: {e}")
-            await asyncio.sleep(0.6)
-
-    return results
+    return await run_dept_api(
+        source="le_partenaire",
+        label="LePartenaire",
+        fetch_dept=_fetch_dept,
+        criteres=criteres,
+        dept_slugs=DEFAULT_DEPT_SLUGS,
+        dept_sleep=0.6,
+        client_kwargs={"timeout": 25},
+    )
 
 
 async def _scrape_dept(
@@ -110,9 +91,8 @@ async def _scrape_dept(
     surface_min: int,
 ) -> list[dict]:
     # 1. Annuaire départemental → URLs villes (toutes du département)
-    dir_url = f"{BASE_URL}/immobilier/vente/maison/{slug}"
-    r = await client.get(dir_url)
-    if r.status_code != 200:
+    r = await get_with_retry(client, f"{BASE_URL}/immobilier/vente/maison/{slug}")
+    if r is None or r.status_code != 200:
         return []
     soup = BeautifulSoup(r.text, "html.parser")
     city_paths: list[str] = []
@@ -144,18 +124,12 @@ async def _scrape_dept(
         return_exceptions=True,
     )
 
+    # La dédup inter-villes est assurée par le keep_bien de run_dept_api.
     biens: list[dict] = []
-    seen_ids: set[str] = set()
     for lst in city_lists:
         if isinstance(lst, Exception) or not lst:
             continue
-        for bien in lst:
-            aid = bien["id_annonce"]
-            if aid in seen_ids:        # dédup inter-villes
-                continue
-            seen_ids.add(aid)
-            biens.append(bien)
-
+        biens.extend(lst)
     return biens
 
 
@@ -171,8 +145,8 @@ async def _scrape_city(
     seen_ids: set[str] = set()        # dédup intra-ville (pagination)
     for page in range(1, MAX_PAGES + 1):
         url = f"{BASE_URL}{city_path}" + (f"?page={page}" if page > 1 else "")
-        r = await client.get(url)
-        if r.status_code != 200:
+        r = await get_with_retry(client, url)
+        if r is None or r.status_code != 200:
             break
 
         cards = BeautifulSoup(r.text, "html.parser").select("div.card.item-annonce")
@@ -187,25 +161,11 @@ async def _scrape_city(
                 continue
             if not bien:
                 continue
-
-            # Filtre STRICT département (CP vient de l'URL détail)
-            if not bien["code_postal"] or bien["code_postal"][:2] != dept:
+            # Filtre STRICT département (CP vient de l'URL détail) + dédup +
+            # bornes prix/surface : keep_bien du socle
+            if not keep_bien(bien, dept, seen_ids, prix_max=prix_max,
+                             prix_min=prix_min, surface_min=surface_min):
                 continue
-
-            aid = bien["id_annonce"]
-            if aid in seen_ids:
-                continue
-
-            p = bien.get("prix") or 0
-            s = bien.get("surface") or 0
-            if prix_max and p and p > prix_max:
-                continue
-            if prix_min and p and p < prix_min:
-                continue
-            if surface_min and s and s < surface_min:
-                continue
-
-            seen_ids.add(aid)
             biens.append(bien)
             new_on_page += 1
 
@@ -286,7 +246,7 @@ def _parse_card(card, dept: str) -> dict | None:
     }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers (sémantique propre au site — pas ceux du socle) ───────────────────
 
 def _parse_ville(titre: str) -> str:
     """'Vente Maison à Châtillon-Sur-Indre 5 pièces | 99 m²' → 'Châtillon-Sur-Indre'"""
@@ -325,33 +285,5 @@ def _parse_price(text: str) -> float | None:
         return None
 
 
-# ── CLI standalone ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-
-    criteres = load_criteria()
-    biens = asyncio.run(
-        search(
-            {
-                "departements": criteres.departements,
-                "prix_max": criteres.prix_max,
-                "prix_min": getattr(criteres, "prix_min", 0),
-                "surface_min": criteres.surface_min,
-            }
-        )
-    )
-    print(f"\nTotal Le Partenaire: {len(biens)} annonces")
-    depts = sorted({b["code_postal"][:2] for b in biens if b["code_postal"]})
-    print(f"Départements vus : {depts}")
-    for b in biens[:12]:
-        print(
-            f"  [{b['code_postal']}] {b['titre'][:55]}"
-            f" — {b['prix']}€"
-            f" — {b.get('surface') or '?'}m²"
-            f" — {b.get('pieces') or '?'}p"
-            f" — {b['ville']}"
-        )
+    standalone_main(search, "Le Partenaire")

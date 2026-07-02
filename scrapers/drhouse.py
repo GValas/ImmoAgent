@@ -7,6 +7,12 @@ URL pattern listing : /annonces/vente/maison/{ville}-{cp}?rayon_localisation=50&
     (ex: Le Mans r=50 ramène quelques biens du 61). On post-filtre donc
     STRICTEMENT par code_postal[:2] (comme remax/era).
 
+Migration allégée sur scrapers/_base.py : client, retry, dédup/filtres
+(keep_bien) et CLI viennent du socle. Le driver run_dept_search ne convient pas
+ici : la recherche par RAYON autour d'une ville-ancre conserve les biens de TOUT
+département cible croisés en chemin (pas seulement le département courant), avec
+une dédup partagée entre ancres.
+
 Cartes : article.shadow_border
   - URL    : a[href*="/annonce/vente/"]  → contient ville-{cp}/{type}-N-pieces-Mm2/{id}
   - CP     : extrait du slug de l'URL (fiable) — sinon du H2
@@ -24,19 +30,20 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import (
+    get_with_retry,
+    keep_bien,
+    make_client,
+    parse_float,
+    parse_int,
+    standalone_main,
+)
+
 BASE_URL = "https://www.drhouse-immo.com"
 RAYON_KM = 50          # rayon autour de la ville-ancre (server-side)
 MAX_PAGES = 12         # plafond pages / département
 PHOTOS_PER_CARD = 10
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Code département → ville-ancre (slug ville-cp) servant de centre au rayon.
 # Préfecture de chaque département cible.
@@ -68,18 +75,16 @@ async def search(criteres: dict) -> list[dict]:
     surface_min = criteres.get("surface_min") or 0
 
     results: list[dict] = []
-    seen_ids: set[str] = set()
+    seen_ids: set[str] = set()  # dédup PARTAGÉE entre ancres (les rayons se recouvrent)
 
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=25
-    ) as client:
+    async with make_client(timeout=25) as client:
         for dept in departements:
             anchor = DEPT_ANCHORS.get(dept)
             if not anchor:
                 continue
             try:
                 biens = await _scrape_dept(
-                    client, dept, anchor, departements,
+                    client, anchor, departements,
                     prix_max, prix_min, surface_min, seen_ids,
                 )
                 results.extend(biens)
@@ -93,7 +98,6 @@ async def search(criteres: dict) -> list[dict]:
 
 async def _scrape_dept(
     client: httpx.AsyncClient,
-    dept: str,
     anchor: str,
     departements: list[str],
     prix_max: int,
@@ -108,37 +112,24 @@ async def _scrape_dept(
         if page > 1:
             url += f"&page={page}"
 
-        r = await client.get(url)
-        if r.status_code != 200:
+        r = await get_with_retry(client, url)
+        if r is None or r.status_code != 200:
             break
 
         cards = _parse_html(r.text)
         if not cards:
             break
 
-        page_kept = 0
         for bien in cards:
-            aid = bien["id_annonce"]
-            if aid in seen_ids:
-                continue
-
-            # ── POST-FILTRE DÉPARTEMENT STRICT (le rayon déborde sur les voisins) ──
+            # ── POST-FILTRE DÉPARTEMENT STRICT : le rayon déborde sur les voisins ;
+            # on garde tout bien situé dans UN des départements CIBLES (un bien 41
+            # croisé depuis l'ancre 45 est conservé) → dept=None dans keep_bien.
             cp = bien.get("code_postal") or ""
             if departements and cp[:2] not in departements:
                 continue
-            page_kept += 1
-
-            p = bien.get("prix") or 0
-            s = bien.get("surface") or 0
-            if prix_max and p and p > prix_max:
-                continue
-            if prix_min and p and p < prix_min:
-                continue
-            if surface_min and s and s < surface_min:
-                continue
-
-            seen_ids.add(aid)
-            biens.append(bien)
+            if keep_bien(bien, None, seen_ids, prix_max=prix_max,
+                         prix_min=prix_min, surface_min=surface_min):
+                biens.append(bien)
 
         # Dernière page (listing partiel) → on arrête
         if len(cards) < 21:
@@ -200,7 +191,7 @@ def _parse_card(card) -> dict | None:
     for p_el in card.find_all("p"):
         txt = p_el.get_text(" ", strip=True)
         if "€" in txt and "le m²" not in txt and "/m²" not in txt:
-            prix = _parse_price(txt)
+            prix = parse_float(r"([\d\s\xa0]+)\s*€", txt)
             if prix:
                 break
 
@@ -211,11 +202,11 @@ def _parse_card(card) -> dict | None:
     for li in card.select("li.ellipsis_text"):
         t = li.get_text(" ", strip=True)
         if surface is None and "m²" in t:
-            surface = _parse_surface(t)
+            surface = parse_float(r"([\d\s\xa0]+(?:[.,]\d+)?)\s*m²", t)
         elif pieces is None and "pièce" in t:
-            pieces = _parse_int(t)
+            pieces = parse_int(r"(\d+)", t)
         elif chambres is None and "chambre" in t:
-            chambres = _parse_int(t)
+            chambres = parse_int(r"(\d+)", t)
 
     # fallback surface depuis le slug d'URL (…-129m2/…)
     if surface is None:
@@ -257,60 +248,5 @@ def _parse_card(card) -> dict | None:
     }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text.split("le m²")[0])
-    cleaned = cleaned.replace(",", ".")
-    m = re.search(r"\d+(?:\.\d+)?", cleaned)
-    if m:
-        try:
-            return float(m.group(0))
-        except ValueError:
-            return None
-    return None
-
-
-def _parse_surface(text: str) -> float | None:
-    m = re.search(r"([\d\s\xa0,\.]+)\s*m²", text)
-    if m:
-        val = re.sub(r"[\s\xa0]", "", m.group(1)).replace(",", ".")
-        try:
-            return float(val)
-        except ValueError:
-            return None
-    return None
-
-
-def _parse_int(text: str) -> int | None:
-    m = re.search(r"\d+", text)
-    return int(m.group(0)) if m else None
-
-
-# ── CLI standalone ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-
-    criteres = load_criteria()
-    biens = asyncio.run(
-        search({
-            "departements": criteres.departements,
-            "prix_max": criteres.prix_max,
-            "prix_min": getattr(criteres, "prix_min", 0),
-            "surface_min": criteres.surface_min,
-        })
-    )
-    print(f"\nTotal Dr House Immo: {len(biens)} annonces")
-    by_dept: dict[str, int] = {}
-    for b in biens:
-        by_dept[b["departement"]] = by_dept.get(b["departement"], 0) + 1
-    print("Par département:", dict(sorted(by_dept.items())))
-    for b in biens[:8]:
-        print(
-            f"  [{b['departement']}] {b['titre'][:60]}"
-            f" — {b['prix']}€ — {b.get('surface')}m²"
-            f" — {b['ville']} ({b['code_postal']})"
-        )
+    standalone_main(search, "Dr House Immo")

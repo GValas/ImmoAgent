@@ -39,20 +39,14 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://vente37.fr"
 # Pages listant réellement les annonces (les pages de villes sont du SEO vide)
 LISTING_PAGES = ["/BIEN/maison.html", "/BIEN/appartement.html"]
 PHOTOS_PER_CARD = 5
 DEPT = "37"  # site mono-département (Indre-et-Loire)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 _EXCLUDE_TYPE = re.compile(
     r"terrain|local|commerce|garage|parking|immeuble|bureau|fonds", re.IGNORECASE

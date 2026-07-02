@@ -9,6 +9,9 @@ import re
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
+from scrapers._base import parse_float as _re_float
+from scrapers._base import parse_str_upper as _re_str
+
 BASE_URL = "https://www.safti.fr"
 
 DEPT_SLUGS = {
@@ -179,21 +182,6 @@ def _parse_card(card, dept: str) -> dict | None:
         "dpe": dpe,
         "agence": "SAFTI",
     }
-
-
-def _re_float(pattern: str, text: str) -> float | None:
-    m = re.search(pattern, text)
-    if m:
-        try:
-            return float(m.group(1).replace(" ", "").replace(",", "."))
-        except Exception:
-            pass
-    return None
-
-
-def _re_str(pattern: str, text: str) -> str | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return m.group(1).upper() if m else None
 
 
 if __name__ == "__main__":

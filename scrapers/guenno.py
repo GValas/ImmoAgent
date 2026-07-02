@@ -41,20 +41,15 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.guenno.com"
 LISTING_PATH = "/biens/achat/maison"
 MAX_PAGES = 8
 PHOTOS_PER_CARD = 10
 DETAIL_CONCURRENCY = 4
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Départements réellement couverts par Guenno (mono-secteur Ille-et-Vilaine).
 # Si la zone cible ne contient pas 35 → search() retourne [] sans requête.
@@ -345,14 +340,6 @@ def _detail_photos(body: str) -> list[str]:
         if u not in out:
             out.append(u)
     return out
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[^\d]", "", text)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
 
 
 def _to_float(v) -> float | None:

@@ -38,18 +38,12 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.immobilier-occitan.com"
 PHOTOS_PER_CARD = 10
 MAX_DETAILS = 60  # garde-fou sur le nombre de pages détail ouvertes
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Code département → slug d'URL /ventes-biens-immobiliers-{slug}
 # Seul "lozere" (48) renvoie des annonces (agence mono-département). Les autres

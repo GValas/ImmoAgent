@@ -38,6 +38,8 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://maisons-bourgogne.fr"
 LISTING_URL = f"{BASE_URL}/index.php?action=list"
 GEO_API = "https://geo.api.gouv.fr/communes"
@@ -50,14 +52,6 @@ AGENCE_DEPTS = ["58", "71", "21", "89"]
 MAX_PAGES = 8          # plafond de sécurité (~4 pages réelles)
 PHOTOS_PER_CARD = 1
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Premier segment de l'en-tête → on ne garde que maisons / propriétés / fermes...
 _KEEP_TYPE = re.compile(

@@ -10,49 +10,26 @@ Filtre département CÔTÉ SERVEUR (slug + code) FIABLE : 100% des CP exposés
 appartiennent au dept demandé (vérifié sur les 11 depts cibles, 0 fuite).
 Volume conséquent : 25 cartes/page, 18-34 pages/dept (agrège tous les adhérents FNAIM).
 
-Cartes : div.itemInfo (le lien détail est /annonce-immobiliere/{id}/17-acheter-maison-{ville}-{CP}.htm)
+Cartes : ul.liste li.item (le lien détail est /annonce-immobiliere/{id}/17-acheter-maison-{ville}-{CP}.htm)
   Texte carte : "Maison 4 pièces 49m² FRESNAY SUR SARTHE 72130 20 000€ 2 chambres ..."
   Quand le prix est masqué ("Nous consulter pour le prix"), ville/CP sont absents du
   texte → on prend TOUJOURS ville+CP depuis le slug de l'URL détail.
   Photos : imagesv2.fnaim.fr
 
+Migré sur scrapers/_base.py (modèle le_tuc.py) : HEADERS, map dept→slug, boucle
+département + pagination, filtres prix/surface et dédup id viennent du socle. Ne
+restent ici que le patron d'URL, le sélecteur de carte et le parsing des champs
+(prix après CP, ville/CP depuis le slug détail).
+
 Interface : async def search(criteres: dict) -> list[dict]
 """
-
-import asyncio
 import re
 
-import httpx
-from bs4 import BeautifulSoup
+from scrapers._base import parse_int, run_dept_search, standalone_main
 
 BASE_URL = "https://www.fnaim.fr"
 MAX_PAGES = 25            # plafond par dept (cap raisonnable ; 25 pages ≈ 625 annonces)
 PHOTOS_PER_CARD = 8
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
-
-DEPT_SLUGS: dict[str, str] = {
-    "72": "sarthe",
-    "28": "eure-et-loir",
-    "45": "loiret",
-    "89": "yonne",
-    "49": "maine-et-loire",
-    "37": "indre-et-loir",   # corrigé ci-dessous via map réelle
-    "36": "indre",
-    "18": "cher",
-    "58": "nievre",
-    "41": "loir-et-cher",
-    "53": "mayenne",
-}
-# slug exact (vérifié) — indre-et-loire
-DEPT_SLUGS["37"] = "indre-et-loire"
 
 _TYPE_RE = re.compile(
     r"\b(maison|villa|propri[eé]t[eé]|ch[aâ]teau|manoir|long[eè]re|ferme|moulin|"
@@ -61,91 +38,27 @@ _TYPE_RE = re.compile(
 )
 
 
+def _page_url(dept: str, slug: str, page: int) -> str:
+    if page == 1:
+        return f"{BASE_URL}/liste-annonces-immobilieres/17-acheter-maison-{slug}-{dept}.htm"
+    return (
+        f"{BASE_URL}/liste-annonces-immobilieres/"
+        f"17-acheter-maison-{slug}-{dept}-page-{page}.htm"
+    )
+
+
 async def search(criteres: dict) -> list[dict]:
-    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
-    prix_max = criteres.get("prix_max", 0)
-    prix_min = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 0)
-
-    results: list[dict] = []
-
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=25
-    ) as client:
-        for dept in departements:
-            slug = DEPT_SLUGS.get(dept)
-            if not slug:
-                continue
-            try:
-                biens = await _scrape_dept(
-                    client, dept, slug, prix_max, prix_min, surface_min
-                )
-                results.extend(biens)
-                print(f"[FNAIM] Dept {dept}: {len(biens)} annonces")
-            except Exception as e:
-                print(f"[FNAIM] Erreur dept {dept}: {e}")
-            await asyncio.sleep(0.5)
-
-    return results
-
-
-async def _scrape_dept(
-    client: httpx.AsyncClient,
-    dept: str,
-    slug: str,
-    prix_max: int,
-    prix_min: int,
-    surface_min: int,
-) -> list[dict]:
-    biens: list[dict] = []
-    seen: set[str] = set()
-
-    for page in range(1, MAX_PAGES + 1):
-        if page == 1:
-            url = f"{BASE_URL}/liste-annonces-immobilieres/17-acheter-maison-{slug}-{dept}.htm"
-        else:
-            url = (
-                f"{BASE_URL}/liste-annonces-immobilieres/"
-                f"17-acheter-maison-{slug}-{dept}-page-{page}.htm"
-            )
-        r = await client.get(url)
-        if r.status_code != 200:
-            break
-
-        soup = BeautifulSoup(r.text, "html.parser")
-        cards = soup.select("ul.liste li.item")
-        if not cards:
-            break
-
-        new_on_page = 0
-        for card in cards:
-            bien = _parse_card(card, dept)
-            if not bien:
-                continue
-            if bien["id_annonce"] in seen:
-                continue
-            # Sécurité dept (filtre serveur déjà fiable)
-            if bien["code_postal"] and bien["code_postal"][:2] != dept:
-                continue
-
-            p = bien.get("prix") or 0
-            s = bien.get("surface") or 0
-            if prix_max and p and p > prix_max:
-                continue
-            if prix_min and p and p < prix_min:
-                continue
-            if surface_min and s and s < surface_min:
-                continue
-
-            seen.add(bien["id_annonce"])
-            biens.append(bien)
-            new_on_page += 1
-
-        if new_on_page == 0:
-            break
-        await asyncio.sleep(0.4)
-
-    return biens
+    return await run_dept_search(
+        source="fnaim",
+        label="FNAIM",
+        page_url=_page_url,
+        card_selector="ul.liste li.item",
+        parse_card=_parse_card,
+        criteres=criteres,
+        max_pages=MAX_PAGES,
+        page_sleep=0.4,
+        dept_sleep=0.5,
+    )
 
 
 def _parse_card(card, dept: str) -> dict | None:
@@ -180,8 +93,8 @@ def _parse_card(card, dept: str) -> dict | None:
             "propriete", "propriété"
         )
 
-    pieces = _int(r"(\d+)\s*pi[eè]ces?", text)
-    chambres = _int(r"(\d+)\s*chambres?", text)
+    pieces = parse_int(r"(\d+)\s*pi[eè]ces?", text)
+    chambres = parse_int(r"(\d+)\s*chambres?", text)
     surface = _surface(text)
     prix = _price(text)
 
@@ -229,7 +142,7 @@ def _parse_card(card, dept: str) -> dict | None:
     }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers propres à FNAIM (formats non couverts par _base) ───────────────────
 
 def _loc_from_slug(href: str) -> tuple[str, str]:
     """'/annonce-immobiliere/52632180/17-acheter-maison-st-calais-72120.htm'
@@ -241,12 +154,8 @@ def _loc_from_slug(href: str) -> tuple[str, str]:
     return ville, m.group(2)
 
 
-def _int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
-
-
 def _surface(text: str) -> float | None:
+    """Surface = 1er 'NNN m²' du texte carte (pas de mot-clé 'hab', bornes 8-3000)."""
     m = re.search(r"([\d\s\xa0]{1,7})\s*m²", text)
     if not m:
         return None
@@ -277,33 +186,5 @@ def _price(text: str) -> float | None:
         return None
 
 
-# ── CLI standalone ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-
-    criteres = load_criteria()
-    biens = asyncio.run(
-        search(
-            {
-                "departements": criteres.departements[:4],
-                "prix_max": criteres.prix_max,
-                "prix_min": getattr(criteres, "prix_min", 0),
-                "surface_min": criteres.surface_min,
-            }
-        )
-    )
-    print(f"\nTotal FNAIM: {len(biens)} annonces")
-    depts = sorted({b["code_postal"][:2] for b in biens if b["code_postal"]})
-    print(f"Départements vus : {depts}")
-    for b in biens[:10]:
-        print(
-            f"  [{b['code_postal']}] {b['titre'][:55]}"
-            f" — {b['prix']}€"
-            f" — {b.get('surface') or '?'}m²"
-            f" — {b.get('pieces') or '?'}p/{b.get('chambres') or '?'}ch"
-            f" — {b['ville']}"
-        )
+    standalone_main(search, "FNAIM")

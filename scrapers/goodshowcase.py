@@ -15,21 +15,28 @@ Cartes : div.panel.panel-default contenant un `h3 a` (les panels sans h3 a sont
   - URL/titre : h3 a[href]  → /annonce-{slug}-{id}.html  (id numérique en fin de slug)
   - Loc       : p[title]    → "Gidy 45520 - 0"  → ville + CP
   - Prix      : span.label  → "446 250 €"
-  - Infos     : div.infos kbd[title]  → "Surface : 208 m²", "7 piéces"(T7), "3 chambres", "5 photos"
+  - Infos     : div.infos kbd[title]  → "Surface : 208 m²", "7 piéces"(T7), "3 chambres"
   - Photos    : a[href^='/ph/'] (vignettes pleine résolution) + img.thumbnail
-  - Description: p.text-justify (extrait)
-  - Agence    : mentionnée parfois dans l'extrait (non structurée) → None
+  - Description: p.text-justify (extrait) ; agence parfois en tête ("X vous propose…")
 
-Post-filtre dept STRICT sur code_postal[:2] malgré le filtre serveur.
+Migré sur scrapers/_base.py : la double boucle dept × thème ne rentre pas dans
+`run_dept_search` → on passe par `run_dept_api` (fetch_dept = thèmes + pagination,
+le socle applique client, garde-fou CP strict, dédup id et filtres prix/surface).
 
 Interface : async def search(criteres: dict) -> list[dict]
 """
-
 import asyncio
 import re
 
-import httpx
 from bs4 import BeautifulSoup
+
+from scrapers._base import (
+    DEFAULT_DEPT_SLUGS,
+    get_with_retry,
+    parse_price_digits,
+    run_dept_api,
+    standalone_main,
+)
 
 BASE_URL = "https://www.goodshowcase.com"
 SEARCH_URL = f"{BASE_URL}/index.php"
@@ -39,131 +46,63 @@ PHOTOS_PER_CARD = 10
 # Thèmes du portail (mot-clé serveur motcle[])
 THEMES = ["caractere", "longere"]
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
-
-# Code département → slug (documentaire ; le filtre réel passe par id_dept[]=NN)
-DEPT_SLUGS: dict[str, str] = {
-    "72": "sarthe",
-    "28": "eure-et-loir",
-    "45": "loiret",
-    "89": "yonne",
-    "49": "maine-et-loire",
-    "37": "indre-et-loire",
-    "36": "indre",
-    "18": "cher",
-    "58": "nievre",
-    "41": "loir-et-cher",
-    "53": "mayenne",
-}
-
 
 async def search(criteres: dict) -> list[dict]:
-    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
-    prix_max = criteres.get("prix_max", 0)
-    prix_min = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 0)
-
-    results: list[dict] = []
-
-    async with httpx.AsyncClient(
-        headers=HEADERS, follow_redirects=True, timeout=20
-    ) as client:
-        for dept in departements:
-            if dept not in DEPT_SLUGS:
-                continue
-            seen_ids: set[str] = set()
-            dept_count = 0
-            for theme in THEMES:
-                try:
-                    biens = await _scrape_dept_theme(
-                        client, dept, theme, prix_max, prix_min,
-                        surface_min, seen_ids,
-                    )
-                    results.extend(biens)
-                    dept_count += len(biens)
-                except Exception as e:
-                    print(f"[Goodshowcase] Erreur dept {dept} / {theme}: {e}")
-                await asyncio.sleep(0.6)
-            print(f"[Goodshowcase] Dept {dept}: {dept_count} annonces")
-
-    return results
+    return await run_dept_api(
+        source="goodshowcase",
+        label="Goodshowcase",
+        fetch_dept=_fetch_dept,
+        criteres=criteres,
+        dept_slugs=DEFAULT_DEPT_SLUGS,  # documentaire : le filtre réel passe par id_dept[]=NN
+        dept_sleep=0.6,
+    )
 
 
-async def _scrape_dept_theme(
-    client: httpx.AsyncClient,
-    dept: str,
-    theme: str,
-    prix_max: int,
-    prix_min: int,
-    surface_min: int,
-    seen_ids: set[str],
-) -> list[dict]:
+async def _fetch_dept(client, dept: str, slug: str | None) -> list[dict]:
+    """Balaye les deux thèmes du portail pour un département (pagination ?page=N).
+    Dédup id locale inter-thèmes (une annonce peut matcher les deux mots-clés)."""
     biens: list[dict] = []
+    seen_ids: set[str] = set()
 
-    params = {
-        "mod": "search",
-        "url_transaction[]": "acheter",
-        "url_bien[]": "maison",
-        "id_dept[]": dept,
-        "motcle[]": theme,
-        "ordre": "ajout",
-    }
+    for theme in THEMES:
+        params = {
+            "mod": "search",
+            "url_transaction[]": "acheter",
+            "url_bien[]": "maison",
+            "id_dept[]": dept,
+            "motcle[]": theme,
+            "ordre": "ajout",
+        }
+        for page in range(1, MAX_PAGES + 1):
+            params["page"] = str(page)
+            r = await get_with_retry(client, SEARCH_URL, params=params)
+            if r is None or r.status_code != 200:
+                break
 
-    for page in range(1, MAX_PAGES + 1):
-        params["page"] = str(page)
-        r = await client.get(SEARCH_URL, params=params)
-        if r.status_code != 200:
-            break
+            soup = BeautifulSoup(r.text, "html.parser")
+            cards = [
+                p for p in soup.select("div.panel.panel-default")
+                if p.select_one("h3 a")
+            ]
+            if not cards:
+                break
 
-        soup = BeautifulSoup(r.text, "html.parser")
-        cards = [
-            p for p in soup.select("div.panel.panel-default")
-            if p.select_one("h3 a")
-        ]
-        if not cards:
-            break
+            new_on_page = 0
+            for card in cards:
+                try:
+                    bien = _parse_card(card, dept)
+                except Exception:
+                    continue
+                if not bien or bien["id_annonce"] in seen_ids:
+                    continue
+                seen_ids.add(bien["id_annonce"])
+                biens.append(bien)
+                new_on_page += 1
 
-        new_on_page = 0
-        for card in cards:
-            try:
-                bien = _parse_card(card, dept)
-            except Exception:
-                continue
-            if not bien:
-                continue
-
-            # Post-filtre dept STRICT (0 fuite)
-            if not bien["code_postal"] or bien["code_postal"][:2] != dept:
-                continue
-
-            aid = bien["id_annonce"]
-            if aid in seen_ids:
-                continue
-
-            p = bien.get("prix") or 0
-            s = bien.get("surface") or 0
-            if prix_max and p and p > prix_max:
-                continue
-            if prix_min and p and p < prix_min:
-                continue
-            if surface_min and s and s < surface_min:
-                continue
-
-            seen_ids.add(aid)
-            biens.append(bien)
-            new_on_page += 1
-
-        if new_on_page == 0:
-            break
-
-        await asyncio.sleep(0.5)
+            if new_on_page == 0:
+                break
+            await asyncio.sleep(0.5)
+        await asyncio.sleep(0.6)
 
     return biens
 
@@ -181,14 +120,16 @@ def _parse_card(card, dept: str) -> dict | None:
     m_id = re.search(r"-(\d+)\.html", href)
     id_annonce = m_id.group(1) if m_id else url
 
-    # Localisation : "Gidy 45520 - 0"
+    # Localisation : "Gidy 45520 - 0" — CP OBLIGATOIRE (post-filtre dept strict)
     loc_el = card.select_one("p[title]")
     loc = loc_el.get("title") or loc_el.get_text(" ", strip=True) if loc_el else ""
     ville, code_postal = _parse_loc(loc)
+    if not code_postal:
+        return None
 
     # Prix
     price_el = card.select_one("span.label")
-    prix = _parse_price(price_el.get_text(" ", strip=True) if price_el else "")
+    prix = parse_price_digits(price_el.get_text(" ", strip=True) if price_el else "")
 
     # Infos (kbd) : surface, pièces (Tn), chambres
     surface = None
@@ -264,7 +205,7 @@ def _parse_card(card, dept: str) -> dict | None:
     }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers propres à Goodshowcase (formats non couverts par _base) ─────────────
 
 def _parse_loc(text: str) -> tuple[str, str]:
     """'Gidy 45520 - 0' → ('Gidy', '45520')"""
@@ -276,17 +217,8 @@ def _parse_loc(text: str) -> tuple[str, str]:
     return ville, cp
 
 
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
-
-
 def _parse_surface(text: str) -> float | None:
-    """'Surface : 208 m²' → 208.0"""
+    """'Surface : 208 m²' → 208.0 (bornes 8-5000, sans mot-clé 'hab')"""
     m = re.search(r"([\d\s\xa0]+)\s*m", text)
     if m:
         val = re.sub(r"[\s\xa0]", "", m.group(1))
@@ -318,34 +250,5 @@ def _type_from_href(href: str) -> str:
     return "maison"
 
 
-# ── CLI standalone ────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    import sys
-
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-
-    criteres = load_criteria()
-    biens = asyncio.run(
-        search(
-            {
-                "departements": criteres.departements,
-                "prix_max": criteres.prix_max,
-                "prix_min": getattr(criteres, "prix_min", 0),
-                "surface_min": criteres.surface_min,
-            }
-        )
-    )
-    print(f"\nTotal Goodshowcase: {len(biens)} annonces")
-    depts = sorted({b["code_postal"][:2] for b in biens if b["code_postal"]})
-    print(f"Départements vus : {depts}")
-    for b in biens[:12]:
-        print(
-            f"  [{b['code_postal']}] {b['titre'][:55]}"
-            f" — {b['prix']}€"
-            f" — {b.get('surface') or '?'}m²"
-            f" — {b.get('pieces') or '?'}p/{b.get('chambres') or '?'}ch"
-            f" — {b['type_bien']} — {b['ville']}"
-            f" — {len(b['photos'])} photos"
-        )
+    standalone_main(search, "Goodshowcase")

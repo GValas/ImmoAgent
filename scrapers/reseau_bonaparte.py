@@ -46,6 +46,9 @@ import urllib.parse
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_int as _parse_int
+
 BASE_URL = "https://www.reseau-bonaparte.com"
 CITIES_ENDPOINT = "/api/loadCompletedCities"
 PHOTOS_PER_CARD = 10
@@ -53,14 +56,6 @@ PHOTOS_PER_CARD = 10
 # Départements cibles (sécurité ; la liste réelle vient de criteres)
 TARGET_DEPTS = {"72", "28", "45", "89", "49", "37", "36", "18", "58", "41", "53"}
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 _TYPE_FROM_TEXT = re.compile(
     r"manoir|ch[aâ]teau|propri[eé]t[eé]|maison\s+de\s+ma[iî]tre|longère|longere|"
@@ -292,11 +287,6 @@ def _parse_price(text: str, code_postal: str = "") -> float | None:
         return float(cleaned) if cleaned else None
     except ValueError:
         return None
-
-
-def _parse_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
 
 
 def _parse_surface(text: str) -> float | None:

@@ -36,20 +36,14 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.noovimo.fr"
 LISTING_PATH = "/biens-a-vendre"
 PAGE_PARAM = "378596e5_page"   # param de pagination native Webflow de la liste biens
 MAX_PAGES = 50                 # plafond de sécurité (~30 pages réelles)
 PHOTOS_PER_CARD = 1            # 1 photo de couverture sur la liste
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Types conservés (champ `type` de la carte) : maisons/villas uniquement.
 _KEEP_TYPE = re.compile(r"maison|villa|propri[eé]t[eé]|demeure|manoir|long[eè]re", re.IGNORECASE)

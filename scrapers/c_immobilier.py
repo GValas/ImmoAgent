@@ -36,19 +36,14 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_int as _parse_int
+
 BASE_URL = "https://www.c-immobilier.fr"
 SEARCH_URL = BASE_URL + "/immobilier.php?recherche_offre=achat&recherche_tri=DISTANCE_ASC&page={page}"
 MAX_PAGES = 25
 PHOTOS_PER_CARD = 10
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Types de bien (champ .property_type) à conserver : maisons / propriétés.
 _KEEP_TYPE = re.compile(
@@ -269,11 +264,6 @@ def _parse_price(text: str) -> float | None:
     if v is not None and v < 1000:
         return None
     return v
-
-
-def _parse_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
 
 
 def _parse_m2(pattern: str, text: str) -> float | None:

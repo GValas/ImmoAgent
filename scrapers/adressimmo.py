@@ -42,19 +42,13 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+
 BASE_URL = "https://www.adressimmo.fr"
 LISTING_URL = f"{BASE_URL}/fr/ventes"
 PAGE_SIZE = 20
 MAX_BIENS = 400  # garde-fou (catalogue ~130)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Types de bien à conserver (segment de slug / alt) : maisons / propriétés…
 _KEEP_TYPE = re.compile(

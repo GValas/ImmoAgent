@@ -45,6 +45,10 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from scrapers._base import HEADERS
+from scrapers._base import parse_int as _parse_int
+from scrapers._base import parse_price_digits as _parse_price
+
 BASE_URL = "https://www.reseau-expertimo.fr"
 HOME_URL = f"{BASE_URL}/a-vendre/1"
 SEARCH_SEED = f"{BASE_URL}/nos-biens/xdpezdofyyytkyf3/1"  # token "all" de départ
@@ -52,14 +56,6 @@ LOCAL_ITEMS = f"{BASE_URL}/i/javascript/localisationAllItems"
 MAX_PAGES = 15
 PHOTOS_PER_CARD = 1
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
 # Terme de recherche autocomplete par département cible → résout l'item "dep-{id}".
 DEPT_QUERY: dict[str, str] = {
@@ -337,20 +333,6 @@ def _parse_loc(text: str) -> tuple[str, str]:
         cp = m_cp.group(1)
     ville = re.sub(r"\s*\(\d{5}\)\s*$", "", text).strip()
     return ville, cp
-
-
-def _parse_price(text: str) -> float | None:
-    cleaned = re.sub(r"[€\s\xa0]", "", text)
-    cleaned = re.sub(r"[^\d]", "", cleaned)
-    try:
-        return float(cleaned) if cleaned else None
-    except ValueError:
-        return None
-
-
-def _parse_int(pattern: str, text: str) -> int | None:
-    m = re.search(pattern, text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
 
 
 def _parse_surface_hab(text: str) -> float | None:
