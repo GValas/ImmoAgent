@@ -9,6 +9,9 @@
 #   ./run_prod.sh --no-build            # relance sans reconstruire l'image
 #   ./run_prod.sh --cpu                 # Ollama sans GPU (repli CPU, plus lent)
 #   ./run_prod.sh --model qwen2.5:7b    # surcharge le modèle Ollama
+#   ./run_prod.sh --clean               # `compose down` + purge des anciens
+#                                       # conteneurs AVANT de relancer (repartir
+#                                       # propre ; par défaut on fait juste `up`)
 # ============================================================
 set -euo pipefail
 
@@ -19,12 +22,14 @@ cd "$(dirname "$(readlink -f "$0")")"
 DO_BUILD=1
 FOLLOW_LOGS=0
 USE_GPU=1
+DO_CLEAN=0
 MODEL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) DO_BUILD=0 ;;
     --logs)     FOLLOW_LOGS=1 ;;
     --cpu)      USE_GPU=0 ;;
+    --clean)    DO_CLEAN=1 ;;
     --model)    MODEL="${2:-}"; shift ;;
     *) echo "Option inconnue : $1" >&2; exit 2 ;;
   esac
@@ -58,12 +63,17 @@ fi
 #     tout en gardant les couches lourdes (Playwright) en cache. ---
 export CACHEBUST="$(date +%s)"
 
-# --- Nettoyage idempotent : retire d'éventuels conteneurs aux noms fixes laissés par
-#     un déploiement précédent (ancien `docker run`, ou run compose interrompu). Sans
-#     ça, `compose up` échoue sur « container name already in use ». Les volumes
-#     (dont ollama-models) et le réseau persistent. ---
-docker compose "${COMPOSE_FILES[@]}" down --remove-orphans >/dev/null 2>&1 || true
-docker rm -f immo-agent-scheduler immo-agent-ollama immo-agent-ollama-pull >/dev/null 2>&1 || true
+# --- Nettoyage OPTIONNEL (--clean) : `compose down` + retrait d'éventuels
+#     conteneurs aux noms fixes laissés par un déploiement précédent (ancien
+#     `docker run`, ou run compose interrompu) qui feraient échouer `compose up`
+#     sur « container name already in use ». Les volumes (dont ollama-models) et
+#     le réseau persistent. Par défaut on NE stoppe PAS la stack : `up -d`
+#     recrée seulement ce qui a changé (pas d'interruption inutile). ---
+if [ "$DO_CLEAN" -eq 1 ]; then
+  echo "==> Nettoyage (--clean) : arrêt de la stack + purge des anciens conteneurs"
+  docker compose "${COMPOSE_FILES[@]}" down --remove-orphans >/dev/null 2>&1 || true
+  docker rm -f immo-agent-scheduler immo-agent-ollama immo-agent-ollama-pull >/dev/null 2>&1 || true
+fi
 
 # --- Build + lancement ---
 UP_ARGS=(up -d --remove-orphans)

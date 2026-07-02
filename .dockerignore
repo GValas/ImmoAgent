@@ -11,6 +11,8 @@ __pycache__/
 # Données générées (montées via volume, pas besoin dans l'image)
 data/raw/
 data/output/
+# État runtime (biens_vus, scheduler_state, scraper_health…) — jamais dans l'image
+data/*.json
 logs/
 *.xlsx
 ~$*

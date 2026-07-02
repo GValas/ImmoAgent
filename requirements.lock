@@ -1,12 +1,26 @@
-# Versions figées (reproductibilité builds / CI).
-# Régénérer après mise à jour : pip install -r requirements.txt && pip freeze
+# Versions figées, directes ET transitives (reproductibilité des builds).
+# Utilisé en priorité par scripts/install-stack.sh (repli : requirements.txt).
+# Régénérer après mise à jour des dépendances :
+#   pip install -r requirements.txt && pip freeze > requirements.lock
+#   (retirer les paquets hors-stack : GitPython/gitdb/smmap/setuptools…)
 # Voir requirements.txt pour les contraintes souples (>=) côté développement.
+anyio==4.13.0
 beautifulsoup4==4.15.0
+certifi==2026.5.20
+et_xmlfile==2.0.0
+greenlet==3.5.1
+h11==0.16.0
+httpcore==1.0.9
 httpx==0.28.1
+idna==3.18
 numpy==2.4.6
 openpyxl==3.1.5
 pandas==3.0.3
 pillow==12.2.0
 playwright==1.60.0
+pyee==13.0.1
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
+six==1.17.0
+soupsieve==2.8.4
+typing_extensions==4.15.0

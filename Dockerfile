@@ -22,13 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #     devcontainer (.devcontainer/Dockerfile) → source unique de vérité.
 #     Image légère, 100 % CPU : le matching qualitatif est délégué au conteneur
 #     `ollama` (cf. docker-compose.yml), plus de torch ni de modèle embarqué. ---
-COPY requirements.txt scripts/install-stack.sh ./
+COPY requirements.txt requirements.lock scripts/install-stack.sh ./
 RUN bash install-stack.sh && rm -f install-stack.sh
 
 # --- Code applicatif (en dernier : invalide le moins de couches au rebuild) ---
 # CACHEBUST : run_prod.sh passe un timestamp → cette couche (et donc le code) est
-# TOUJOURS reconstruite, alors que les couches lourdes ci-dessus (torch, chromium,
-# modèle NLP) restent en cache tant que requirements.txt ne change pas. Garantit du
+# TOUJOURS reconstruite, alors que les couches lourdes ci-dessus (deps Python,
+# chromium) restent en cache tant que requirements ne changent pas. Garantit du
 # code à jour sans rebuild complet.
 ARG CACHEBUST=0
 COPY . .

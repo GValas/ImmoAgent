@@ -14,11 +14,21 @@
 #
 # Le modèle est configurable : QUALITATIVE_MODEL=qwen2.5:7b docker compose up -d
 # ============================================================
+
+# Rotation des logs pour TOUS les services (sinon json-file grossit sans limite).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
 
   # --- LLM local (GPU) : évalue la correspondance annonce ↔ description qualitative.
   ollama:
-    image: ollama/ollama:latest
+    # Tag épinglé (pas :latest) → mise à jour DÉLIBÉRÉE : bumper la version ici
+    # et dans ollama-pull en même temps, après vérification.
+    image: ollama/ollama:0.9.2
     container_name: immo-agent-ollama
     restart: unless-stopped
     # --- Accès GPU NVIDIA (nécessite nvidia-container-toolkit sur l'hôte) ---
@@ -40,13 +50,17 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    logging: *default-logging
     # Pas de port publié sur l'hôte : Ollama n'est joignable que sur le réseau
     # Docker interne (rien en local), conformément au besoin.
 
   # --- Tâche one-shot : s'assure que le modèle est présent avant le scheduler.
   #     `ollama pull` est idempotent (no-op si le modèle est déjà dans le volume).
+  #     BEST-EFFORT : en cas d'échec (hôte hors-ligne au redémarrage), on sort en 0
+  #     pour ne pas bloquer le scheduler — le modèle déjà présent dans le volume
+  #     sera utilisé, et sinon le match qualitatif est sauté (dégradation gracieuse).
   ollama-pull:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.9.2       # même tag que le service ollama (bumper ensemble)
     # Pas de container_name fixe : tâche one-shot (elle sort une fois le modèle pull).
     # Un nom fixe laisserait un conteneur « Exited » qui bloquerait le prochain `up`
     # (« container name already in use ») → on laisse compose l'auto-nommer.
@@ -56,8 +70,9 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       QUALITATIVE_MODEL: ${QUALITATIVE_MODEL:-qwen2.5:3b}
-    entrypoint: ["/bin/sh", "-c", "ollama pull \"$${QUALITATIVE_MODEL:-qwen2.5:3b}\""]
+    entrypoint: ["/bin/sh", "-c", "ollama pull \"$${QUALITATIVE_MODEL:-qwen2.5:3b}\" || echo '[ollama-pull] pull échoué — le modèle en cache sera utilisé si présent (sinon match qualitatif sauté)'"]
     restart: "no"
+    logging: *default-logging
 
   # --- Pipeline immo-agent (scheduler en boucle continue).
   scheduler:
@@ -86,6 +101,15 @@ services:
       - ./data:/app/data
       # logs accessibles depuis l'hôte
       - ./logs:/app/logs
+    # Sonde de vivacité basée sur la fraîcheur de l'état : scheduler_state.json
+    # est réécrit à chaque cycle → s'il a plus de 6 h, le scheduler est bloqué.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,sys,time; p='/app/data/scheduler_state.json'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 6*3600 else 1)"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 30m
+    logging: *default-logging
     # Aucune clé API Anthropic : la seule intelligence est le LLM LOCAL Ollama.
 
 volumes:

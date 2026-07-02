@@ -37,9 +37,14 @@ models.py             Dataclasses : Bien, CriteresRecherche
 core/                 Utilitaires partagés (ex-logique dupliquée dans les workers)
   dedup.py            Clé de déduplication unique (prix+surface+ville)
   filters.py          Filtres a posteriori : apply_posterior_filters() + helpers
-                      (structurel/DPE, terrain depuis texte, mots-clés, photos_min)
+                      (structurel/DPE, refilter_dpe, terrain depuis texte,
+                      mots-clés, photos_min)
   excel_export.py     Writer Excel UNIQUE (registre de colonnes ; ex-2 writers)
   dept_data.py        DEPT_NOMS / dept_nom / filter_by_dept
+  geo.py              normalize_commune / haversine_km / geocode_commune + cache
+                      UNIQUE (ex-copies bus.py/gares.py)
+  state_io.py         atomic_write_json / load_json : écriture atomique + lecture
+                      tolérante aux fichiers d'état corrompus
   logging_setup.py    Horodatage centralisé des prints [Worker] (ex-monkeypatch ×2)
 
 workers/
@@ -53,9 +58,15 @@ workers/
 
 scrapers/             295 scrapers actifs + 42 inactifs (source : sources.yaml)
                       Interface obligatoire : async def search(criteres: dict) -> list[dict]
-  _base.py            Socle commun SSR : HEADERS, DEFAULT_DEPT_SLUGS, make_client +
-                      get_with_retry, helpers parse_*, driver run_dept_search,
-                      standalone_main. Pilote migré : le_tuc.py (≈150 l. vs 343).
+  _base.py            Socle commun : HEADERS (+ pool d'UA), DEFAULT_DEPT_SLUGS,
+                      make_client + get_with_retry, helpers parse_* (price,
+                      price_digits, int, float, str_upper, terrain, surface, loc),
+                      keep_bien (post-filtre standard exporté), drivers
+                      run_dept_search (SSR) et run_dept_api (API/JSON),
+                      standalone_main. Adoption : ~335/386 scrapers importent
+                      _base (vague mécanique 2026-07 : helpers/HEADERS byte-
+                      identiques consolidés) ; 12 scrapers haut rendement migrés
+                      sur les drivers (le_partenaire, luxuryestate, fnaim…).
 
 tests/                Tests pytest non-réseau (config_loader, dedup, filters, excel)
                       + smoke-import des 340 scrapers (contrat async search()).
@@ -65,9 +76,11 @@ config/
   sources.yaml        Éditable manuellement ou via Claude Code — contient aussi la blacklist
 
 data/
-  raw/                JSON bruts par run (biens_raw_YYYYMMDD_HHMM.json ; purge > 48)
+  raw/                JSON bruts par run (biens_raw_YYYYMMDD_HHMM.json ; purge > 48 ;
+                      sauvegarde PRÉCOCE post-filtre puis réécriture enrichie)
   output/             Excel final (resultats_*.xlsx, suivi_actif.xlsx)
-  biens_vus.json      Hashes inter-runs pour dédup du scheduler
+  biens_vus.json      {hash: date ISO dernière vue} inter-runs (TTL 90 j) — passé
+                      au Hunter pour écarter les déjà-vus AVANT l'enrichissement
   scheduler_state.json  Timestamps dernières exécutions
   scraper_health.json   Compteur d'annonces / source + scrapers muets ≥5 runs
 ```

@@ -29,8 +29,8 @@ RUN rm -f /etc/apt/sources.list.d/yarn.list \
 
 # --- Stack Python + Playwright system-wide (script mutualisé avec la prod).
 #     Pas de venv : le bind-mount du workspace masquerait un .venv construit ici.
-#     cu126 (GPU) par défaut, comme la prod. Exécuté en root (playwright --with-deps). ---
-COPY requirements.txt scripts/install-stack.sh /tmp/install/
+#     100 % CPU (plus de torch). Exécuté en root (playwright --with-deps). ---
+COPY requirements.txt requirements.lock scripts/install-stack.sh /tmp/install/
 RUN cd /tmp/install && bash install-stack.sh && rm -rf /tmp/install
 
 # --- Outils par-utilisateur : Claude Code CLI (binaire natif, pas de Node) dans

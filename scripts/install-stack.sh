@@ -14,7 +14,15 @@
 # ============================================================
 set -euo pipefail
 
-pip install -r requirements.txt
+# Versions figées (requirements.lock, pins == directes + transitives) en priorité
+# pour des builds reproductibles ; repli sur les contraintes souples (>=) sinon.
+if [ -f requirements.lock ]; then
+  echo "==> pip install depuis requirements.lock (versions figées)"
+  pip install -r requirements.lock
+else
+  echo "==> requirements.lock absent — repli sur requirements.txt (>=)"
+  pip install -r requirements.txt
+fi
 
 # Playwright Chromium + libs système (apt).
 playwright install --with-deps chromium

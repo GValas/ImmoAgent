@@ -47,5 +47,11 @@ pythonpath = ["."]
 python_version = "3.12"
 files = ["models.py", "config_loader.py", "core"]
 ignore_missing_imports = true
+# PyYAML installé mais sans stubs (types-PyYAML non exigé) → on ignore l'erreur
+# import-untyped plutôt que d'ajouter une dépendance de stubs.
+disable_error_code = ["import-untyped"]
+# Les modules suivis hors périmètre (ex : scrapers/ importés par core/) sont
+# analysés pour les types mais leurs erreurs ne sont PAS remontées.
+follow_imports = "silent"
 warn_unused_ignores = true
 check_untyped_defs = false

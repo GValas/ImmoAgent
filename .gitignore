@@ -22,6 +22,7 @@ data/output/
 data/biens_vus.json
 data/scheduler_state.json
 data/suivi_actif.json
+data/scraper_health.json
 logs/
 *.jpg
 *.webp

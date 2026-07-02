@@ -8,6 +8,7 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +25,10 @@ jobs:
       - name: Ruff (lint)
         run: ruff check .
 
-      - name: Tests (pytest) — inclut le smoke-import des 277 scrapers
+      - name: Mypy (types — périmètre défini dans pyproject.toml)
+        run: mypy
+
+      - name: Tests (pytest) — inclut le smoke-import de tous les scrapers
         # Pas besoin d'installer les navigateurs Playwright : le smoke-test
         # importe seulement les modules (le réseau n'est touché que dans search()).
         run: pytest
