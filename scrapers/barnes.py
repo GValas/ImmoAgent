@@ -1,203 +1,162 @@
 """
-scrapers/barnes.py — Barnes Immobilier (prestige & luxe)
-Méthode : httpx + BeautifulSoup — SSR
-URL : https://www.barnes-immobilier.com/fr/achat/maison/?department={dept}
+scrapers/barnes.py — BARNES International (prestige) — réactivé 2026-07-02.
+Méthode : scrape_simple (httpx) — pages département SSR + AJAX de pagination.
+
+L'ancien domaine barnes-immobilier.com était faux. Sur barnes-international.com :
+  - /fr/vente/france/{dept-slug}.html est SSR (cartes <article id="property-REF">)
+    et FILTRE par département côté serveur (vérifié : communes du dept uniquement).
+    Les 11 slugs cibles existent (12-31 annonces/dept, beaucoup hors budget).
+  - La page pose une session (cookies) ; la suite se charge via
+    /views/viewAjax.php?view=viewListing_annonces&ajax=y&action=annonces_suivantes
+    &begin=N&type_moteur=listing → cartes HTML supplémentaires, « nodata » à la fin.
+    → flux SÉQUENTIEL par département (la session porte la localisation).
+  - Cartes sans code postal (ville seule) → departement = dept requêté, CP vide.
+    a.bc-015-content-link, p.mb-2 = ville, p.bc-015-criteria (chambres, m²,
+    « Surface extérieure » = terrain), p.bc-015-prix, img[data-src].
 Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
 import re
 
-import httpx
 from bs4 import BeautifulSoup
 
-BASE = "https://www.barnes-immobilier.com"
+from scrapers._base import (
+    DEFAULT_DEPT_SLUGS,
+    _jitter,
+    get_with_retry,
+    keep_bien,
+    make_client,
+    parse_float,
+    parse_int,
+)
 
-_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
+BASE = "https://www.barnes-international.com"
+AJAX = (BASE + "/views/viewAjax.php?view=viewListing_annonces&ajax=y"
+        "&action=annonces_suivantes&begin={begin}&type_moteur=listing")
 
-_DEPT_SLUGS = {
-    "72": "sarthe", "28": "eure-et-loir", "45": "loiret",
-    "89": "yonne",  "49": "maine-et-loire", "37": "indre-et-loire",
-    "36": "indre",  "18": "cher",           "58": "nievre",
-    "41": "loir-et-cher", "53": "mayenne",
-}
-
-MAX_PAGES = 3
+MAX_BIENS_PER_DEPT = 96          # garde-fou pagination AJAX
+_SKIP_TYPES = ("appartement", "penthouse", "studio", "duplex", "bureau",
+               "commerce", "parking", "terrain")
 
 
-def _re_float(pat, text):
-    m = re.search(pat, text.replace("\xa0", " ").replace(" ", "").replace(" ", ""))
-    try:
-        return float(m.group(1).replace(",", ".")) if m else None
-    except Exception:
+def _parse_card(card, dept: str) -> dict | None:
+    ref = (card.get("id") or "").replace("property-", "")
+    link = card.select_one("a[href*='/ref-']")
+    if not ref or not link:
+        return None
+    url = link["href"]
+    if not url.startswith("http"):
+        url = BASE + url
+
+    title_txt = " ".join(link.get_text(" ", strip=True).split())
+    m = re.search(r"À vendre\s+([^|]+)\|\s*(.+?)(?:\s{2,}|$)", title_txt)
+    type_txt = (m.group(1).strip() if m else "Maison").lower()
+    if any(t in type_txt for t in _SKIP_TYPES):
         return None
 
+    prix_el = card.select_one("p.bc-015-prix")
+    prix = parse_float(r"([\d\s\xa0]{4,})\s*€",
+                       (prix_el.get_text(" ", strip=True) if prix_el else "").replace("\xa0", " "))
+    if not prix or prix < 10_000:        # « Prix sur demande »
+        return None
 
-def _parse_cards(html: str, dept: str) -> list[dict]:
+    ville_el = card.select_one("p.mb-2")
+    ville = ville_el.get_text(" ", strip=True) if ville_el else ""
+
+    crit_el = card.select_one("p.bc-015-criteria")
+    crit = (crit_el.get_text(" ", strip=True) if crit_el else "").replace("\xa0", " ")
+    terrain = parse_float(r"Surface extérieure\s*([\d\s]+)\s*m²", crit)
+    crit_sans_terrain = re.sub(r"Surface extérieure\s*[\d\s]+\s*m²", "", crit)
+    surface = parse_float(r"([\d\s]+(?:[.,]\d+)?)\s*m²", crit_sans_terrain)
+    chambres = parse_int(r"(\d+)\s*chambres?", crit)
+
+    photos = []
+    for img in card.select("img[data-src], img[src]"):
+        src = img.get("data-src") or img.get("src") or ""
+        if src.startswith("http") and "no-picture" not in src and src not in photos:
+            photos.append(src)
+
+    return {
+        "source": "barnes",
+        "url": url,
+        "id_annonce": ref,
+        "titre": f"À vendre {type_txt.title()} | {ville}"[:150],
+        "type_bien": "chateau" if "château" in type_txt else "maison",
+        "description": crit,
+        "departement": dept,     # page département serveur fiable ; pas de CP en carte
+        "ville": ville[:80],
+        "code_postal": "",
+        "surface": surface,
+        "surface_terrain": terrain,
+        "pieces": None,
+        "chambres": chambres,
+        "prix": prix,
+        "photos": photos[:10],
+        "dpe": None,
+        "agence": "Barnes",
+    }
+
+
+def _cards(html: str, main_only: bool = False):
+    """Cartes annonce. `main_only` restreint au conteneur #content_annonces :
+    la page département SSR ajoute après lui une section « Biens à proximité »
+    (départements voisins) qu'il faut EXCLURE (sinon fuite de département)."""
     soup = BeautifulSoup(html, "html.parser")
-    cards = (
-        soup.select("article.property")
-        or soup.select("div[class*='PropertyCard']")
-        or soup.select("div[class*='property-card']")
-        or soup.select("div[class*='listing-item']")
-        or soup.select("li.property-item")
-        or [a.parent for a in soup.select("a[href*='/fr/achat/']") if a.parent]
-        or [a.parent for a in soup.select("a[href*='/fr/vente/']") if a.parent]
-    )
-
-    results = []
-    seen: set[str] = set()
-
-    for card in cards:
-        try:
-            link = card.select_one("a[href]") if card.name != "a" else card
-            if not link:
-                continue
-            href = link.get("href", "")
-            if not href or href in ("#", "/"):
-                continue
-            url = href if href.startswith("http") else BASE + href
-            if url in seen:
-                continue
-
-            text = card.get_text(" ", strip=True).replace("\xa0", " ")
-            prix = _re_float(r"([\d]+[\d\s]*\d)\s*€", text)
-            if not prix or prix < 10_000:
-                continue
-
-            surface = _re_float(r"(\d+(?:[.,]\d+)?)\s*m²", text)
-            terrain = None
-            m_ha = re.search(r"(\d+(?:[.,]\d+)?)\s*ha", text, re.IGNORECASE)
-            if m_ha:
-                try: terrain = float(m_ha.group(1).replace(",", ".")) * 10_000
-                except Exception: pass
-
-            id_m = re.search(r"/(\d{4,})", href)
-            ad_id = id_m.group(1) if id_m else href.rstrip("/").split("/")[-1]
-
-            city_m = re.search(r"([A-ZÀ-Ÿa-zà-ÿ][^(]{2,30})\s*\((\d{5})\)", text)
-            ville = city_m.group(1).strip()[:80] if city_m else ""
-            cp    = city_m.group(2) if city_m else ""
-
-            titre_el = card.select_one("h2, h3, h4, [class*='title']")
-            titre = (titre_el.get_text(strip=True) if titre_el else "Propriété Barnes")[:150]
-
-            photos = []
-            for img in card.select("img"):
-                for attr in ("src", "data-src", "data-lazy"):
-                    src = img.get(attr, "")
-                    if src and src.startswith("http") and any(e in src.lower() for e in [".jpg", ".jpeg", ".webp", ".png"]):
-                        photos.append(src)
-                        break
-            photos = list(dict.fromkeys(photos))[:8]
-
-            pieces = None
-            m = re.search(r"(\d+)\s*pièces?", text, re.IGNORECASE)
-            if m: pieces = int(m.group(1))
-            chambres = None
-            m = re.search(r"(\d+)\s*ch(?:ambres?)?", text, re.IGNORECASE)
-            if m: chambres = int(m.group(1))
-
-            seen.add(url)
-            results.append({
-                "source": "barnes",
-                "url": url,
-                "id_annonce": str(ad_id),
-                "titre": titre,
-                "type_bien": "maison",
-                "description": text[:1200],
-                "departement": cp[:2] if cp else dept,
-                "ville": ville,
-                "code_postal": cp,
-                "surface": surface,
-                "surface_terrain": terrain,
-                "pieces": pieces,
-                "chambres": chambres,
-                "prix": prix,
-                "photos": photos,
-                "dpe": None,
-                "agence": "Barnes",
-                "has_pool": bool(re.search(r"\bpiscine\b|\bpool\b", text, re.IGNORECASE)),
-            })
-        except Exception:
-            continue
-
-    return results
-
-
-async def _scrape_dept(client: httpx.AsyncClient, dept: str,
-                       prix_min: float, prix_max: float, surface_min: float) -> list[dict]:
-    slug = _DEPT_SLUGS.get(dept, dept)
-    biens: list[dict] = []
-    seen_ids: set[str] = set()
-
-    urls_to_try = [
-        f"{BASE}/fr/achat/maison/?department={dept}",
-        f"{BASE}/fr/vente/maison/?department={dept}",
-        f"{BASE}/fr/achat/maison/{slug}/",
-        f"{BASE}/fr/recherche/?type=maison&dept={dept}&transaction=vente",
-    ]
-
-    for base_url in urls_to_try:
-        for page in range(1, MAX_PAGES + 1):
-            url = base_url if page == 1 else f"{base_url}&page={page}"
-            try:
-                r = await client.get(url)
-                if r.status_code != 200:
-                    break
-                cards = _parse_cards(r.text, dept)
-                if not cards:
-                    break
-
-                added = 0
-                for b in cards:
-                    if b["id_annonce"] in seen_ids:
-                        continue
-                    if prix_max and b.get("prix") and b["prix"] > prix_max:
-                        continue
-                    if prix_min and b.get("prix") and b["prix"] < prix_min:
-                        continue
-                    if surface_min and b.get("surface") and b["surface"] < surface_min:
-                        continue
-                    seen_ids.add(b["id_annonce"])
-                    biens.append(b)
-                    added += 1
-
-                print(f"[Barnes] dept={dept} page={page} → {added} biens")
-                if added == 0:
-                    break
-            except Exception as e:
-                print(f"[Barnes] ERR dept={dept}: {e}")
-                break
-
-        if biens:
-            break
-
-    return biens
+    root = soup.select_one("#content_annonces") if main_only else soup
+    return root.select("article[id^='property-']") if root else []
 
 
 async def search(criteres: dict) -> list[dict]:
     departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
-    prix_max    = criteres.get("prix_max", 600_000)
-    prix_min    = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 80)
+    prix_max = criteres.get("prix_max", 0)
+    prix_min = criteres.get("prix_min", 0)
+    surface_min = criteres.get("surface_min", 0)
 
     results: list[dict] = []
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=30) as client:
-        tasks = [_scrape_dept(client, d, prix_min, prix_max, surface_min) for d in departements]
-        for biens in await asyncio.gather(*tasks):
-            results.extend(biens)
+    seen_ids: set = set()        # global : les biens frontaliers apparaissent 2×
+    async with make_client(timeout=25) as client:
+        for dept in departements:
+            slug = DEFAULT_DEPT_SLUGS.get(dept)
+            if not slug:
+                continue
+            kept = 0
+            try:
+                # 1) Page département SSR — pose aussi la session pour l'AJAX.
+                r = await get_with_retry(client, f"{BASE}/fr/vente/france/{slug}.html")
+                if r is None or r.status_code != 200:
+                    print(f"[Barnes] Dept {dept}: HTTP {r.status_code if r else 'ERR'}")
+                    continue
+                cards = _cards(r.text, main_only=True)
+                begin = len(cards)
 
-    print(f"[Barnes] total: {len(results)} biens")
+                # 2) Pagination AJAX session (« nodata » à épuisement).
+                while cards:
+                    for card in cards:
+                        try:
+                            bien = _parse_card(card, dept)
+                        except Exception:
+                            continue
+                        if bien and keep_bien(bien, dept, seen_ids,
+                                              prix_max=prix_max, prix_min=prix_min,
+                                              surface_min=surface_min):
+                            results.append(bien)
+                            kept += 1
+                    if begin >= MAX_BIENS_PER_DEPT:
+                        break
+                    await asyncio.sleep(_jitter(1.5))
+                    r = await get_with_retry(client, AJAX.format(begin=begin))
+                    if r is None or r.status_code != 200 or r.text.strip() == "nodata":
+                        break
+                    cards = _cards(r.text)
+                    begin += len(cards)
+                print(f"[Barnes] Dept {dept}: {kept} annonces")
+            except Exception as e:
+                print(f"[Barnes] Erreur dept {dept}: {e}")
+            await asyncio.sleep(_jitter(2.0))
+
     return results
 
 
 if __name__ == "__main__":
-    import sys
-    sys.stdout.reconfigure(encoding="utf-8")
-    result = asyncio.run(search({"departements": [37, 49, 89], "prix_max": 550_000, "prix_min": 330_000, "surface_min": 150}))
-    print(f"\nTotal: {len(result)} annonces")
-    for b in result[:5]:
-        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m²")
+    from scrapers._base import standalone_main
+    standalone_main(search, "Barnes")

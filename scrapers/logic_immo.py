@@ -1,225 +1,172 @@
 """
-scrapers/logic_immo.py — Logic-Immo (SeLoger Group)
-Méthode : Playwright + interception réseau API JSON
+scrapers/logic_immo.py — Logic-Immo (plateforme AVIV / SeLoger Group)
+Méthode : httpx + API JSON interne (réécrit 2026-07-02)
+  1. POST /serp-bff/search           → ids des annonces (filtres prix/surface serveur)
+  2. GET  /classifiedList/{id,id,…}  → données complètes par lots de 30
+Le site a migré sur la plateforme AVIV (mêmes MFEs qu'immowelt.de) : les anciennes
+URLs /vente-immobilier-{slug} redirigent vers la homepage. DataDome protège le site
+mais laisse passer httpx avec un UA desktop réaliste (Playwright headless est bloqué).
+Les départements utilisent des place IDs AVIV internes (AD06FRxx ≠ numéro dept).
 Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
+import random
 
-from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
+from scrapers._base import HEADERS, run_dept_api, standalone_main
 
-from scrapers._base import parse_float as _re_float
-from scrapers._base import parse_int as _re_int
-from scrapers._base import parse_str_upper as _re_str
+BASE = "https://www.logic-immo.com"
+SEARCH_URL = f"{BASE}/serp-bff/search"
+CARDS_URL = f"{BASE}/classifiedList/"
 
-BASE_URL = "https://www.logic-immo.com"
-
-# groupprptypesids : 1=maison, 2=villa, 6=propriété, 7=manoir, 13=fermette
-DEPT_SLUGS = {
-    "72": "sarthe-72",
-    "28": "eure-et-loir-28",
-    "45": "loiret-45",
-    "89": "yonne-89",
-    "49": "maine-et-loire-49",
-    "37": "indre-et-loire-37",
-    "36": "indre-36",
-    "18": "cher-18",
-    "58": "nievre-58",
+# Place IDs AVIV niveau département (AD06FR<idx> — index interne, PAS le n° dept ;
+# mapping relevé via GET /serp-bff/places?placesIds[]=… le 2026-07-02)
+DEPT_PLACE_IDS = {
+    "72": "AD06FR73",   # Sarthe
+    "28": "AD06FR27",   # Eure-et-Loir
+    "45": "AD06FR46",   # Loiret
+    "89": "AD06FR90",   # Yonne
+    "49": "AD06FR50",   # Maine-et-Loire
+    "37": "AD06FR38",   # Indre-et-Loire
+    "36": "AD06FR37",   # Indre
+    "18": "AD06FR18",   # Cher
+    "58": "AD06FR59",   # Nièvre
+    "41": "AD06FR42",   # Loir-et-Cher
+    "53": "AD06FR54",   # Mayenne
 }
+
+PAGE_SIZE = 100      # taille max constatée OK côté serp-bff
+MAX_PAGES = 3        # ≤300 annonces/dept (tri DateDesc → les plus récentes d'abord)
+CARDS_BATCH = 30     # taille de lot du frontend officiel
+
+_blocked = False     # coupe-circuit DataDome (403) — stoppe tous les depts suivants
+
+
+def _parse_card(d: dict, dept: str) -> dict | None:
+    if not isinstance(d, dict) or d.get("status") not in (None, "Published"):
+        return None
+    raw = d.get("rawData") or {}
+    addr = (d.get("location") or {}).get("address") or {}
+    cp = str(addr.get("zipCode") or "")
+    if not cp:                       # pas de CP → garde-fou département impossible
+        return None
+    surface = (raw.get("surface") or {}).get("main")
+    terrain = (raw.get("surface") or {}).get("plot")
+    desc = d.get("mainDescription") or {}
+    description = " — ".join(x for x in (desc.get("headline"), desc.get("description")) if x)
+    photos = [img.get("url") for img in (d.get("gallery") or {}).get("images") or []
+              if isinstance(img, dict) and img.get("url")][:10]
+    provider = d.get("provider") or {}
+    agence = ((provider.get("intermediaryCard") or {}).get("title")
+              or (provider.get("contactCard") or {}).get("title") or "")
+    legacy_id = (d.get("metadata") or {}).get("legacyId")
+    url = d.get("url") or (f"{BASE}/detail-vente-{legacy_id}.htm" if legacy_id else "")
+    titre = (d.get("hardFacts") or {}).get("title") or "Maison"
+    ville = addr.get("city") or ""
+    if ville and ville not in titre:
+        titre = f"{titre} {ville}"
+    return {
+        "source": "logic_immo",
+        "url": url,
+        "id_annonce": str(d.get("id") or legacy_id or ""),
+        "titre": titre[:150],
+        "type_bien": str(raw.get("propertyTypeLabel") or "maison").lower(),
+        "description": description[:1200],
+        "departement": cp[:2],
+        "ville": ville,
+        "code_postal": cp,
+        "surface": float(surface) if surface else None,
+        "surface_terrain": float(terrain) if terrain else None,
+        "pieces": raw.get("nbroom"),
+        "chambres": raw.get("nbbedroom"),
+        "prix": float(raw.get("price")) if raw.get("price") else None,
+        "photos": photos,
+        "dpe": d.get("energyClass") or None,
+        "agence": agence,
+    }
+
+
+async def _fetch_dept(client, dept: str, place_id: str | None) -> list[dict]:
+    global _blocked
+    if _blocked or not place_id:
+        return []
+    criteres = getattr(client, "_li_criteres", {})
+    criteria: dict = {
+        "distributionTypes": ["Buy"],
+        "estateTypes": ["House"],
+        "location": {"placeIds": [place_id]},
+    }
+    if criteres.get("prix_min"):
+        criteria["priceMin"] = int(criteres["prix_min"])
+    if criteres.get("prix_max"):
+        criteria["priceMax"] = int(criteres["prix_max"])
+    if criteres.get("surface_min"):
+        criteria["spaceMin"] = int(criteres["surface_min"])
+
+    # 1) ids paginés (tri DateDesc, filtres serveur)
+    ids: list[str] = []
+    for page in range(1, MAX_PAGES + 1):
+        body = {"criteria": criteria,
+                "paging": {"page": page, "size": PAGE_SIZE, "order": "DateDesc"}}
+        r = await client.post(SEARCH_URL, json=body)
+        if r.status_code == 403:
+            _blocked = True
+            print(f"[LogicImmo] 403 DataDome sur serp-bff/search (dept {dept}) — abandon")
+            return []
+        if r.status_code != 200:
+            print(f"[LogicImmo] HTTP {r.status_code} search dept {dept} p{page}")
+            break
+        data = r.json()
+        batch = [c.get("id") for c in data.get("classifieds") or [] if c.get("id")]
+        ids.extend(batch)
+        if len(batch) < PAGE_SIZE or len(ids) >= data.get("totalCount", 0):
+            break
+        await asyncio.sleep(random.uniform(0.8, 1.8))
+
+    # 2) données complètes par lots
+    biens: list[dict] = []
+    for i in range(0, len(ids), CARDS_BATCH):
+        chunk = ids[i:i + CARDS_BATCH]
+        r = await client.get(CARDS_URL + ",".join(chunk))
+        if r.status_code == 403:
+            _blocked = True
+            print(f"[LogicImmo] 403 DataDome sur classifiedList (dept {dept}) — abandon")
+            break
+        if r.status_code != 200:
+            print(f"[LogicImmo] HTTP {r.status_code} classifiedList dept {dept}")
+            continue
+        for card in r.json():
+            b = _parse_card(card, dept)
+            if b:
+                biens.append(b)
+        await asyncio.sleep(random.uniform(0.8, 1.8))
+    return biens
 
 
 async def search(criteres: dict) -> list[dict]:
-    departements = criteres.get("departements", [])
-    prix_max = criteres.get("prix_max", 600000)
-    surface_min = criteres.get("surface_min", 80)
+    global _blocked
+    _blocked = False
+    headers = {
+        **HEADERS,
+        "Accept": "application/json",
+        "x-language": "fr",
+        "Origin": BASE,
+        "Referer": f"{BASE}/classified-search",
+    }
 
-    results = []
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            locale="fr-FR",
-        )
-        for dept in departements:
-            try:
-                biens = await _scrape_dept(context, str(dept), prix_max, surface_min)
-                results.extend(biens)
-            except Exception as e:
-                print(f"[LogicImmo] Erreur dept {dept}: {e}")
-        await browser.close()
+    async def fetch_dept(client, dept, slug):
+        client._li_criteres = criteres          # passe prix/surface au fetch
+        return await _fetch_dept(client, dept, slug)
 
-    return results
-
-
-async def _scrape_dept(context, dept: str, prix_max: int, surface_min: int) -> list[dict]:
-    slug = DEPT_SLUGS.get(dept, dept)
-    url = (
-        f"{BASE_URL}/vente-immobilier-{slug},1_0"
-        f"/options/groupprptypesids=1,2,6,7,13"
-        f"/budgetmax={prix_max}"
-        f"/surfacemin={surface_min}"
+    return await run_dept_api(
+        source="logic_immo",
+        label="LogicImmo",
+        fetch_dept=fetch_dept,
+        criteres=criteres,
+        dept_slugs=DEPT_PLACE_IDS,
+        dept_sleep=1.2,
+        client_kwargs={"headers": headers, "timeout": 30},
     )
-
-    intercepted: list[dict] = []
-
-    page = await context.new_page()
-    try:
-        async def handle_response(response):
-            url_r = response.url
-            # Intercepter les API JSON de Logic-Immo
-            if response.status == 200 and any(
-                k in url_r for k in ("annonces-vente", "listing", "search", "offers")
-            ) and "json" in response.headers.get("content-type", ""):
-                try:
-                    data = await response.json()
-                    ads = _find_ads(data)
-                    for ad in ads:
-                        bien = _parse_ad(ad, dept)
-                        if bien:
-                            intercepted.append(bien)
-                except Exception:
-                    pass
-
-        page.on("response", handle_response)
-
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        try:
-            await page.wait_for_selector("article, .offer-list-item, .list-result", timeout=10000)
-        except Exception:
-            pass
-        await asyncio.sleep(2)
-
-        # Si interception vide, parser le HTML rendu
-        if not intercepted:
-            html = await page.content()
-            intercepted.extend(_parse_html(html, dept))
-
-    finally:
-        await page.close()
-
-    return intercepted
-
-
-def _find_ads(obj, depth: int = 0) -> list:
-    """Cherche récursivement une liste d'annonces dans le JSON."""
-    if depth > 6:
-        return []
-    if isinstance(obj, list) and len(obj) > 0 and isinstance(obj[0], dict):
-        first = obj[0]
-        if any(k in first for k in ("price", "prix", "surfaceArea", "surface", "id", "adId")):
-            return obj
-    if isinstance(obj, dict):
-        for v in obj.values():
-            result = _find_ads(v, depth + 1)
-            if result:
-                return result
-    return []
-
-
-def _parse_ad(ad: dict, dept: str) -> dict | None:
-    try:
-        prix = ad.get("price") or ad.get("prix")
-        surface = ad.get("surfaceArea") or ad.get("surface")
-        url = ad.get("url") or ad.get("link") or ad.get("adUrl") or ""
-        if url and url.startswith("/"):
-            url = BASE_URL + url
-
-        photos_raw = ad.get("photos") or ad.get("images") or []
-        photos = []
-        for p in photos_raw[:10]:
-            if isinstance(p, str):
-                photos.append(p)
-            elif isinstance(p, dict):
-                photos.append(p.get("url") or p.get("src", ""))
-
-        return {
-            "source": "logic_immo",
-            "url": url,
-            "id_annonce": str(ad.get("id") or ad.get("adId", "")),
-            "titre": ad.get("title") or ad.get("titre", ""),
-            "type_bien": "maison",
-            "description": str(ad.get("description", ""))[:1200],
-            "departement": dept,
-            "ville": ad.get("city") or ad.get("ville", ""),
-            "code_postal": str(ad.get("postalCode") or ad.get("codePostal", "")),
-            "surface": float(surface) if surface else None,
-            "surface_terrain": ad.get("landSurface") or ad.get("surfaceTerrain"),
-            "pieces": ad.get("rooms") or ad.get("roomsQuantity") or ad.get("pieces"),
-            "chambres": ad.get("bedrooms") or ad.get("bedroomsQuantity"),
-            "prix": float(prix) if prix else None,
-            "photos": [p for p in photos if p],
-            "dpe": ad.get("dpe") or ad.get("energyRating") or ad.get("energyClassification"),
-            "agence": ad.get("agencyName") or ad.get("agence", ""),
-        }
-    except Exception:
-        return None
-
-
-def _parse_html(html: str, dept: str) -> list[dict]:
-    """Fallback scraping HTML rendu par Playwright."""
-    soup = BeautifulSoup(html, "html.parser")
-    results = []
-
-    selectors = [
-        "article.offer-list-item",
-        ".annonce-item",
-        "li[data-id]",
-        "div[data-id]",
-        ".property-card",
-        "article",
-    ]
-    items = []
-    for sel in selectors:
-        items = soup.select(sel)
-        if len(items) > 2:
-            break
-
-    for item in items:
-        try:
-            link = item.select_one("a[href*='vente'], a[href*='annonce']")
-            if not link:
-                continue
-            url = link.get("href", "")
-            if url.startswith("/"):
-                url = BASE_URL + url
-
-            text = item.get_text(" ", strip=True)
-            prix = _re_float(r"(\d[\d\s]*)\s*€", text.replace("\xa0", " ").replace(" ", " "))
-            surface = _re_float(r"(\d+(?:[.,]\d+)?)\s*m²", text)
-
-            results.append({
-                "source": "logic_immo",
-                "url": url,
-                "id_annonce": item.get("data-id", ""),
-                "titre": (item.select_one("h2, h3, .title") or link).get_text(strip=True)[:100],
-                "type_bien": "maison",
-                "description": "",
-                "departement": dept,
-                "ville": "",
-                "code_postal": "",
-                "surface": surface,
-                "surface_terrain": None,
-                "pieces": _re_int(r"(\d+)\s*pièces?", text),
-                "prix": prix,
-                "photos": [img.get("src") for img in item.select("img") if img.get("src")][:5],
-                "dpe": _re_str(r"\bDPE\s*:?\s*([A-G])\b", text),
-            })
-        except Exception:
-            continue
-
-    return results
 
 
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-    criteres = load_criteria()
-    biens = asyncio.run(search({
-        "departements": criteres.departements[:2],
-        "prix_max": criteres.prix_max,
-        "surface_min": criteres.surface_min,
-    }))
-    print(f"\nTotal LogicImmo: {len(biens)} annonces")
-    for b in biens[:5]:
-        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m² — {b['ville']}")
+    standalone_main(search, "LogicImmo")

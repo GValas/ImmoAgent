@@ -69,7 +69,8 @@ def _write_init(sources: list[dict]):
         path = SCRAPERS_DIR / f"{s['id']}.py"
         status = "✓" if path.exists() else "✗ manquant"
         lines.append(f"# {s['nom']} [{status}]")
-    (SCRAPERS_DIR / "__init__.py").write_text("\n".join(lines), encoding="utf-8")
+    # newline final : sinon ruff W292 sur le fichier régénéré à chaque run builder
+    (SCRAPERS_DIR / "__init__.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def scraper_exists(source_id: str) -> bool:

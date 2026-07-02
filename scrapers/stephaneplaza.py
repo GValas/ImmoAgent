@@ -1,41 +1,61 @@
 """
-scrapers/stephaneplaza.py — Stéphane Plaza Immobilier (franchise nationale)
-Méthode : Playwright + parsing HTML
+scrapers/stephaneplaza.py — Stéphane Plaza Immobilier (réseau national)
+Méthode : scrape_js (Playwright) + interception du JSON interne.
+
+Réécrit le 2026-07-02 : le réseau a désormais un vrai portail national sur
+stephaneplazaimmobilier.com (l'ancien stephaneplaza.com est mort). Les pages
+/acheter/departement/{slug}_{code}/maison/ (404 si aucune agence dans le dept)
+chargent les annonces via GET /search-goods (JSON riche : prix, codePostal,
+surface, surface-land, room/bedroom, consoEner=DPE, lat/lon). Cet endpoint est
+protégé par Cloudflare sous httpx (403 même avec cookies+XSRF) mais passe sous
+navigateur → on navigue en Playwright et on intercepte la réponse JSON.
+Détail : /agences/{url_agency}/acheter/bien/{slug-du-nom}_{id}
 Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
 import re
+import unicodedata
 
-from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
-from scrapers._base import parse_float as _re_float
-from scrapers._base import parse_int as _re_int
-from scrapers._base import parse_str_upper as _re_str
+from scrapers._base import DEFAULT_DEPT_SLUGS, keep_bien, parse_price_digits
 
-BASE_URL = "https://www.stephaneplaza.com"
+BASE_URL = "https://www.stephaneplazaimmobilier.com"
 
-MAX_PAGES = 5
+MAX_PAGES = 5          # par département (30 annonces/page)
+PAGE_WAIT_S = 9        # attente du XHR search-goods après domcontentloaded
 
 
 async def search(criteres: dict) -> list[dict]:
-    departements = criteres.get("departements", [])
-    prix_max = criteres.get("prix_max", 600000)
-    prix_min = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 80)
+    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
+    prix_max = int(criteres.get("prix_max") or 0)
+    prix_min = int(criteres.get("prix_min") or 0)
+    surface_min = int(criteres.get("surface_min") or 0)
 
-    results = []
+    results: list[dict] = []
+    seen_ids: set = set()
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            ),
             locale="fr-FR",
         )
         for dept in departements:
+            slug = DEFAULT_DEPT_SLUGS.get(dept)
+            if not slug:
+                continue
             try:
-                biens = await _scrape_dept(context, str(dept), prix_min, prix_max, surface_min)
-                results.extend(biens)
-                print(f"[StéphanePlaza] Dept {dept}: {len(biens)} annonces")
+                kept = 0
+                for bien in await _scrape_dept(context, slug, dept):
+                    if keep_bien(bien, dept, seen_ids,
+                                 prix_max=prix_max, prix_min=prix_min,
+                                 surface_min=surface_min):
+                        results.append(bien)
+                        kept += 1
+                print(f"[StéphanePlaza] Dept {dept}: {kept} annonces")
             except Exception as e:
                 print(f"[StéphanePlaza] Erreur dept {dept}: {e}")
         await browser.close()
@@ -43,155 +63,118 @@ async def search(criteres: dict) -> list[dict]:
     return results
 
 
-async def _scrape_dept(context, dept: str, prix_min: int, prix_max: int, surface_min: int) -> list[dict]:
-    biens = []
-    seen_ids = set()
-
+async def _scrape_dept(context, slug: str, dept: str) -> list[dict]:
+    """Navigue les pages /acheter/departement/{slug}_{dept}/maison/?page=N et
+    intercepte le JSON /search-goods (la page 404 n'émet pas ce XHR → skip)."""
+    biens: list[dict] = []
     for page_num in range(1, MAX_PAGES + 1):
-        url = (
-            f"{BASE_URL}/nos-biens/resultats/"
-            f"?transaction=1&type[]=1&dept[]={dept}"
-            f"&prixmax={prix_max}&surfmin={surface_min}"
-            + (f"&prixmin={prix_min}" if prix_min else "")
-            + (f"&page={page_num}" if page_num > 1 else "")
-        )
+        url = f"{BASE_URL}/acheter/departement/{slug}_{dept}/maison/"
+        if page_num > 1:
+            url += f"?page={page_num}"
+
+        payloads: list[dict] = []
+
+        async def on_response(resp, _sink=payloads):
+            if "search-goods" in resp.url and resp.status == 200:
+                try:
+                    _sink.append(await resp.json())
+                except Exception:
+                    pass
 
         page = await context.new_page()
+        page.on("response", on_response)
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=40000)
+            for _ in range(PAGE_WAIT_S * 2):
+                if payloads:
+                    break
+                await asyncio.sleep(0.5)
+            await asyncio.sleep(1)   # laisse finir le json() en cours
+        finally:
             try:
-                await page.wait_for_selector(
-                    "article, .property-card, .bien-card, .annonce-item, .c-property",
-                    timeout=10000
-                )
+                await page.close()
             except Exception:
                 pass
-            await asyncio.sleep(2)
-            html = await page.content()
-        finally:
-            await page.close()
 
-        cards, total = _parse_html(html, dept)
-        new_found = 0
-        for b in cards:
-            if b["id_annonce"] not in seen_ids:
-                seen_ids.add(b["id_annonce"])
-                biens.append(b)
-                new_found += 1
+        if not payloads:
+            break                    # 404 (pas d'agence dans le dept) ou XHR absent
 
-        if not new_found:
+        data = payloads[0]
+        for rec in data.get("results") or []:
+            bien = _parse_record(rec, dept)
+            if bien:
+                biens.append(bien)
+
+        last_page = int((data.get("pagination") or {}).get("last_page") or 1)
+        if page_num >= last_page:
             break
-
     return biens
 
 
-def _parse_html(html: str, dept: str) -> tuple[list[dict], int]:
-    soup = BeautifulSoup(html, "html.parser")
+def _slugify(name: str) -> str:
+    s = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
+    s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+    return s or "bien"
 
-    cards = (
-        soup.select("article.property-card")
-        or soup.select("article.bien-card")
-        or soup.select(".annonce-item")
-        or soup.select(".c-property")
-        or soup.select("article[class*='property']")
-        or soup.select("article[class*='bien']")
-        or soup.select("article")
+
+def _num_from(text) -> float | None:
+    m = re.search(r"([\d\s]+(?:[.,]\d+)?)", str(text or "").replace("\xa0", " "))
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(" ", "").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _parse_record(rec: dict, dept: str) -> dict | None:
+    props = rec.get("properties") or {}
+    prix = parse_price_digits(str(rec.get("price") or props.get("price") or ""))
+    if not prix or prix < 10_000:
+        return None
+
+    cp = str(props.get("codePostal") or "")
+    ville = str(props.get("city") or "").title()
+
+    dpe = str(props.get("consoEner") or "").upper()
+    if dpe not in {"A", "B", "C", "D", "E", "F", "G"}:
+        dpe = None
+
+    ad_id = str(rec.get("id") or "")
+    agency = str(rec.get("url_agency") or "").strip("/")
+    url = (
+        f"{BASE_URL}/agences/{agency}/acheter/bien/{_slugify(rec.get('name'))}_{ad_id}"
+        if agency and ad_id else BASE_URL
     )
 
-    total = 0
-    total_m = re.search(r"(\d+)\s*(?:annonces?|biens?|résultats?)", soup.get_text(" "), re.IGNORECASE)
-    if total_m:
-        total = int(total_m.group(1))
+    photos = [u for u in (rec.get("thumbnails") or []) if isinstance(u, str)][:10]
+    loc = rec.get("location") or {}
 
-    results = []
-    seen_ids = set()
-    for card in cards:
-        try:
-            bien = _parse_card(card, dept)
-            if bien and bien["id_annonce"] not in seen_ids:
-                seen_ids.add(bien["id_annonce"])
-                results.append(bien)
-        except Exception:
-            continue
-
-    return results, total
-
-
-def _parse_card(card, dept: str) -> dict | None:
-    link_el = card.select_one("a[href]")
-    if not link_el:
-        return None
-    href = link_el.get("href", "")
-    if not href:
-        return None
-    url = href if href.startswith("http") else BASE_URL + href
-
-    id_m = re.search(r"[-/](\d{5,})", href)
-    if not id_m:
-        id_m = re.search(r"(\d{5,})", href)
-    ad_id = id_m.group(1) if id_m else href[-12:]
-
-    text = card.get_text(" ", strip=True)
-    normalized = text.replace("\xa0", " ").replace(" ", " ")
-
-    prix = _re_float(r"([\d\s]{4,})\s*€", normalized)
-    surface = _re_float(r"(\d+(?:[.,]\d+)?)\s*m²", text)
-    terrain_m = re.search(r"[Tt]errain\s+([\d\s]+)\s*m²", normalized)
-    terrain = float(terrain_m.group(1).replace(" ", "")) if terrain_m else None
-    pieces = _re_int(r"(\d+)\s*pièces?", text)
-    chambres = _re_int(r"(\d+)\s*ch(?:ambres?)?", text)
-    dpe = _re_str(r"\bDPE\s*:?\s*([A-G])\b", text)
-
-    city_m = re.search(r"([A-ZÉÈÊËÀÂÙÛÎÏÔÇa-zéèêëàâùûîïôç][^\d(]{2,30})\s*\((\d{5})\)", text)
-    ville = city_m.group(1).strip() if city_m else ""
-    cp = city_m.group(2) if city_m else ""
-
-    titre_el = card.select_one("h2, h3, [class*='title'], [class*='titre']")
-    titre = titre_el.get_text(strip=True)[:150] if titre_el else f"Maison {pieces or ''} pièces {ville}".strip()
-
-    photos = []
-    for img in card.select("img"):
-        src = img.get("src") or img.get("data-src") or img.get("data-lazy", "")
-        if src and "http" in src and "placeholder" not in src.lower():
-            if any(ext in src.lower() for ext in [".jpg", ".jpeg", ".webp", ".png"]):
-                photos.append(src)
-    photos = list(dict.fromkeys(photos))[:10]
-
-    desc_el = card.select_one("[class*='desc'], [class*='text'], [class*='excerpt']")
-    description = desc_el.get_text(strip=True)[:1200] if desc_el else ""
-
-    return {
+    bien = {
         "source": "stephaneplaza",
         "url": url,
-        "id_annonce": str(ad_id),
-        "titre": titre,
+        "id_annonce": ad_id or url,
+        "titre": str(rec.get("name") or "Maison")[:150],
         "type_bien": "maison",
-        "description": description,
+        "description": str(rec.get("description") or rec.get("short_description") or "")[:2000],
         "departement": dept,
         "ville": ville[:80],
         "code_postal": cp,
-        "surface": surface,
-        "surface_terrain": terrain,
-        "pieces": pieces,
-        "chambres": chambres,
+        "surface": _num_from(props.get("surface")),
+        "surface_terrain": _num_from(props.get("surface-land")),
+        "pieces": int(props["room"]) if props.get("room") else None,
+        "chambres": int(props["bedroom"]) if props.get("bedroom") else None,
         "prix": prix,
         "photos": photos,
         "dpe": dpe,
-        "agence": "Stéphane Plaza Immobilier",
+        "agence": f"Stéphane Plaza Immobilier {agency}".strip()[:100],
     }
+    if loc.get("lat") and loc.get("lon"):
+        bien["latitude"] = float(loc["lat"])
+        bien["longitude"] = float(loc["lon"])
+    return bien
 
 
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    from config_loader import load_criteria
-    criteres = load_criteria()
-    biens = asyncio.run(search({
-        "departements": criteres.departements[:2],
-        "prix_max": criteres.prix_max,
-        "prix_min": criteres.prix_min,
-        "surface_min": criteres.surface_min,
-    }))
-    print(f"\nTotal Stéphane Plaza: {len(biens)} annonces")
-    for b in biens[:5]:
-        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m² — {b['ville']}")
+    from scrapers._base import standalone_main
+    standalone_main(search, "StéphanePlaza")

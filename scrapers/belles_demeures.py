@@ -1,201 +1,129 @@
 """
-scrapers/belles_demeures.py — Belles Demeures (Le Figaro Immobilier prestige)
-Méthode : httpx + BeautifulSoup — SSR
-URL : https://www.belles-demeures.com/annonces-immobilieres/maison-a-vendre/{dept-slug}/
+scrapers/belles_demeures.py — Belles Demeures (SeLoger group, prestige)
+Méthode : scrape_simple (httpx) — SSR complet sous UA desktop (réactivé 2026-07-02).
+
+L'ancienne piste « bellesdemeures.com 403 sur pages filtrées » n'est plus vraie :
+comme pour seloger.py, un UA navigateur desktop passe en 200. Recette vérifiée :
+  - endpoint de recherche : /recherche?idtt=2&idtypebien=2&pl={place_id}
+    avec filtres SERVEUR pxmin/pxmax/surfacemin (clés lues dans /bundles/search/js)
+    et pagination &page=N (20 cartes SSR/page, max affiché dans .js_maxValue) ;
+  - place_id par département (pl-272=18 … pl-332=72), relevés sur les pages région ;
+  - le filtre départemental serveur est fiable (vérifié : 20/20 villes du dept),
+    PAS de recherche élargie, mais les cartes n'exposent AUCUN code postal →
+    code_postal="" et departement = dept de la requête (gallery/geoloc enrichiront).
+Cartes : div.js_favoritesParent[id] avec div.type / div.specs / div.location /
+div.price / div.desc / div.agency ; photos v.seloger.com dans le carrousel.
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import asyncio
-import re
+from scrapers._base import parse_float, parse_int, run_dept_search
 
-import httpx
-from bs4 import BeautifulSoup
+BASE = "https://www.bellesdemeures.com"
 
-BASE = "https://www.belles-demeures.com"
-
-# Slugs de département pour les URLs
-_DEPT_SLUGS = {
-    "72": "sarthe-72", "28": "eure-et-loir-28", "45": "loiret-45",
-    "89": "yonne-89",  "49": "maine-et-loire-49", "37": "indre-et-loire-37",
-    "36": "indre-36",  "18": "cher-18",           "58": "nievre-58",
-    "41": "loir-et-cher-41", "53": "mayenne-53",
+# Place IDs Belles Demeures par département cible (relevés sur les pages région).
+_PLACE_IDS = {
+    "18": 272, "28": 273, "36": 274, "37": 275, "41": 276, "45": 277,
+    "58": 278, "89": 280, "49": 330, "53": 331, "72": 332,
 }
 
-_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
 
-MAX_PAGES = 4
-
-
-def _re_float(pat, text):
-    m = re.search(pat, text.replace("\xa0", " ").replace(" ", ""))
-    try:
-        return float(m.group(1).replace(",", ".")) if m else None
-    except Exception:
+def _parse_card(card, dept: str) -> dict | None:
+    ad_id = card.get("id", "")
+    if not ad_id.isdigit():
         return None
 
+    link = card.select_one("a.details[href]") or card.select_one("a.linkMask[href]")
+    if not link:
+        return None
+    url = link["href"].split("?")[0].split("#")[0]
+    if not url.startswith("http"):
+        url = BASE + url
 
-def _parse_cards(html: str, dept: str) -> list[dict]:
-    soup = BeautifulSoup(html, "html.parser")
-    cards = (
-        soup.select("article.property-card")
-        or soup.select("article.listing")
-        or soup.select("div[class*='property-card']")
-        or soup.select("div[class*='PropertyCard']")
-        or soup.select("li.property")
-        or soup.select("div.property")
-        or [a.parent for a in soup.select("a[href*='/annonce/']") if a.parent]
-    )
+    price_el = card.select_one("div.price")
+    prix = parse_float(r"([\d\s\xa0]{4,})\s*€",
+                       (price_el.get_text(" ", strip=True) if price_el else "").replace("\xa0", " "))
+    if not prix or prix < 10_000:
+        return None
 
-    results = []
-    seen: set[str] = set()
+    specs = card.select_one("div.specs")
+    specs_txt = specs.get_text(" ", strip=True).replace("\xa0", " ") if specs else ""
+    pieces = parse_int(r"(\d+)\s*pièces?", specs_txt)
+    chambres = parse_int(r"(\d+)\s*chambres?", specs_txt)
+    surface = parse_float(r"([\d\s]+(?:[.,]\d+)?)\s*m²", specs_txt)
 
-    for card in cards:
-        try:
-            link = card.select_one("a[href]") if card.name != "a" else card
-            if not link:
-                continue
-            href = link.get("href", "")
-            if not href:
-                continue
-            url = href if href.startswith("http") else BASE + href
-            if url in seen:
-                continue
+    loc_el = card.select_one("div.location")
+    loc = loc_el.get_text(" ", strip=True) if loc_el else ""
+    ville = loc.split(",")[-1].strip()[:80]     # « Quartier, Ville » → Ville
 
-            text = card.get_text(" ", strip=True).replace("\xa0", " ")
+    type_el = card.select_one("div.type")
+    type_txt = (type_el.get_text(strip=True) if type_el else "Maison").lower()
+    type_bien = "chateau" if "château" in type_txt else "maison"
 
-            prix = _re_float(r"([\d]+[\d\s]*\d)\s*€", text)
-            if not prix or prix < 10_000:
-                continue
+    desc_el = card.select_one("div.desc")
+    description = desc_el.get_text(" ", strip=True) if desc_el else ""
+    agence_el = card.select_one("div.agency")
+    agence = agence_el.get_text(strip=True) if agence_el else "Belles Demeures"
 
-            surface = _re_float(r"(\d+(?:[.,]\d+)?)\s*m²", text)
+    titre = (link.get("title") or "").strip() \
+        or f"{type_el.get_text(strip=True) if type_el else 'Maison'} {specs_txt} à {ville}"
 
-            id_m = re.search(r"/(\d{4,})", href)
-            ad_id = id_m.group(1) if id_m else href.rstrip("/").split("/")[-1]
+    photos = []
+    for img in card.select("img[src], source[srcset]"):
+        src = (img.get("src") or img.get("srcset") or "").split(",")[0].split(" ")[0]
+        if src.startswith("http") and "visuels" in src and src not in photos:
+            photos.append(src)
 
-            city_m = re.search(r"([A-ZÀ-Ÿa-zà-ÿ][^(]{2,30})\s*\((\d{5})\)", text)
-            ville = city_m.group(1).strip()[:80] if city_m else ""
-            cp    = city_m.group(2) if city_m else ""
-            dept_found = cp[:2] if cp else dept
-
-            titre_el = card.select_one("h2, h3, [class*='title'], [class*='titre']")
-            titre = (titre_el.get_text(strip=True) if titre_el else text[:80])[:150]
-
-            photos = []
-            for img in card.select("img"):
-                for attr in ("src", "data-src", "data-lazy-src"):
-                    src = img.get(attr, "")
-                    if src and src.startswith("http") and any(e in src for e in [".jpg", ".jpeg", ".webp", ".png"]):
-                        photos.append(src)
-                        break
-            photos = list(dict.fromkeys(photos))[:8]
-
-            pieces   = None
-            m = re.search(r"(\d+)\s*pièces?", text, re.IGNORECASE)
-            if m: pieces = int(m.group(1))
-            chambres = None
-            m = re.search(r"(\d+)\s*ch(?:ambres?)?", text, re.IGNORECASE)
-            if m: chambres = int(m.group(1))
-            dpe = None
-            m = re.search(r"\bDPE\s*:?\s*([A-G])\b", text, re.IGNORECASE)
-            if m: dpe = m.group(1).upper()
-
-            seen.add(url)
-            results.append({
-                "source": "belles_demeures",
-                "url": url,
-                "id_annonce": str(ad_id),
-                "titre": titre,
-                "type_bien": "maison",
-                "description": text[:1200],
-                "departement": dept_found,
-                "ville": ville,
-                "code_postal": cp,
-                "surface": surface,
-                "surface_terrain": None,
-                "pieces": pieces,
-                "chambres": chambres,
-                "prix": prix,
-                "photos": photos,
-                "dpe": dpe,
-                "agence": "Belles Demeures",
-                "has_pool": bool(re.search(r"\bpiscine\b", text, re.IGNORECASE)),
-            })
-        except Exception:
-            continue
-
-    return results
-
-
-async def _scrape_dept(client: httpx.AsyncClient, dept: str,
-                       prix_min: float, prix_max: float, surface_min: float) -> list[dict]:
-    slug = _DEPT_SLUGS.get(dept)
-    if not slug:
-        return []
-
-    biens: list[dict] = []
-    seen_ids: set[str] = set()
-
-    for page in range(1, MAX_PAGES + 1):
-        url = f"{BASE}/annonces-immobilieres/maison-a-vendre/{slug}/"
-        if page > 1:
-            url += f"?page={page}"
-
-        try:
-            r = await client.get(url)
-            if r.status_code != 200:
-                break
-            cards = _parse_cards(r.text, dept)
-            if not cards:
-                break
-
-            added = 0
-            for b in cards:
-                if b["id_annonce"] in seen_ids:
-                    continue
-                if prix_max and b.get("prix") and b["prix"] > prix_max:
-                    continue
-                if prix_min and b.get("prix") and b["prix"] < prix_min:
-                    continue
-                if surface_min and b.get("surface") and b["surface"] < surface_min:
-                    continue
-                seen_ids.add(b["id_annonce"])
-                biens.append(b)
-                added += 1
-
-            print(f"[BellesDemeures] dept={dept} page={page} → {added} biens")
-            if added == 0:
-                break
-        except Exception as e:
-            print(f"[BellesDemeures] ERR dept={dept} page={page}: {e}")
-            break
-
-    return biens
+    return {
+        "source": "belles_demeures",
+        "url": url,
+        "id_annonce": ad_id,
+        "titre": titre[:150],
+        "type_bien": type_bien,
+        "description": description[:1200],
+        "departement": dept,        # filtre serveur pl-{id} fiable ; pas de CP en carte
+        "ville": ville,
+        "code_postal": "",
+        "surface": surface,
+        "surface_terrain": None,
+        "pieces": pieces,
+        "chambres": chambres,
+        "prix": prix,
+        "photos": photos[:10],
+        "dpe": None,
+        "agence": agence,
+    }
 
 
 async def search(criteres: dict) -> list[dict]:
-    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
-    prix_max    = criteres.get("prix_max", 600_000)
-    prix_min    = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 80)
+    prix_max = int(criteres.get("prix_max") or 0)
+    prix_min = int(criteres.get("prix_min") or 0)
+    surface_min = int(criteres.get("surface_min") or 0)
 
-    results: list[dict] = []
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=30) as client:
-        tasks = [_scrape_dept(client, d, prix_min, prix_max, surface_min) for d in departements]
-        for biens in await asyncio.gather(*tasks):
-            results.extend(biens)
+    def page_url(dept: str, pl: str, page: int) -> str:
+        url = f"{BASE}/recherche?idtt=2&idtypebien=2&pl={pl}"
+        if prix_min:
+            url += f"&pxmin={prix_min}"
+        if prix_max:
+            url += f"&pxmax={prix_max}"
+        if surface_min:
+            url += f"&surfacemin={surface_min}"
+        if page > 1:
+            url += f"&page={page}"
+        return url
 
-    print(f"[BellesDemeures] total: {len(results)} biens")
-    return results
+    return await run_dept_search(
+        source="belles_demeures",
+        page_url=page_url,
+        card_selector="div.js_favoritesParent[id]",
+        parse_card=_parse_card,
+        criteres=criteres,
+        dept_slugs={d: str(pl) for d, pl in _PLACE_IDS.items()},
+        max_pages=6,
+        page_sleep=2.5,
+        dept_sleep=3.0,
+        label="BellesDemeures",
+    )
 
 
 if __name__ == "__main__":
-    import sys
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-    result = asyncio.run(search({"departements": [72, 37, 49], "prix_max": 550_000, "prix_min": 330_000, "surface_min": 150}))
-    print(f"\nTotal: {len(result)} annonces")
-    for b in result[:5]:
-        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m² — {b['ville']}")
+    from scrapers._base import standalone_main
+    standalone_main(search, "BellesDemeures")

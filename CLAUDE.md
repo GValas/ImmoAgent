@@ -154,11 +154,27 @@ scraper via `python scrapers/xxx.py` après migration).
 | `citya.py` | Citya Immobilier | div.property-card[data-itemid,data-price], 14/page |
 | `squarehabitat.py` | Square Habitat | /annonces/achat/.../immobilier/{region}/{dept-slug}, 9-11/dept |
 
+### Réactivations (2026-07-02) — anti-bot revu, protections changées
+Après la remise en service de `seloger.py` (brèche iOS morte → UA desktop), une
+revue des 45 sources `actif: false` a réactivé 10 scrapers dont les blocages
+avaient disparu ou pour lesquels un nouveau chemin a été trouvé :
+- **leboncoin** (~2720/run) — API mobile `finder/search` (fingerprint app Android
+  + api_key public) ; la voie web reste DataDome. Arrêt du run au 1er 403.
+- **belles_demeures** (~570), **superimmo** (~980) — même leçon que SeLoger : UA
+  desktop (resp. iPhone) débloque, filtres serveur + pagination/tranches.
+- **espaces_atypiques** (~126) — feed JSON statique national (1 requête).
+- **leggett** (~85, Playwright), **stephaneplaza** (~30, Playwright) — Cloudflare
+  JS : navigateur requis (endpoint JSON 403 en httpx direct).
+- **barnes**, **kw_france**, **sothebys_realty**, **realportico** — SSR/JSON revenus.
+
 ### Inactifs (code conservé, actif: false dans sources.yaml)
 - `pap.py` — Cloudflare. À réactiver avec proxy/cookie si contournement trouvé.
-- `logic_immo.py` — Cloudflare.
+- `logic_immo.py` — réécrit httpx/AVIV (serp-bff) et FONCTIONNEL, mais DataDome
+  IP-flag l'IP datacenter → 0 d'ici ; réactivable depuis une IP résidentielle.
 - `annonces_notaires.py` — Immonot 404, remplacé par `immonot.py`.
-- `stephaneplaza.py` — Pas de portail national centralisé.
+- `mercure_immo` (410 GONE, doublon de `groupe_mercure`), `vitrineimmo` (domaine
+  mort), `nexity` (revente ancien retirée, 410), `proprietes_de_france` (absorbé
+  par proprietes.lefigaro.fr, Cloudflare) — voir notes sources.yaml.
 
 ---
 

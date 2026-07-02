@@ -16,7 +16,7 @@ sources:
     nom: "LeBonCoin Immobilier"
     url_base: "https://www.leboncoin.fr"
     methode: "api_inoff"
-    actif: false             # bloqué Cloudflare — scraper à réécrire ou proxy
+    actif: true             # Réactivé 2026-07-02 : API mobile finder/search (fingerprint app Android + api_key public) — voie web DataDome contournée ; ~2720/run, 0 fuite
     priorite: 1
     note: "Nécessite headers + user-agent rotation"
 
@@ -24,7 +24,7 @@ sources:
     nom: "Logic-Immo"
     url_base: "https://www.logic-immo.com"
     methode: "scrape_js"
-    actif: false             # bloqué Cloudflare — même Playwright retourne 403
+    actif: false             # INACTIF 2026-07-02 : réécrit httpx/AVIV (serp-bff, fini Cloudflare/Playwright) et FONCTIONNEL, mais DataDome IP-flag notre IP datacenter → 0 d'ici. Réactivable depuis une IP résidentielle (prod)
     priorite: 2
 
   # ── Sources API REST directe (httpx, pas de Playwright) ──────────────────
@@ -122,7 +122,7 @@ sources:
     nom: "Stéphane Plaza Immobilier"
     url_base: "https://www.stephaneplazaimmobilier.com"
     methode: "scrape_js"
-    actif: false             # stephaneplaza.com inexistant ; stephaneplazaimmobilier.com = agences locales sans portail national
+    actif: true             # Réactivé 2026-07-02 : portail national OK, JSON /search-goods intercepté sous Playwright (endpoint 403 Cloudflare en httpx) ; ~30/run, 0 fuite
     priorite: 2
 
   - id: optimhome
@@ -258,7 +258,7 @@ sources:
     nom: "Keller Williams France"
     url_base: "https://www.kwfrance.com"
     methode: "scrape_js"
-    actif: false             # React CSR — Playwright détecte 0 card même en networkidle — données chargées via API privée
+    actif: true             # Réactivé 2026-07-02 : plateforme Netty, POST getJson/ProductsList (componentHash du SSR), filtre cp Python ; ~27/run, 0 fuite
     priorite: 2
 
   - id: patrice_besse
@@ -281,70 +281,70 @@ sources:
     nom: "Belles Demeures (Le Figaro prestige)"
     url_base: "https://www.belles-demeures.com"
     methode: "scrape_simple"
-    actif: false             # mauvais domaine + CSR — bellesdemeures.com retourne 403 sur pages filtrées
+    actif: true             # Réactivé 2026-07-02 : UA desktop OK (groupe SeLoger), /recherche filtres serveur + pagination SSR ; ~570/run, dept via filtre pl (0 fuite)
     priorite: 1
 
   - id: mercure_immo
     nom: "Mercure Immobilier (demeures rurales)"
     url_base: "https://www.mercure.net"
     methode: "scrape_simple"
-    actif: false             # site fermé — 410 GONE sur toutes les routes
+    actif: false             # INACTIF 2026-07-02 : mercure.net → 410 GONE (domaine fermé). Réseau déjà couvert par groupe_mercure (actif) — doublon
     priorite: 1
 
   - id: leggett
     nom: "Leggett Immobilier (propriétés françaises)"
     url_base: "https://www.leggett.fr"
     methode: "scrape_simple"
-    actif: false             # 403 anti-bot sur leggett.fr et leggett-immobilier.com
+    actif: true             # Réactivé 2026-07-02 : leggett-immo.com, Cloudflare JS → Playwright (contexte neuf/page), recherche multi-depts 1 URL ; ~85/run, 0 fuite
     priorite: 2
 
   - id: espaces_atypiques
     nom: "Espaces Atypiques (propriétés de caractère)"
     url_base: "https://espaces-atypiques.com"
     methode: "scrape_simple"
-    actif: false             # CSR React — aucun filtre dept côté serveur, recherche par ville uniquement
+    actif: true             # Réactivé 2026-07-02 : feed JSON statique national (1 requête) post-filtré cp[:2]+type maison, lat/lng exacts ; ~126/run bande, 0 fuite
     priorite: 2
 
   - id: proprietes_de_france
     nom: "Propriétés de France (prestige rural)"
     url_base: "https://www.proprietes-de-france.com"
     methode: "scrape_simple"
-    actif: false             # DNS fail — domaine inexistant
+    actif: false             # INACTIF 2026-07-02 : domaine mort (DNS) ; marque absorbée par proprietes.lefigaro.fr, Cloudflare 403+captcha — blacklist tant que pas de stratégie
     priorite: 1
 
   - id: nexity
     nom: "Nexity (réseau national)"
     url_base: "https://www.nexity.fr"
     methode: "scrape_simple"
-    actif: false             # 403 anti-bot sur toutes les routes de recherche SSR
+    actif: false             # INACTIF 2026-07-02 : anti-bot levé mais revente ancien supprimée (410 Gone, sitemap 100% neuf) — source sans objet
     priorite: 2
 
   - id: sothebys_realty
     nom: "Sotheby's International Realty France"
     url_base: "https://www.sothebysrealty.fr"
     methode: "scrape_simple"
-    actif: false             # domaine .fr inexistant (DNS fail) — vrai site sothebysrealty.com anti-bot
+    actif: true             # Réactivé 2026-07-02 : sothebysrealty-france.com, POST /fr/annonces geo_multi+flagval, session/dept ; CP du slug détail (0 fuite) ; ~15/run
     priorite: 2
 
   - id: barnes
     nom: "Barnes Immobilier (prestige)"
     url_base: "https://www.barnes-immobilier.com"
     methode: "scrape_simple"
-    actif: false             # mauvais domaine (vrai: barnes-international.com) — CSR SPA, 0 résultats httpx
+    actif: true             # Réactivé 2026-07-02 : vrai domaine barnes-international.com, pages dept SSR + AJAX ; parser #content_annonces only (fuite proximité) ; ~30/run
     priorite: 2
 
   - id: superimmo
     nom: "Superimmo (agrégateur)"
     url_base: "https://www.superimmo.com"
     methode: "scrape_simple"
-    actif: false             # 503 Service Unavailable systématique
+    actif: true             # Réactivé 2026-07-02 : UA iPhone (challenge sur UA desktop only), filtres query params + tri created_at ; ~980/run, 0 fuite
     priorite: 3
 
   - id: vitrineimmo
     nom: "Vitrine Immobilière (réseau coopératif)"
     url_base: "https://www.vitrineimmo.fr"
     methode: "scrape_simple"
-    actif: false             # DNS fail — domaine vitrineimmo.fr inexistant
+    actif: false             # INACTIF 2026-07-02 : domaine mort (NXDOMAIN, 9 variantes testées), aucun successeur — définitivement inactif
     priorite: 3
 
 
@@ -1086,7 +1086,7 @@ sources:
     nom: RealPortico (propriétés historiques)
     url_base: https://www.realportico.fr
     methode: scrape_js
-    actif: false
+    actif: true             # Réactivé 2026-07-02 : SSR JSF revenu (note CSR obsolète), niche châteaux/manoirs, 0-2 biens/run en critères, 0 fuite
     note: >-
       Portail prestige/historique. /proprietes-historiques/vente/france/{region}[/{dept}]
       renvoie 200 mais le HTML brut httpx ne contient AUCUNE carte d'annonce ni prix

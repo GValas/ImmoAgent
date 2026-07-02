@@ -1,196 +1,110 @@
 """
 scrapers/espaces_atypiques.py — Espaces Atypiques (propriétés de caractère)
-Méthode : httpx + BeautifulSoup — SSR
-URL : https://espaces-atypiques.com/fr/acheter/?type=maison&departement={dept}
+Méthode : scrape_simple (httpx) — feed JSON statique (réactivé 2026-07-02).
+
+L'ancienne piste « CSR React sans filtre dept » est contournée : la page /ventes/
+charge en réalité un feed JSON STATIQUE de tout le stock national puis filtre côté
+client (vu dans wp-content/themes/espaces_atypiques/js/liste-annonces.js) :
+  /wp-content/plugins/tv2m-json-feed-annonces/annonces-vente-fr.json  (~4 Mo)
+Chaque annonce expose cp/ville/prix/surface/chambres/lat/lng/url/img/ref/types_ids.
+On télécharge le feed UNE fois et on post-filtre en Python : type 13 (= maison ;
+12 = appartement, 2516 = terrain, 1527 = bateau), code_postal[:2] ∈ départements
+cibles, bornes prix/surface via keep_bien. Prix parfois non numérique
+(« Sous compromis ») → annonce ignorée. Coordonnées exactes fournies (lat/lng).
 Interface : async def search(criteres: dict) -> list[dict]
 """
-import asyncio
-import re
+import html as htmllib
 
-import httpx
-from bs4 import BeautifulSoup
+from scrapers._base import get_with_retry, keep_bien, make_client
 
-BASE = "https://espaces-atypiques.com"
+FEED_URL = ("https://www.espaces-atypiques.com/wp-content/plugins/"
+            "tv2m-json-feed-annonces/annonces-vente-fr.json")
 
-_DEPT_SLUGS = {
-    "72": "sarthe", "28": "eure-et-loir", "45": "loiret",
-    "89": "yonne",  "49": "maine-et-loire", "37": "indre-et-loire",
-    "36": "indre",  "18": "cher",           "58": "nievre",
-    "41": "loir-et-cher", "53": "mayenne",
-}
-
-_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-}
-
-MAX_PAGES = 4
+TYPE_MAISON = 13
 
 
-def _re_float(pat, text):
-    m = re.search(pat, text.replace("\xa0", " ").replace(" ", ""))
+def _to_float(v) -> float | None:
     try:
-        return float(m.group(1).replace(",", ".")) if m else None
-    except Exception:
+        return float(str(v).replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
         return None
 
 
-def _parse_cards(html: str, dept: str) -> list[dict]:
-    soup = BeautifulSoup(html, "html.parser")
-    cards = (
-        soup.select("article.property")
-        or soup.select("div[class*='property-card']")
-        or soup.select("div[class*='PropertyCard']")
-        or soup.select("div[class*='listing']")
-        or soup.select("li.property")
-        or [a.parent for a in soup.select("a[href*='/bien/'], a[href*='/annonce/'], a[href*='/property/']") if a.parent]
-    )
+def _parse_annonce(a: dict) -> dict | None:
+    if TYPE_MAISON not in (a.get("types_ids") or []):
+        return None
+    prix = _to_float(a.get("prix"))
+    if not prix or prix < 10_000:        # « Sous compromis », vide…
+        return None
+    cp = str(a.get("cp") or "")
+    if len(cp) != 5:
+        return None
 
-    results = []
-    seen: set[str] = set()
-
-    for card in cards:
-        try:
-            link = card.select_one("a[href]") if card.name != "a" else card
-            if not link:
-                continue
-            href = link.get("href", "")
-            if not href:
-                continue
-            url = href if href.startswith("http") else BASE + href
-            if url in seen:
-                continue
-
-            text = card.get_text(" ", strip=True).replace("\xa0", " ")
-            prix = _re_float(r"([\d]+[\d\s]*\d)\s*€", text)
-            if not prix or prix < 10_000:
-                continue
-
-            surface = _re_float(r"(\d+(?:[.,]\d+)?)\s*m²", text)
-            id_m = re.search(r"/(\d{4,})", href)
-            ad_id = id_m.group(1) if id_m else href.rstrip("/").split("/")[-1]
-
-            city_m = re.search(r"([A-ZÀ-Ÿa-zà-ÿ][^(]{2,30})\s*\((\d{5})\)", text)
-            ville = city_m.group(1).strip()[:80] if city_m else ""
-            cp    = city_m.group(2) if city_m else ""
-
-            titre_el = card.select_one("h2, h3, h4, [class*='title'], [class*='titre']")
-            titre = (titre_el.get_text(strip=True) if titre_el else "Propriété atypique")[:150]
-
-            photos = []
-            for img in card.select("img"):
-                for attr in ("src", "data-src", "data-lazy-src"):
-                    src = img.get(attr, "")
-                    if src and src.startswith("http") and any(e in src.lower() for e in [".jpg", ".jpeg", ".webp", ".png"]):
-                        photos.append(src)
-                        break
-            photos = list(dict.fromkeys(photos))[:8]
-
-            pieces = None
-            m = re.search(r"(\d+)\s*pièces?", text, re.IGNORECASE)
-            if m: pieces = int(m.group(1))
-            chambres = None
-            m = re.search(r"(\d+)\s*ch(?:ambres?)?", text, re.IGNORECASE)
-            if m: chambres = int(m.group(1))
-
-            seen.add(url)
-            results.append({
-                "source": "espaces_atypiques",
-                "url": url,
-                "id_annonce": str(ad_id),
-                "titre": titre,
-                "type_bien": "maison",
-                "description": text[:1200],
-                "departement": cp[:2] if cp else dept,
-                "ville": ville,
-                "code_postal": cp,
-                "surface": surface,
-                "surface_terrain": None,
-                "pieces": pieces,
-                "chambres": chambres,
-                "prix": prix,
-                "photos": photos,
-                "dpe": None,
-                "agence": "Espaces Atypiques",
-                "has_pool": bool(re.search(r"\bpiscine\b", text, re.IGNORECASE)),
-            })
-        except Exception:
-            continue
-
-    return results
-
-
-async def _scrape_dept(client: httpx.AsyncClient, dept: str,
-                       prix_min: float, prix_max: float, surface_min: float) -> list[dict]:
-    slug = _DEPT_SLUGS.get(dept, dept)
-    biens: list[dict] = []
-    seen_ids: set[str] = set()
-
-    urls_to_try = [
-        f"{BASE}/fr/acheter/?type=maison&departement={dept}",
-        f"{BASE}/fr/acheter/?departement={dept}",
-        f"{BASE}/fr/nos-biens/maison/{slug}/",
-        f"{BASE}/fr/acheter/maison/{slug}/",
-    ]
-
-    for base_url in urls_to_try:
-        for page in range(1, MAX_PAGES + 1):
-            url = base_url if page == 1 else f"{base_url}&page={page}"
-            try:
-                r = await client.get(url)
-                if r.status_code != 200:
-                    break
-                cards = _parse_cards(r.text, dept)
-                if not cards:
-                    break
-
-                added = 0
-                for b in cards:
-                    if b["id_annonce"] in seen_ids:
-                        continue
-                    if prix_max and b.get("prix") and b["prix"] > prix_max:
-                        continue
-                    if prix_min and b.get("prix") and b["prix"] < prix_min:
-                        continue
-                    if surface_min and b.get("surface") and b["surface"] < surface_min:
-                        continue
-                    seen_ids.add(b["id_annonce"])
-                    biens.append(b)
-                    added += 1
-
-                print(f"[EspacesAtypiques] dept={dept} page={page} → {added} biens")
-                if added == 0:
-                    break
-            except Exception as e:
-                print(f"[EspacesAtypiques] ERR dept={dept}: {e}")
-                break
-
-        if biens:
-            break
-
-    return biens
+    titre = htmllib.unescape(a.get("nom") or "Maison atypique")
+    ville = (a.get("ville") or "").title()
+    bien = {
+        "source": "espaces_atypiques",
+        "url": a.get("url") or "",
+        "id_annonce": str(a.get("ref") or a.get("url") or ""),
+        "titre": titre[:150],
+        "type_bien": "maison",
+        "description": titre,
+        "departement": cp[:2],
+        "ville": ville[:80],
+        "code_postal": cp,
+        "surface": _to_float(a.get("surface")),
+        "surface_terrain": None,
+        "pieces": None,
+        "chambres": int(a["chambres"]) if str(a.get("chambres") or "").isdigit() else None,
+        "prix": prix,
+        "photos": [a["img"]] if a.get("img") else [],
+        "dpe": None,
+        "agence": f"Espaces Atypiques {(a.get('agence') or '').title()}".strip(),
+    }
+    lat, lng = _to_float(a.get("lat")), _to_float(a.get("lng"))
+    if lat and lng:
+        bien["latitude"], bien["longitude"] = lat, lng
+    return bien
 
 
 async def search(criteres: dict) -> list[dict]:
-    departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
-    prix_max    = criteres.get("prix_max", 600_000)
-    prix_min    = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 80)
+    departements = {str(d).zfill(2) for d in criteres.get("departements", [])}
+    prix_max = criteres.get("prix_max", 0)
+    prix_min = criteres.get("prix_min", 0)
+    surface_min = criteres.get("surface_min", 0)
+
+    async with make_client(timeout=60) as client:
+        r = await get_with_retry(client, FEED_URL)
+    if r is None or r.status_code != 200:
+        print(f"[EspacesAtypiques] feed indisponible "
+              f"(HTTP {r.status_code if r else 'ERR'})")
+        return []
+    try:
+        annonces = r.json().get("annonces") or []
+    except Exception as e:
+        print(f"[EspacesAtypiques] feed illisible: {e}")
+        return []
 
     results: list[dict] = []
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=30) as client:
-        tasks = [_scrape_dept(client, d, prix_min, prix_max, surface_min) for d in departements]
-        for biens in await asyncio.gather(*tasks):
-            results.extend(biens)
+    seen_ids: set = set()
+    for a in annonces:
+        try:
+            bien = _parse_annonce(a)
+        except Exception:
+            continue
+        if not bien or bien["departement"] not in departements:
+            continue
+        if keep_bien(bien, bien["departement"], seen_ids,
+                     prix_max=prix_max, prix_min=prix_min, surface_min=surface_min):
+            results.append(bien)
 
-    print(f"[EspacesAtypiques] total: {len(results)} biens")
+    for dept in sorted(departements):
+        n = sum(1 for b in results if b["departement"] == dept)
+        if n:
+            print(f"[EspacesAtypiques] Dept {dept}: {n} annonces")
     return results
 
 
 if __name__ == "__main__":
-    import sys
-    sys.stdout.reconfigure(encoding="utf-8")
-    result = asyncio.run(search({"departements": [72, 37, 49], "prix_max": 550_000, "prix_min": 330_000, "surface_min": 150}))
-    print(f"\nTotal: {len(result)} annonces")
-    for b in result[:5]:
-        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m² — {b['ville']}")
+    from scrapers._base import standalone_main
+    standalone_main(search, "EspacesAtypiques")

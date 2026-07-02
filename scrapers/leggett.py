@@ -1,205 +1,194 @@
 """
-scrapers/leggett.py — Leggett Immobilier (propriétés rurales françaises)
-Méthode : httpx + BeautifulSoup — SSR
-URL : https://www.leggett.fr/fr/property-for-sale/?type[]=house&department[]={dept}
+scrapers/leggett.py — Leggett Immobilier (réseau national, clientèle internationale)
+Méthode : Playwright + BeautifulSoup (réécrit 2026-07-02)
+leggett.fr redirige vers leggett-immo.com, derrière un challenge Cloudflare JS :
+httpx est bloqué (403) même avec cookie cf_clearance (lié au fingerprint TLS),
+mais Chromium headless passe le challenge. Recherche multi-départements en UNE
+requête via segments d'URL CakePHP :
+  /acheter-vendre-une-maison/mainSearch/departments:72--28--…/min_price:…/max_price:…/min_habitable:…/page:N
+Pas de code postal dans les cartes — département fiabilisé par le suffixe de la
+référence (A45776SGI72 → 72) recoupé avec la liste demandée.
 Interface : async def search(criteres: dict) -> list[dict]
 """
 import asyncio
 import re
 
-import httpx
 from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
 
-BASE = "https://www.leggett.fr"
+from scrapers._base import parse_price_digits
 
-_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-    "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+BASE = "https://www.leggett-immo.com"
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+MAX_PAGES = 10  # ~46 cartes/page
+
+# Nom de département tel qu'il apparaît dans le slug des annonces (accents inclus)
+_DEPT_NAMES = {
+    "72": "sarthe", "28": "eure-et-loir", "45": "loiret", "89": "yonne",
+    "49": "maine-et-loire", "37": "indre-et-loire", "36": "indre", "18": "cher",
+    "58": "nièvre", "41": "loir-et-cher", "53": "mayenne",
 }
 
-MAX_PAGES = 4
 
-
-def _re_float(pat, text):
-    m = re.search(pat, text.replace("\xa0", " ").replace(" ", "").replace(" ", ""))
-    try:
-        return float(m.group(1).replace(",", ".")) if m else None
-    except Exception:
+def _parse_card(card, depts: set[str]) -> dict | None:
+    link = card.select_one("a[href*='/view/']")
+    ref_el = card.select_one(".result-item-ref")
+    if not link or not ref_el:
+        return None
+    href = link.get("href", "")
+    url = href if href.startswith("http") else BASE + href
+    m = re.search(r"/view/([A-Z0-9]+)/", href)
+    ref = m.group(1) if m else ""
+    # Département = suffixe numérique de la référence (garde-fou anti-fuite)
+    m = re.search(r"(\d{2})$", ref)
+    dept = m.group(1) if m else ""
+    if dept not in depts:
         return None
 
+    # 1er montant € seulement : les biens « prix réduit » affichent 2 prix
+    # (nouveau puis ancien) — les concaténer donnerait un prix aberrant
+    prix_el = card.select_one(".result-price")
+    m = re.search(r"(\d[\d\s\xa0]*)€", prix_el.get_text() if prix_el else "")
+    prix = parse_price_digits(m.group(1)) if m else None
+    if not prix or prix < 10_000:
+        return None
 
-def _parse_cards(html: str, dept: str) -> list[dict]:
-    soup = BeautifulSoup(html, "html.parser")
+    # slug : /view/{ref}/maison-a-vendre-a-lombron-sarthe-pays de la loire-france
+    ville, type_bien = "", "maison"
+    m = re.search(r"/view/[A-Z0-9]+/([a-zà-ÿ]+)-a-vendre-a-(.+?)-france\s*$", href)
+    if m:
+        type_bien = m.group(1)
+        reste = m.group(2)
+        nom_dept = _DEPT_NAMES.get(dept, "")
+        ville = reste.split(f"-{nom_dept}-")[0] if nom_dept and f"-{nom_dept}-" in reste \
+            else reste.split("-")[0]
+        ville = ville.replace("-", " ").title()
 
-    cards = (
-        soup.select("div.property-listing")
-        or soup.select("div[class*='PropertyCard']")
-        or soup.select("article.property")
-        or soup.select("div.listing-item")
-        or soup.select("div[class*='listing']")
-        or [a.parent for a in soup.select("a[href*='/property/']") if a.parent]
-        or [a.parent for a in soup.select("a[href*='/fr/property/']") if a.parent]
-    )
+    carac = " ".join(el.get_text(" ", strip=True)
+                     for el in card.select(".characteristics-item"))
+    surface = None
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*m\s*2?\b", carac)
+    if m:
+        surface = float(m.group(1).replace(",", "."))
+    pieces = None
+    m = re.search(r"(\d+)\s*pièces?", carac)
+    if m:
+        pieces = int(m.group(1))
+    chambres = None
+    m = re.search(r"(\d+)\s*chambres?", carac)
+    if m:
+        chambres = int(m.group(1))
+    terrain = None
+    m = re.search(r"([\d\s\xa0]+)\s*m\s*2?\s*de\s*terrain", carac)
+    if m:
+        terrain = parse_price_digits(m.group(1))
 
-    results = []
-    seen: set[str] = set()
-
-    for card in cards:
-        try:
-            link = card.select_one("a[href*='/property/'], a[href*='/fr/property/']")
-            if not link:
-                link = card if card.name == "a" else card.select_one("a[href]")
-            if not link:
-                continue
-            href = link.get("href", "")
-            if not href:
-                continue
-            url = href if href.startswith("http") else BASE + href
-            if url in seen:
-                continue
-
-            text = card.get_text(" ", strip=True).replace("\xa0", " ")
-
-            # Prix : Leggett affiche souvent en € ou en £ — on prend €
-            prix = _re_float(r"([\d]+[\d\s]*\d)\s*€", text)
-            if not prix or prix < 10_000:
-                continue
-
-            surface = _re_float(r"(\d+(?:[.,]\d+)?)\s*m²", text)
-
-            id_m = re.search(r"/(\d{4,})", href)
-            ad_id = id_m.group(1) if id_m else href.rstrip("/").split("/")[-1]
-
-            city_m = re.search(r"([A-ZÀ-Ÿa-zà-ÿ][^(]{2,30})\s*\((\d{5})\)", text)
-            ville = city_m.group(1).strip()[:80] if city_m else ""
-            cp    = city_m.group(2) if city_m else ""
-            dept_f = cp[:2] if cp else dept
-
-            titre_el = card.select_one("h2, h3, h4, [class*='title'], [class*='titre']")
-            titre = (titre_el.get_text(strip=True) if titre_el else "Propriété")[:150]
-
-            photos = []
-            for img in card.select("img"):
-                for attr in ("src", "data-src", "data-lazy", "data-original"):
-                    src = img.get(attr, "")
-                    if src and src.startswith("http") and any(e in src.lower() for e in [".jpg", ".jpeg", ".webp", ".png"]):
-                        photos.append(src)
-                        break
-            photos = list(dict.fromkeys(photos))[:8]
-
-            terrain = None
-            m = re.search(r"(\d+(?:[.,]\d+)?)\s*ha(?:res?)?", text, re.IGNORECASE)
-            if m:
-                try:
-                    terrain = float(m.group(1).replace(",", ".")) * 10_000
-                except Exception:
-                    pass
-
-            pieces = None
-            m = re.search(r"(\d+)\s*pièces?", text, re.IGNORECASE)
-            if m: pieces = int(m.group(1))
-            chambres = None
-            m = re.search(r"(\d+)\s*(?:ch(?:ambres?)?|bedroom)", text, re.IGNORECASE)
-            if m: chambres = int(m.group(1))
-
-            seen.add(url)
-            results.append({
-                "source": "leggett",
-                "url": url,
-                "id_annonce": str(ad_id),
-                "titre": titre,
-                "type_bien": "maison",
-                "description": text[:1200],
-                "departement": dept_f,
-                "ville": ville,
-                "code_postal": cp,
-                "surface": surface,
-                "surface_terrain": terrain,
-                "pieces": pieces,
-                "chambres": chambres,
-                "prix": prix,
-                "photos": photos,
-                "dpe": None,
-                "agence": "Leggett Immobilier",
-                "has_pool": bool(re.search(r"\bpiscine\b|\bpool\b", text, re.IGNORECASE)),
-            })
-        except Exception:
-            continue
-
-    return results
-
-
-async def _scrape_dept(client: httpx.AsyncClient, dept: str,
-                       prix_min: float, prix_max: float, surface_min: float) -> list[dict]:
-    biens: list[dict] = []
-    seen_ids: set[str] = set()
-
-    for page in range(1, MAX_PAGES + 1):
-        params = {
-            "type[]": "house",
-            "department[]": dept,
-            "price_max": int(prix_max),
-            "surface_min": int(surface_min),
-            "page": page,
-        }
-        try:
-            r = await client.get(f"{BASE}/fr/property-for-sale/", params=params)
-            if r.status_code != 200:
-                break
-            cards = _parse_cards(r.text, dept)
-            if not cards:
-                # Alternative URL
-                r2 = await client.get(f"{BASE}/fr/search/", params=params)
-                if r2.status_code == 200:
-                    cards = _parse_cards(r2.text, dept)
-            if not cards:
-                break
-
-            added = 0
-            for b in cards:
-                if b["id_annonce"] in seen_ids:
-                    continue
-                if prix_max and b.get("prix") and b["prix"] > prix_max:
-                    continue
-                if prix_min and b.get("prix") and b["prix"] < prix_min:
-                    continue
-                if surface_min and b.get("surface") and b["surface"] < surface_min:
-                    continue
-                seen_ids.add(b["id_annonce"])
-                biens.append(b)
-                added += 1
-
-            print(f"[Leggett] dept={dept} page={page} → {added} biens")
-            if added == 0:
-                break
-        except Exception as e:
-            print(f"[Leggett] ERR dept={dept} page={page}: {e}")
-            break
-
-    return biens
+    titre_el = card.select_one(".result-item-description")
+    desc_el = card.select_one(".result-item-description-highlighted")
+    img = card.select_one("img.result-item-visual-image")
+    return {
+        "source": "leggett",
+        "url": url,
+        "id_annonce": ref,
+        "titre": (titre_el.get_text(strip=True) if titre_el else f"Maison {ville}")[:150],
+        "type_bien": type_bien,
+        "description": (desc_el.get_text(" ", strip=True) if desc_el else "")[:1200],
+        "departement": dept,
+        "ville": ville,
+        "code_postal": "",          # non exposé en vue liste
+        "surface": surface,
+        "surface_terrain": terrain,
+        "pieces": pieces,
+        "chambres": chambres,
+        "prix": prix,
+        "photos": [img["src"]] if img and img.get("src", "").startswith("http") else [],
+        "dpe": None,
+        "agence": "Leggett Immobilier",
+    }
 
 
 async def search(criteres: dict) -> list[dict]:
     departements = [str(d).zfill(2) for d in criteres.get("departements", [])]
-    prix_max    = criteres.get("prix_max", 600_000)
-    prix_min    = criteres.get("prix_min", 0)
-    surface_min = criteres.get("surface_min", 80)
+    if not departements:
+        return []
+    prix_max = criteres.get("prix_max", 0)
+    prix_min = criteres.get("prix_min", 0)
+    surface_min = criteres.get("surface_min", 0)
 
+    path = f"{BASE}/acheter-vendre-une-maison/mainSearch/departments:" + "--".join(departements)
+    if prix_min:
+        path += f"/min_price:{int(prix_min)}"
+    if prix_max:
+        path += f"/max_price:{int(prix_max)}"
+    if surface_min:
+        path += f"/min_habitable:{int(surface_min)}"
+
+    depts = set(departements)
     results: list[dict] = []
-    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=30) as client:
-        tasks = [_scrape_dept(client, d, prix_min, prix_max, surface_min) for d in departements]
-        for biens in await asyncio.gather(*tasks):
-            results.extend(biens)
+    seen: set[str] = set()
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=True, args=["--disable-blink-features=AutomationControlled"])
+        try:
+            for num in range(1, MAX_PAGES + 1):
+                url = path if num == 1 else f"{path}/page:{num}"
+                # Contexte NEUF par page : le challenge Cloudflare revient à chaque
+                # navigation d'une même session et n'y est plus résolu — alors qu'un
+                # contexte vierge le passe en quelques secondes.
+                context = await browser.new_context(locale="fr-FR", user_agent=UA)
+                page = await context.new_page()
+                cards, soup = [], None
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                    for _ in range(15):   # « Just a moment... » / « Un instant… »
+                        title = (await page.title()).lower()
+                        if "moment" not in title and "instant" not in title:
+                            break
+                        await asyncio.sleep(2)
+                    else:
+                        print("[Leggett] Challenge Cloudflare non résolu — abandon")
+                        break
+                    try:
+                        await page.wait_for_selector("div.result-item", timeout=20000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(2)
+                    soup = BeautifulSoup(await page.content(), "html.parser")
+                    cards = soup.select("div.result-item")
+                finally:
+                    await context.close()
+                added = 0
+                for card in cards:
+                    try:
+                        b = _parse_card(card, depts)
+                    except Exception:
+                        continue
+                    if not b or b["id_annonce"] in seen:
+                        continue
+                    if prix_max and b["prix"] and b["prix"] > prix_max:
+                        continue
+                    if prix_min and b["prix"] and b["prix"] < prix_min:
+                        continue
+                    if surface_min and b.get("surface") and b["surface"] < surface_min:
+                        continue
+                    seen.add(b["id_annonce"])
+                    results.append(b)
+                    added += 1
+                print(f"[Leggett] page {num}: {added} biens")
+                if not cards or f"page:{num + 1}" not in str(soup):
+                    break
+                await asyncio.sleep(1.5)
+        except Exception as e:
+            print(f"[Leggett] Erreur: {e}")
+        finally:
+            await browser.close()
 
     print(f"[Leggett] total: {len(results)} biens")
     return results
 
 
 if __name__ == "__main__":
-    import sys
-    sys.stdout.reconfigure(encoding="utf-8")
-    result = asyncio.run(search({"departements": [72, 37, 49], "prix_max": 550_000, "prix_min": 330_000, "surface_min": 150}))
-    print(f"\nTotal: {len(result)} annonces")
-    for b in result[:5]:
-        print(f"  {b['titre'][:70]} — {b['prix']}€ — {b['surface']}m² — {b['ville']}")
+    from scrapers._base import standalone_main
+    standalone_main(search, "Leggett")
