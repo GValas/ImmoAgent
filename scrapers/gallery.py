@@ -36,10 +36,13 @@ except Exception:  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #
-# Coupe-circuit par domaine : après N échecs 429/503 sur un même domaine, on
-# cesse de le solliciter pour le reste de la passe (évite le spam de logs et la
-# surcharge qui aggrave le rate-limit). reset_breaker() à appeler au début de
-# chaque passe d'enrichissement (hunter le fait).
+# Coupe-circuit par domaine : après N échecs bloquants (403/429/503 ou domaine
+# injoignable) sur un même domaine, on cesse de le solliciter pour le reste de
+# la passe (évite le spam de logs et la surcharge qui aggrave le blocage).
+# reset_breaker() à appeler au début de chaque passe d'enrichissement (hunter
+# le fait). Le 403 compte : DataDome/Cloudflare bloquent les pages détail de
+# sources dont la liste passe (leboncoin, seloger, belles_demeures) — sans lui,
+# des centaines de requêtes condamnées partaient à chaque cycle.
 # --------------------------------------------------------------------------- #
 _DOMAIN_FAILS: dict[str, int] = {}
 _BREAKER_LIMIT = 4
@@ -49,8 +52,18 @@ def reset_breaker() -> None:
     _DOMAIN_FAILS.clear()
 
 
-def _is_rate_limit(e: Exception) -> bool:
-    return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (429, 503)
+def _is_blocking(e: Exception) -> bool:
+    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (403, 429, 503):
+        return True
+    # Domaine injoignable (DNS mort, IP bannie par l'hébergeur → connect timeout) :
+    # inutile de retenter les autres annonces du même domaine cette passe.
+    return isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout))
+
+
+def _block_reason(e: Exception) -> str:
+    if isinstance(e, httpx.HTTPStatusError):
+        return str(e.response.status_code)
+    return "injoignable"
 
 
 def _note_fail(dom: str) -> bool:
@@ -797,7 +810,7 @@ async def fetch_gallery(bien: dict, session: httpx.AsyncClient) -> list[str]:
 
     dom = urlparse(url).netloc
     if _DOMAIN_FAILS.get(dom, 0) >= _BREAKER_LIMIT:
-        return existing   # domaine abandonné pour cette passe (rate-limité) — silencieux
+        return existing   # domaine abandonné pour cette passe (bloqué) — silencieux
 
     source = (bien.get("source") or "").strip()
     fetcher = _DISPATCH.get(source)
@@ -813,10 +826,10 @@ async def fetch_gallery(bien: dict, session: httpx.AsyncClient) -> list[str]:
             # Le fetcher dédié n'a rien donné de mieux → on tente le générique,
             # sauf pour les sources JS-only (générique = chrome/placeholder).
         except Exception as e:
-            if _is_rate_limit(e):
+            if _is_blocking(e):
                 if _note_fail(dom):
-                    print(f"[Gallery] {dom} rate-limité (429) — abandonné pour ce cycle")
-                return existing   # ne PAS tenter le générique (re-429 inutile)
+                    print(f"[Gallery] {dom} bloqué ({_block_reason(e)}) — abandonné pour ce cycle")
+                return existing   # ne PAS tenter le générique (re-blocage inutile)
             print(f"[Gallery] {source} fetcher KO ({url[:60]}): {e}")
 
     if source in _JS_ONLY:
@@ -830,9 +843,9 @@ async def fetch_gallery(bien: dict, session: httpx.AsyncClient) -> list[str]:
         found = _extract_generic(txt, base)
         return _better_of(existing, found, bien)
     except Exception as e:
-        if _is_rate_limit(e):
+        if _is_blocking(e):
             if _note_fail(dom):
-                print(f"[Gallery] {dom} rate-limité (429) — abandonné pour ce cycle")
+                print(f"[Gallery] {dom} bloqué ({_block_reason(e)}) — abandonné pour ce cycle")
             return existing
         print(f"[Gallery] generic KO {source} ({url[:60]}): {e}")
         return existing

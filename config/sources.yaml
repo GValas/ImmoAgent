@@ -193,9 +193,9 @@ sources:
     nom: "Properstar"
     url_base: "https://www.properstar.fr"
     methode: "scrape_simple"
-    actif: true
+    actif: false
     priorite: 2
-    note: "httpx pur — agrégateur international — /acheter/maison/{slug-dept} — 20 annonces/dept — article.item-adaptive — post-filtre Python"
+    note: "httpx pur — agrégateur international — /acheter/maison/{slug-dept} — 20 annonces/dept — article.item-adaptive — post-filtre Python. DÉSACTIVÉ 2026-07-03 : 403 sur les 11 depts (429 même via curl navigateur), muet depuis 54 runs — anti-bot durci. Re-tester avec UA mobile ou proxy avant réactivation."
 
   - id: laforet
     nom: "Laforêt Immobilier"
@@ -4607,6 +4607,12 @@ sources:
 
 
 blacklist:
+
+  # ── Ajout 2026-07-03 (revue erreurs scheduler) ──
+  - id: properstar_blocked
+    nom: "Properstar (anti-bot durci)"
+    url_base: "https://www.properstar.fr"
+    raison: "Marchait (~20/dept) jusqu'à ~2026-07-01, puis 403 systématique sur les 11 depts en httpx ET 429 via curl avec UA navigateur — rate-limit/anti-bot au niveau du site, pas lié au ban IP OVH (properstar n'est pas hébergé chez OVH). Muet 54 runs. Ne pas retenter sans changement de stratégie (UA app mobile, proxy résidentiel). Le scraper properstar.py est conservé, actif: false."
 
   # ── Ajouts 2026-06-13 (scraper-scout — réseaux mandataires/franchises non retenus) ──
   - id: reseaufranceimmobilier

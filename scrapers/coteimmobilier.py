@@ -31,7 +31,7 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
-from scrapers._base import HEADERS
+from scrapers._base import HEADERS, get_with_retry
 
 BASE_URL = "https://www.coteimmobilier.fr"
 LIST_URL = BASE_URL + "/annonces/transaction/Vente.html"
@@ -109,9 +109,11 @@ async def _collect_cards(client: httpx.AsyncClient) -> list[dict]:
     seen_urls: set[str] = set()
 
     for page in range(1, MAX_PAGES + 1):
+        # Serveur lent/intermittent (ReadTimeout sporadiques) : retry impératif,
+        # et on garde les pages déjà collectées si une page lâche.
         params = {"manufacturers_id": "transaction", "page": page}
-        r = await client.get(LIST_URL, params=params)
-        if r.status_code != 200:
+        r = await get_with_retry(client, LIST_URL, params=params)
+        if r is None or r.status_code != 200:
             break
 
         items = BeautifulSoup(r.text, "html.parser").select("div.item-product")
@@ -197,8 +199,8 @@ def _parse_card(card) -> dict | None:
 
 
 async def _enrich_detail(client: httpx.AsyncClient, card: dict) -> dict | None:
-    r = await client.get(card["url"])
-    if r.status_code != 200:
+    r = await get_with_retry(client, card["url"])
+    if r is None or r.status_code != 200:
         return None
     soup = BeautifulSoup(r.text, "html.parser")
 
