@@ -4604,9 +4604,249 @@ sources:
       en page détail par gallery.py) ; quelques prix bruts aberrants (terrains/parts) écartés par
       prix_min. ruff OK. dernier_test 2026-06-14.'
 
+  # ── Nouveaux scrapers 2026-07-04 (scraper-scout, 4 agents //) ──
+  - id: human_immobilier
+    nom: "Human Immobilier (ex-Bourse de l'Immobilier, ~550 agences)"
+    url_base: "https://www.human-immobilier.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 1
+    note: >-
+      SSR httpx. DÉ-BLACKLISTÉ 2026-07-04 (ancienne raison « URL dept ignoré » levée) : le vrai
+      filtre serveur est le param ids={dept} (id_polygone du XHR /MoteurAccueil/GetVilles_Departements),
+      URL /achat-immobilier-{slug}?…&prix={min}-{max}&surface={smin}&typebien=1&ids={dept}&page={N}
+      (26/page, page 1-based). PIÈGE : le cookie de session AF_humanimmobiliercookie mémorise la
+      dernière recherche et écrase le querystring -> client httpx NEUF par département (c'est ce
+      qui faisait croire au filtre cassé en 2026-05). Cartes div.bien (a.bien__link[title] ville+CP,
+      span.typeBien/surface/ville/prix ; « Vendu » écartés). Filtres prix/surface serveur OK +
+      post-filtre strict CP[:2]. Test prod 2026-07-04 : 128 annonces (37:73, 41:30, 18:15, 36:5,
+      49:4, 45:1), 0 fuite ; depts 72/28/89/58/53 sans agence Human (0 normal). NB bourse-immobilier.fr
+      redirige ici. dernier_test 2026-07-04.
+  - id: trovit_immo
+    nom: "Trovit Immobilier (agrégateur)"
+    url_base: "https://immo.trovit.fr"
+    methode: scrape_simple
+    actif: false
+    priorite: 2
+    note: >-
+      SSR httpx via run_dept_search, /maison-{slug}[/{page}] (~30 cartes/page). Recherche TEXTUELLE
+      (pas géo) -> map de slugs mesurée (noms nus distinctifs sarthe/loiret/yonne… ; departement-{nom}
+      pour les ambigus « cher »/« indre »/« maine-et-loire ») + post-filtre STRICT CP[:2] + exclusion
+      data-is-similar. Agrège leboncoin/bienici/luxuryestate (backup utile, dédup hunter). Test
+      2026-07-04 : 77 annonces zone (45:19, 41:11, 18:8, 53:8, 72:7…), 0 fuite. MAIS actif:false :
+      après quelques runs rapprochés le site sert un interstitiel anti-bot (200, gabarit 12,8 ko
+      « ${locale} » sans annonces), persistant >5 min — rate-limit IP. Réactiver après cooldown
+      (re-tester 1 run/jour) ou via proxy. dernier_test 2026-07-04.
+  - id: vivastreet
+    nom: "Vivastreet Immobilier (petites annonces P2P)"
+    url_base: "https://www.vivastreet.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, /immobilier-vente-maison/{slug-dept} (11 depts OK, pagination /t+{N}, 302 si page
+      unique). Cloudflare présent mais laisse passer httpx (2026-07-04). DOM Tailwind volatile ->
+      repérage regex des liens /{ville-CP}/{slug}/{id} puis remontée au <li> ; prix multi-formats
+      (« Prix €66,000 », « Nouveau Prix : 369.000 € », fallback max des candidats). Filtre dept
+      serveur avec fuites limitrophes -> post-filtre STRICT CP[:2]. Annonces DIRECT PARTICULIER
+      absentes des autres sources. Test prod 2026-07-04 : 3 annonces (72:1, 45:1, 89:1), 0 fuite.
+      Volume faible (~1-4/dept avant filtre prix). dernier_test 2026-07-04.
+  - id: creagite
+    nom: "Creagite (gîtes & maisons d'hôtes à vendre)"
+    url_base: "https://www.creagite.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, run_dept_search. Niche tourisme rural : grandes demeures de caractère avec
+      dépendances/terrain. /etablissements-a-vendre/{region}/{dept-slug} + /page/{N} (filtre dept
+      serveur par le chemin, map 11 depts centre/pays-de-la-loire/bourgogne). Cartes div.border-top-line,
+      h3 a = titre+lien, p[class*=id--] = extrait+réf, prix/type/ville dans le <p> au picto briefcase
+      (« {prix} € {type} à {Ville} ({Département}) »). CP absent des cartes -> CP synthétique NN000,
+      dept verrouillé par l'URL (convention safer_annonces). Surface absente en liste (enrichie
+      par gallery). Test prod 2026-07-04 : 8 annonces (41:5, 45:1, 37:1, 18:1), 336-599 k€, 0 fuite.
+      Doublons possibles avec immotourisme (dédup hunter). dernier_test 2026-07-04.
+  - id: h36_immo
+    nom: "36 heures immo (ventes interactives immonot)"
+    url_base: "https://www.36heures.immo"
+    methode: scrape_simple
+    actif: false
+    priorite: 4
+    note: >-
+      SSR httpx. Listing (lien footer uniquement) /fr/annonces/ventes-interactives-immobilieres-en-ligne.html,
+      pagination …-en-ligne-p-{N}.html, ~10 cartes/page, catalogue NATIONAL ~30-40 ventes en ligne.
+      Cartes article avec lien /fr/annonce/{ULID}/{slug}.html ; le slug auto-descriptif
+      {type}-{ville}-{cp}-{N}p-{S}m2-{P}euros est la source la plus fiable. PRIX = « 1re offre
+      possible » (mise à prix, adjudication finale supérieure — même logique que bouquet viager).
+      Post-filtre STRICT CP[:2], 0 fuite vérifié. actif:false : scraper fonctionnel mais 0 stock
+      sous bornes prod (7 biens zone en bornes élargies — 49:3, 89:3, 45:1 — tous < 300 k€).
+      Réactiver si prix_min baisse ; stock tournant vite (plateforme lancée fin 2025), re-sonder.
+      dernier_test 2026-07-04.
+  - id: agence_berry_nivernais
+    nom: "Agence Berry-Nivernais (La Charité-sur-Loire, 58/18)"
+    url_base: "https://www.immoberrynivernais.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, CMS La Boîte Immo gabarit ancien li.panelBien (≠ property-listing-v2). /a-vendre/{page}
+      (10 cartes/page, pagination sans cookie). Prix [itemprop=price]@content, ville+CP dans le
+      h2 (« Maison 236 m² - 8 Pièces - Ville (58400) »), réf .ref, description [itemprop=description].
+      Pagination sur cartes BRUTES puis bornes ensuite (l'arrêt « 2 pages sans nouveau » de _base
+      tronque les petites agences sous prix_min). Gating : ne requête que si 58/18 demandés ;
+      post-filtre STRICT CP[:2]. Stock 86 biens (58:69, 18:17). Test prod 2026-07-04 : 1 annonce
+      (maison de caractère 1829, 236 m², 320 k€, La Charité), 0 fuite. dernier_test 2026-07-04.
+  - id: romain_tuault_immo
+    nom: "Romain Tuault Immobilier (Craon/Renazé/Château-Gontier, 53)"
+    url_base: "https://www.romaintuaultimmo.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, CMS La Boîte Immo gabarit article.property-listing-v2__container, pagination
+      /vente/{page} SANS session (vérifié). Cartes : .title__content-1 = « Ville (CP) »,
+      .title__content-2 = titre, .item__price, .item__reference, type via segment d'URL
+      /vente/{ville}/{type}/t{N}/{id-slug}/ (pièces = tN). Pagination sur cartes brutes puis bornes.
+      Gating 53/49 ; post-filtre STRICT CP[:2]. Stock 70 biens (53:63, 49:7). Test prod 2026-07-04 :
+      5 annonces 53 (maison de maître Craon 317 k€, propriétés 365/449 k€…), 0 fuite.
+      dernier_test 2026-07-04.
+  - id: senonches_immobilier
+    nom: "Senonches Immobilier (Perche/Thymerais, 28)"
+    url_base: "https://senonches-immobilier.fr"
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: >-
+      Site SHOPIFY : inventaire complet via l'endpoint public /products.json?limit=250 (1-2 requêtes
+      JSON, aucun HTML). Stock très ciblé caractère : longères percheronnes, manoirs, corps de
+      ferme, maisons de maître. Prix = variants[0].price, CP dans le titre « (28240) » sinon
+      body_html, ville = tag Shopify, photos = images[].src, DPE parfois dans le body. Exclusion
+      VENDU / SOUS-COMPROMIS / À LOUER et types non-maison. Gating : ne requête que si 28 demandé ;
+      post-filtre STRICT CP[:2] (écarte franges 61/27). Stock 102 produits (28:84). Test prod
+      2026-07-04 : 3 annonces 28 (162 m² 479 k€, 213 m² 330 k€, corps de ferme 330 m² 375 k€),
+      0 fuite. dernier_test 2026-07-04.
+  - id: immo_mais_pas_que
+    nom: "Immo mais pas que (Montval-sur-Loir / Saint-Calais, 72)"
+    url_base: "https://www.immomaispasque.com"
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: >-
+      CMS Netty : React CSR mais état COMPLET embarqué en base64 dans un script inline
+      (prodResults.search = réfs de la page, prodId[ref] = fiche cp/city/pricePrimary/surface/land/
+      rooms/rooms2/details.fr/photos) -> httpx pur. /vente?page={N} (12/page, ~201 biens ; filtres
+      serveur ignorés). Type via prod_type == "house". Gating 72/41/37 ; post-filtre STRICT CP[:2]
+      (écarte antennes 73/83). Stock zone ~94 maisons (72:~84, 41:~12, 37:~8). Test prod 2026-07-04 :
+      4 annonces (72:3, 41:1), 0 fuite. dernier_test 2026-07-04.
+  - id: patrimoine_immo_cgp
+    nom: "Patrimoine Immo CGP (Montval-sur-Loir, 72)"
+    url_base: "https://www.patrimoineimmo-cgp.fr"
+    methode: api_inoff
+    actif: true
+    priorite: 3
+    note: >-
+      CMS Netty, même méthode base64-inline que immo_mais_pas_que (état complet dans le HTML,
+      httpx pur). /vente?page={N}, ~41 biens dont 28 en zone (72:22, 37:3, 49:2, 41:1). Gating
+      72/37/49/41 ; post-filtre STRICT CP[:2]. Test prod 2026-07-04 : 2 annonces (longère 49490
+      290 m² 320 k€ ; maison de caractère 72340 300 m² 365 k€), 0 fuite. dernier_test 2026-07-04.
+  - id: lair_immobilier
+    nom: "Lair Immobilier (Alençon/Mamers/Fresnay, 61+72/53/28)"
+    url_base: "https://www.lair-immobilier.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 2
+    note: >-
+      SSR httpx, même CMS « office » que blois_immo mais CP directement sur la carte
+      (.product-localisation « VILLE (61410) »). /annonces/transaction/Vente.html?page={N} (18/page,
+      ~42 pages ; catalogue 61-majoritaire : 375 annonces dont 72:39, 53:34, 28:2). Cartes
+      div.listing-item, prix .product-price (texte direct hors span honoraires), bulles .bulle
+      .value (pièces/chambres/m²), réf .product-ref. Gating 72/53/28 ; post-filtre STRICT CP[:2]
+      (écarte le 61). Test prod 2026-07-04 : 11 annonces (72:9, 53:1, 28:1) — propriétés/demeures
+      Alpes Mancelles-Perche dans la fourchette, 0 fuite. dernier_test 2026-07-04.
+  - id: anjou_immobilier
+    nom: "Anjou Immobilier (Segré-en-Anjou Bleu, 49)"
+    url_base: "https://www.anjouimmobilier.fr"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, CMS « card_bien » (même famille qu'Agence Tourangelle). /vente/{page} (10/page).
+      Cartes div.card_bien, CP sur carte (.card_bien__localisation « Ville (49500) »), prix
+      .card_bien__prix, type/id via segments d'URL, chambres/surface dans .card_bien__title_part_3.
+      Gating 49/53 ; post-filtre STRICT CP[:2]. Test prod 2026-07-04 : 5 annonces 49 (dont 294 m²
+      498,7 k€), 0 fuite. dernier_test 2026-07-04.
+  - id: hersant_immobilier
+    nom: "Hersant Immobilier (Meung-sur-Loire / Beaugency, 45/41)"
+    url_base: "https://www.hersantimmo.com"
+    methode: scrape_simple
+    actif: true
+    priorite: 3
+    note: >-
+      SSR httpx, CMS La Boîte Immo (images *.staticlbi.com, famille idimmo). /vente/{page} (12/page).
+      Cartes article.property-listing-v2__container, CP sur carte (.title__content-1 « Baccon
+      (45130) »), prix .item__price, pièces via segment t{N} de l'URL, surface extraite de l'extrait
+      descriptif. Gating 45/41 ; post-filtre STRICT CP[:2]. Test prod 2026-07-04 : 4 annonces 45
+      (Meung/Beaugency/Huisseau), 0 fuite. dernier_test 2026-07-04.
 
 
 blacklist:
+
+  # ── Ajouts 2026-07-04 (scraper-scout, 4 agents // — écartés) ──
+  - id: indomio
+    nom: "Indomio.fr (ex-portail groupe immobiliare.it)"
+    url_base: "https://www.indomio.fr"
+    raison: "DOMAINE PARKÉ : toutes les URLs (home et profondes, headers complets) renvoient 200 avec 114 octets — redirection JS vers /lander, page GoDaddy (LANDER_SYSTEM=PW, tracker _trfd). Le groupe immobiliare.it n'opère plus indomio.fr. Ne pas retenter."
+    dernier_test: "2026-07-04"
+  - id: frenchentree
+    nom: "FrenchEntrée (portail anglophone)"
+    url_base: "https://www.frenchentree.com"
+    raison: "Le listing /property-for-sale/ fait 301 vers propertyinfrance.com (backend réel des annonces) qui répond HTTP 520 Cloudflare (origine down) de façon répétée ; /listings/ n'est qu'un annuaire de prestataires. Re-tester si propertyinfrance.com revient en ligne."
+    dernier_test: "2026-07-04"
+    alternative: "french_property, my_french_house, clefrance (anglophones déjà couverts)"
+  - id: monsieurimmobilier
+    nom: "Monsieur Immobilier (Limoges, 87)"
+    url_base: "https://www.monsieurimmobilier.com"
+    raison: "PAS un réseau national : agence locale de Limoges (87) sur CMS La Boîte Immo (SSR propre, /a-vendre/1 scrapable), catalogue 100 % dept 87 — hors zone cible. Réactiver seulement si la zone s'étend au Limousin."
+    dernier_test: "2026-07-04"
+  - id: maineprestige
+    nom: "Maine Prestige Immobilier (Coldwell Banker, 72/49/53)"
+    url_base: "https://www.maineprestige.fr"
+    raison: "SSR httpx OK (18 annonces prestige Sarthe/Anjou/Mayenne) MAIS aucun CP/ville structuré : ville en texte libre du titre uniquement, JSON-LD = adresse de l'agence -> post-filtre CP[:2] impossible, garantie 0 fuite intenable. Domaine distinct de coldwellbanker.fr (déjà couvert). Réactivation : parsing ville->CP via BAN (cf. immobilier_epi) si le stock justifie."
+    dernier_test: "2026-07-04"
+  - id: paty_immobilier
+    nom: "Paty Immobilier (Nogent-le-Rotrou, 28)"
+    url_base: "https://www.paty-immobilier.com"
+    raison: "Site Apimo (company53274myk) 100 % CSR : données chargées en JS, les blobs base64 SSR ne contiennent que l'i18n, 0 prix/carte dans le HTML brut. Réactivation : API Apimo authentifiée ou Playwright."
+    dernier_test: "2026-07-04"
+  - id: csr_sans_prix_28_53_58_2026_07_04
+    nom: "Lot agences 28/53/58 — prix absents du SSR"
+    url_base: "n/a"
+    raison: "Sondés et écartés : mgn-immobilier.com (Bonneval/Chartres 28) et renaze.id-halles.fr (Renazé 53) — même CMS ville_bien/… avec cartes div.listing-item mais prix chargés via annonce.php/AJAX, pas de pagination HTML ; agence-du-lion.fr (Dreux/Senonches 28) — ventes.php vide en httpx, listing via javascript:Recherche_Avancee() ; soca-immo.com (La Charité 58) — page preloader jQuery sans contenu annonces. Réactivation : capture des appels AJAX ou Playwright."
+    dernier_test: "2026-07-04"
+  - id: divers_ecartes_2026_07_04
+    nom: "Lot candidats divers — doublons/morts/bloqués/hors-données"
+    url_base: "n/a"
+    raison: >-
+      Sondés 2026-07-04, écartés : DOUBLONS par redirection — bourse-immobilier.fr (301 -> human-immobilier.fr,
+      couvert par human_immobilier), lafourmi-immo.com (-> lfimmo.fr, id lf_immo), immofrance.com
+      (301 -> green-acres.fr, id greenacres). ANTI-BOT — realadvisor.fr (403 Cloudflare challenge),
+      residences-immobilier.com (403 CF), lux-residence.com (403 DataDome/CloudFront, groupe SeLoger),
+      encheres-domaine.gouv.fr (challenge JS + cookie à token à usage unique, rejeu curl 403 ->
+      Playwright requis). INJOIGNABLES/MORTS — annoncesjaunes.fr (aucune réponse), ventes-domaniales.fr
+      (DNS), immobilier.leparisien.fr (SSL handshake failure), francophiles.co.uk (domaine à vendre),
+      partenaire-europeen.fr (plus qu'un blog WP, l'activité annonces VEP a disparu), blain-habitat.com
+      (Angers 49 : TCP timeout persistant 80/443 depuis cet environnement malgré DNS OK — à retenter
+      depuis une IP FR), cabinetcantais.com (159 gîtes, timeout IP datacenter), agenceduchateau41.fr
+      (HTTP 501), bougrier.fr (négociant en VINS, pas d'agence immo). SANS DONNÉES EXPLOITABLES —
+      mb-immobilier.com (M&B Tours 37 : ajax=1 répond JSON mais totalProducts:0 partout),
+      agencesolutionimmo.com (Villaines-la-Juhel 53 : petits budgets, redondant), percheetdemeures.com
+      (archive WP quasi vide, stock 61), eau-et-patrimoine.fr (2 moulins, pas de prix), cotelittoral.fr
+      (moulins 100 % littoral hors zone), fdmf.fr (posts de blog non structurés), kadran.com (annonces
+      derrière app.kadran.com SPA/login), sympa-immobilier.com et maisondhotes-a-vendre.fr (hors zone,
+      pas de CP structuré). RÉSERVE (viable, non retenu) : agencetourangelle.fr (Bléré 37, SSR card_bien
+      sain mais ~15 annonces dont 1 en critères, CP seulement en page détail) — candidat pour une
+      prochaine vague.
+    dernier_test: "2026-07-04"
 
   # ── Ajout 2026-07-03 (revue erreurs scheduler) ──
   - id: properstar_blocked
@@ -4851,12 +5091,10 @@ blacklist:
   # mais /liste-annonces-immobilieres/17-acheter-maison-{slug}-{NN}.htm → scraper actif
   # scrapers/fnaim.py (gros volume ; LIMITE : ~45% des annonces masquent le prix).
 
-  - id: human_immo
-    nom: "Human Immobilier"
-    url_base: "https://www.human-immobilier.com"
-    raison: "Domaine inexistant — le vrai site est human-immobilier.fr mais sans filtre département fonctionnel (Selectize.js non interactable, URL dept ignoré côté serveur)"
-    dernier_test: "2026-05-26"
-    alternative: "safti, iad"
+  # human_immo : DÉ-BLACKLISTÉ le 2026-07-04 — le filtre dept serveur existe bien
+  # (param ids={dept} + client httpx neuf par dept, le cookie de session écrasait le
+  # querystring) → scraper actif scrapers/human_immobilier.py (id: human_immobilier,
+  # 128 annonces prod, 0 fuite). L'ancien domaine testé (.com) était de toute façon faux.
 
   - id: ouestfrance_immo
     nom: "OuestFrance-Immo"
@@ -4896,8 +5134,8 @@ blacklist:
   - id: avendre_alouer
     nom: "À Vendre À Louer (Groupe Ouest-France)"
     url_base: "https://www.avendre-alouer.fr"
-    raison: "ConnectTimeout systématique — site inaccessible depuis ce réseau (pas de Cloudflare détecté, probablement filtrage IP ou CDN restrictif)"
-    dernier_test: "2026-05-27"
+    raison: "2026-05-27 : ConnectTimeout systématique. Re-sondé 2026-07-04 : répond désormais mais DataDome (captcha-delivery.com, 403) sur les routes de recherche — même mur que leboncoin web. Ne pas retenter sans proxy résidentiel/cookie."
+    dernier_test: "2026-07-04"
     alternative: "bienici, orpi, foncia"
 
   - id: maxihome
